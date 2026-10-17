@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/backend",
     "crates/verifier",
+    "crates/groth16",
     "gadgets/tests",
     "gadgets/xark-aes",
     "gadgets/xark-bits",

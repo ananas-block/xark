@@ -171,22 +171,80 @@ fn witness_out(op: &WitnessGen) -> VarId {
 /// Substitute an LC under `s`: each term `coeff·var` becomes `coeff · s(var)`.
 /// Mirrors `lower_mir::replay_function`'s `subst_lc`, so a bytecode CALL expands
 /// byte-identically to a walked replay.
-fn subst_lc(lc: &LinearCombination, s: &dyn Fn(u32) -> LinearCombination) -> LinearCombination {
+/// A variable substitution: the identity (top level), or a template call's —
+/// the def's fresh internals shifted to the call's `base`, its plugs replaced by
+/// the caller's expressions, anything else (globals) unchanged.
+struct Subst {
+    dbase: u32,
+    base: u32,
+    /// `(plug var, caller expression)`, sorted by var.
+    plugs: Vec<(u32, LinearCombination)>,
+    identity: bool,
+}
+
+/// Where a substitution sends one variable.
+enum Image<'a> {
+    Var(u32),
+    Lc(&'a LinearCombination),
+}
+
+/// Top-level (identity) substitution. A `static` so it is `Send + Sync` and can
+/// be handed to rayon workers during parallel expansion.
+static IDENTITY: Subst = Subst {
+    dbase: 0,
+    base: 0,
+    plugs: Vec::new(),
+    identity: true,
+};
+
+impl Subst {
+    fn get(&self, v: u32) -> Image<'_> {
+        if self.identity {
+            Image::Var(v)
+        } else if v >= self.dbase {
+            Image::Var(self.base + (v - self.dbase))
+        } else if let Ok(i) = self.plugs.binary_search_by_key(&v, |p| p.0) {
+            Image::Lc(&self.plugs[i].1)
+        } else {
+            Image::Var(v)
+        }
+    }
+}
+
+/// `lc` under `s`. Terms are written straight into one vector and simplified
+/// once; coefficients are exact integers, so the result is the same as
+/// substituting and simplifying term by term.
+fn subst_lc(lc: &LinearCombination, s: &Subst) -> LinearCombination {
     let mut constant = lc.constant.clone();
-    let mut terms: Vec<Term> = Vec::new();
+    let mut terms: Vec<Term> = Vec::with_capacity(lc.terms.len());
     for t in &lc.terms {
-        let piece = s(t.var).scale(&t.coeff);
-        constant = constant.add(&piece.constant);
-        terms.extend(piece.terms);
+        match s.get(t.var) {
+            Image::Var(v) => terms.push(Term {
+                coeff: t.coeff.clone(),
+                var: v,
+            }),
+            Image::Lc(p) => {
+                if !p.constant.is_zero() {
+                    constant = constant.add(&p.constant.mul(&t.coeff));
+                }
+                terms.extend(p.terms.iter().map(|pt| Term {
+                    coeff: pt.coeff.mul(&t.coeff),
+                    var: pt.var,
+                }));
+            }
+        }
     }
     LinearCombination { constant, terms }.simplified()
 }
 /// The single var an out/id witness field maps to. Out/id fields are always fresh
-/// internals, so `s` yields a bare `1·v` LC. (Invariant relied on here.)
-fn subst_out(v: u32, s: &dyn Fn(u32) -> LinearCombination) -> u32 {
-    s(v).terms[0].var
+/// internals, so `s` maps them to a bare var. (Invariant relied on here.)
+fn subst_out(v: u32, s: &Subst) -> u32 {
+    match s.get(v) {
+        Image::Var(v) => v,
+        Image::Lc(p) => p.terms[0].var,
+    }
 }
-fn subst_witness(w: &mut WitnessGen, s: &dyn Fn(u32) -> LinearCombination) {
+fn subst_witness(w: &mut WitnessGen, s: &Subst) {
     let ids = |v: &mut [VarId]| {
         for x in v {
             *x = subst_out(*x, s);
@@ -273,21 +331,18 @@ fn subst_witness(w: &mut WitnessGen, s: &dyn Fn(u32) -> LinearCombination) {
 /// Build the substitution for a CALL: plug var → caller's (already
 /// outer-substituted) plug LC; internal var (`>= def.base_var`) → shifted single
 /// var at `base`; anything else → itself.
-fn call_subst(
-    def: &GDef,
-    base: u32,
-    plugs: Vec<LinearCombination>,
-) -> impl Fn(u32) -> LinearCombination {
-    let dbase = def.base_var;
-    let plug_map: BTreeMap<u32, LinearCombination> = def.plugs.iter().copied().zip(plugs).collect();
-    move |v: u32| -> LinearCombination {
-        if v >= dbase {
-            LinearCombination::var(base + (v - dbase))
-        } else if let Some(p) = plug_map.get(&v) {
-            p.clone()
-        } else {
-            LinearCombination::var(v)
-        }
+fn call_subst(def: &GDef, base: u32, plugs: Vec<LinearCombination>) -> Subst {
+    let mut plugs: Vec<(u32, LinearCombination)> = def.plugs.iter().copied().zip(plugs).collect();
+    // Sorted for lookup; a repeated plug var keeps its last expression (as the
+    // map this replaced did).
+    plugs.reverse();
+    plugs.sort_by_key(|p| p.0);
+    plugs.dedup_by_key(|p| p.0);
+    Subst {
+        dbase: def.base_var,
+        base,
+        plugs,
+        identity: false,
     }
 }
 
@@ -442,11 +497,6 @@ fn parse_w_items(b: &[u8], p: &mut usize) -> Vec<WItem> {
     out
 }
 
-/// Top-level (identity) substitution. Kept as a named `fn` (not a closure) so it is
-/// `Send + Sync + Copy` and can be handed to rayon workers during parallel expansion.
-fn identity_lc(v: u32) -> LinearCombination {
-    LinearCombination::var(v)
-}
 
 /// Expand the top-level constraint stream, optionally in parallel.
 ///
@@ -462,7 +512,7 @@ fn expand_c_top(defs: &[GDef], items: &[CItem], parallel: bool) -> Vec<R1csRow> 
             .par_iter()
             .map(|it| {
                 let mut buf = Vec::new();
-                expand_c(defs, std::slice::from_ref(it), &identity_lc, &mut buf);
+                expand_c(defs, std::slice::from_ref(it), &IDENTITY, &mut buf);
                 buf
             })
             .collect();
@@ -473,7 +523,7 @@ fn expand_c_top(defs: &[GDef], items: &[CItem], parallel: bool) -> Vec<R1csRow> 
         out
     } else {
         let mut out = Vec::new();
-        expand_c(defs, items, &identity_lc, &mut out);
+        expand_c(defs, items, &IDENTITY, &mut out);
         out
     }
 }
@@ -488,7 +538,7 @@ fn expand_w_top(defs: &[GDef], items: &[WItem], parallel: bool) -> Vec<WitnessGe
             .par_iter()
             .map(|it| {
                 let mut buf = Vec::new();
-                expand_w(defs, std::slice::from_ref(it), &identity_lc, &mut buf);
+                expand_w(defs, std::slice::from_ref(it), &IDENTITY, &mut buf);
                 buf
             })
             .collect();
@@ -499,7 +549,7 @@ fn expand_w_top(defs: &[GDef], items: &[WItem], parallel: bool) -> Vec<WitnessGe
         out
     } else {
         let mut out = Vec::new();
-        expand_w(defs, items, &identity_lc, &mut out);
+        expand_w(defs, items, &IDENTITY, &mut out);
         out
     }
 }
@@ -510,7 +560,7 @@ fn expand_w_top(defs: &[GDef], items: &[WItem], parallel: bool) -> Vec<WitnessGe
 fn expand_c_visit(
     defs: &[GDef],
     items: &[CItem],
-    subst: &dyn Fn(u32) -> LinearCombination,
+    subst: &Subst,
     emit: &mut dyn FnMut(R1csRow),
 ) {
     for it in items {
@@ -556,19 +606,49 @@ type CompactDecoded = (
     usize, // num_inputs (leading input vars; used by the var prune)
 );
 
-fn decode_compact(b: &[u8]) -> CompactDecoded {
+/// The compact form without a per-variable table: only the signature inputs get a
+/// `Var` (role + name); every other variable is `Derived` and unnamed. What
+/// streaming consumers need — a full table costs ~60 B × millions of vars.
+struct CompactCore {
+    field: FieldSpec,
+    num_vars: usize,
+    inputs: Vec<Var>,
+    defs: Vec<GDef>,
+    top_c: Vec<CItem>,
+    top_w: Vec<WItem>,
+    keep_extra: std::collections::BTreeSet<u32>,
+}
+
+/// Parse the header through the signature inputs; returns the cursor after them.
+fn decode_header(b: &[u8]) -> (FieldSpec, usize, Vec<Var>, usize) {
     let mut p = 6usize;
     let name = get_str(b, &mut p);
     let modulus_decimal = get_str(b, &mut p);
     let num_vars = get_uv(b, &mut p) as usize;
     let num_inputs = get_uv(b, &mut p) as usize;
-    let mut roles = vec![VarRole::Derived; num_vars];
-    let mut names: Vec<Option<String>> = vec![None; num_vars];
+    let mut inputs = Vec::with_capacity(num_inputs);
     for id in 0..num_inputs {
-        roles[id] = byte_role(b[p]);
+        let role = byte_role(b[p]);
         p += 1;
-        names[id] = Some(get_str(b, &mut p));
+        inputs.push(Var {
+            id: id as u32,
+            name: get_str(b, &mut p),
+            role,
+        });
     }
+    (
+        FieldSpec {
+            name,
+            modulus_decimal,
+        },
+        num_vars,
+        inputs,
+        p,
+    )
+}
+
+fn decode_core(b: &[u8]) -> CompactCore {
+    let (field, num_vars, inputs, mut p) = decode_header(b);
     let n_defs = get_uv(b, &mut p) as usize;
     let mut defs = Vec::with_capacity(n_defs);
     for _ in 0..n_defs {
@@ -588,25 +668,61 @@ fn decode_compact(b: &[u8]) -> CompactDecoded {
     let top_c = parse_c_items(b, &mut p);
     let top_w = parse_w_items(b, &mut p);
     let keep_extra: std::collections::BTreeSet<u32> = get_ids(b, &mut p).into_iter().collect();
-    let vars = (0..num_vars)
-        .map(|id| Var {
-            id: id as u32,
-            name: names[id].take().unwrap_or_else(|| format!("v{id}")),
-            role: roles[id].clone(),
-        })
-        .collect();
-    (
-        FieldSpec {
-            name,
-            modulus_decimal,
-        },
-        vars,
+    CompactCore {
+        field,
+        num_vars,
+        inputs,
         defs,
         top_c,
         top_w,
         keep_extra,
+    }
+}
+
+fn decode_compact(b: &[u8]) -> CompactDecoded {
+    let c = decode_core(b);
+    let num_inputs = c.inputs.len();
+    let mut inputs = c.inputs.into_iter();
+    let vars = (0..c.num_vars)
+        .map(|id| match inputs.next() {
+            Some(v) => v,
+            None => Var {
+                id: id as u32,
+                name: format!("v{id}"),
+                role: VarRole::Derived,
+            },
+        })
+        .collect();
+    (
+        c.field,
+        vars,
+        c.defs,
+        c.top_c,
+        c.top_w,
+        c.keep_extra,
         num_inputs,
     )
+}
+
+/// Just the signature inputs (role + name), from the header alone — what input
+/// resolution needs, without decoding templates or a table of every variable.
+pub fn decode_input_vars(b: &[u8]) -> Vec<Var> {
+    decode_header(b).2
+}
+
+/// [`stream_solve`] returning the solver's dense slots (`slots[id]`) instead of a
+/// map — no per-variable map nodes, for provers that read every value once.
+pub fn stream_solve_dense(
+    b: &[u8],
+    inputs: &std::collections::BTreeMap<u32, String>,
+) -> Result<Vec<Option<crate::solver::Fp>>, String> {
+    let c = decode_core(b);
+    let modulus = num_bigint::BigUint::parse_bytes(c.field.modulus_decimal.as_bytes(), 10)
+        .ok_or_else(|| "bad modulus".to_string())?;
+    crate::solver::solve_witness_streamed_dense(&c.inputs, c.num_vars, &modulus, inputs, |sink| {
+        expand_w_visit(&c.defs, &c.top_w, &IDENTITY, &mut |op| sink(op));
+    })
+    .map_err(|e| format!("solve: {e:?}"))
 }
 
 /// **Streaming constraint check** — solve the witness, then verify every R1CS row
@@ -631,7 +747,7 @@ pub fn stream_check(
         expand_c_visit(
             &defs,
             std::slice::from_ref(item),
-            &identity_lc,
+            &IDENTITY,
             &mut |row: R1csRow| {
                 if shard_ok
                     && !crate::solver::row_satisfied(&row.a, &row.b, &row.c, &assign, &modulus)
@@ -647,6 +763,20 @@ pub fn stream_check(
     } else {
         Err("a constraint is unsatisfied".to_string())
     }
+}
+
+/// **Streaming witness solve** — the assignment only, with no constraint check or
+/// analysis: the hint program is expanded op-by-op straight out of the bytecode, so
+/// neither the flat program nor the flat R1CS is ever materialized. For a prover
+/// that checks satisfaction itself (a Groth16 proof self-verifies).
+pub fn stream_solve(
+    b: &[u8],
+    inputs: &std::collections::BTreeMap<u32, String>,
+) -> Result<std::collections::BTreeMap<u32, crate::solver::Fp>, String> {
+    let (field, vars, defs, _top_c, top_w, _keep, _num_inputs) = decode_compact(b);
+    let modulus = num_bigint::BigUint::parse_bytes(field.modulus_decimal.as_bytes(), 10)
+        .ok_or_else(|| "bad modulus".to_string())?;
+    solve_streamed(&vars, &defs, &top_w, &modulus, inputs)
 }
 
 /// Decode just the variable table (roles + names) from a function blob, without
@@ -670,7 +800,7 @@ pub fn stream_ref_count(b: &[u8]) -> (usize, usize) {
             expand_c_visit(
                 &defs,
                 std::slice::from_ref(item),
-                &identity_lc,
+                &IDENTITY,
                 &mut |row: R1csRow| {
                     rows += 1;
                     let mut seen = std::collections::BTreeSet::new();
@@ -754,7 +884,7 @@ fn classify_and_check(
             expand_c_visit(
                 defs,
                 std::slice::from_ref(item),
-                &identity_lc,
+                &IDENTITY,
                 &mut |row: R1csRow| {
                     if check_sat
                         && shard_ok
@@ -787,7 +917,7 @@ fn two_valued_suspects(
     // Gather every suspect's referencing rows (small: |suspects| is tiny).
     let mut polys: std::collections::BTreeMap<u32, Vec<(Fp, Fp, Fp)>> =
         suspects.iter().map(|&v| (v, Vec::new())).collect();
-    expand_c_visit(defs, top_c, &identity_lc, &mut |row: R1csRow| {
+    expand_c_visit(defs, top_c, &IDENTITY, &mut |row: R1csRow| {
         let mut seen = std::collections::BTreeSet::new();
         for lc in [&row.a, &row.b, &row.c] {
             for t in &lc.terms {
@@ -1015,7 +1145,7 @@ pub fn stream_count_constraints(b: &[u8]) -> usize {
             expand_c_visit(
                 &defs,
                 std::slice::from_ref(item),
-                &identity_lc,
+                &IDENTITY,
                 &mut |_row| n += 1,
             );
             n
@@ -1039,7 +1169,7 @@ pub fn stream_count_mul_gates(b: &[u8]) -> usize {
             expand_c_visit(
                 &defs,
                 std::slice::from_ref(item),
-                &identity_lc,
+                &IDENTITY,
                 &mut |row: R1csRow| {
                     if !row.a.terms.is_empty() && !row.b.terms.is_empty() {
                         n += 1;
@@ -1058,7 +1188,7 @@ pub fn stream_count_mul_gates(b: &[u8]) -> usize {
 pub fn stream_count_witness(b: &[u8]) -> usize {
     let (_field, _vars, defs, _top_c, top_w, _keep, _num_inputs) = decode_compact(b);
     let mut n = 0usize;
-    expand_w_visit(&defs, &top_w, &identity_lc, &mut |_op| n += 1);
+    expand_w_visit(&defs, &top_w, &IDENTITY, &mut |_op| n += 1);
     n
 }
 
@@ -1097,7 +1227,7 @@ pub fn stream_digest(b: &[u8]) -> u128 {
     let (_field, _vars, defs, top_c, _top_w, _keep, _num_inputs) = decode_compact(b);
     // FNV-1a 128-bit offset basis.
     let mut acc: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
-    expand_c_visit(&defs, &top_c, &identity_lc, &mut |row: R1csRow| {
+    expand_c_visit(&defs, &top_c, &IDENTITY, &mut |row: R1csRow| {
         digest_lc(&mut acc, &row.a);
         digest_lc(&mut acc, &row.b);
         digest_lc(&mut acc, &row.c);
@@ -1128,7 +1258,7 @@ pub fn verify_blob_matches(
     let mut referenced = vec![false; num_vars];
     let mut ci = 0usize;
     let mut err: Option<String> = None;
-    expand_c_visit(&defs, &top_c, &identity_lc, &mut |row: R1csRow| {
+    expand_c_visit(&defs, &top_c, &IDENTITY, &mut |row: R1csRow| {
         if err.is_some() {
             return;
         }
@@ -1175,7 +1305,7 @@ pub fn verify_blob_matches(
     // Pass 2 — witness ops: stream, drop pruned, compare the survivors in order.
     let mut wi = 0usize;
     let mut werr: Option<String> = None;
-    expand_w_visit(&defs, &top_w, &identity_lc, &mut |op: WitnessGen| {
+    expand_w_visit(&defs, &top_w, &IDENTITY, &mut |op: WitnessGen| {
         if werr.is_some() {
             return;
         }
@@ -1239,7 +1369,7 @@ pub fn verify_blob_matches(
 fn expand_c(
     defs: &[GDef],
     items: &[CItem],
-    subst: &dyn Fn(u32) -> LinearCombination,
+    subst: &Subst,
     out: &mut Vec<R1csRow>,
 ) {
     for it in items {
@@ -1275,7 +1405,7 @@ fn expand_c(
 fn expand_w(
     defs: &[GDef],
     items: &[WItem],
-    subst: &dyn Fn(u32) -> LinearCombination,
+    subst: &Subst,
     out: &mut Vec<WitnessGen>,
 ) {
     for it in items {
@@ -1312,7 +1442,7 @@ fn expand_w(
 fn expand_w_visit(
     defs: &[GDef],
     items: &[WItem],
-    subst: &dyn Fn(u32) -> LinearCombination,
+    subst: &Subst,
     emit: &mut dyn FnMut(WitnessGen),
 ) {
     for it in items {
@@ -1354,7 +1484,7 @@ fn solve_streamed(
     inputs: &BTreeMap<u32, String>,
 ) -> Result<BTreeMap<u32, crate::solver::Fp>, String> {
     crate::solver::solve_witness_streamed(vars, modulus, inputs, |sink| {
-        expand_w_visit(defs, top_w, &identity_lc, &mut |op| sink(op));
+        expand_w_visit(defs, top_w, &IDENTITY, &mut |op| sink(op));
     })
     .map_err(|e| format!("solve: {e:?}"))
 }
@@ -1607,7 +1737,7 @@ fn expand_reduced_inner(b: &[u8]) -> CircuitProgram {
     expand_c(
         &defs,
         &top_reduced,
-        &|v| LinearCombination::var(v),
+        &IDENTITY,
         &mut constraints,
     );
     if crate::dbg_flag("XARK_BUILD_TIME") {
@@ -1644,6 +1774,451 @@ fn expand_reduced_inner(b: &[u8]) -> CircuitProgram {
         vars,
         constraints,
         witness_gen: Vec::new(),
+    }
+}
+
+/// The **template-reduced R1CS as a stream**: the same rows, in the same order, as
+/// [`expand_function_blob_reduced`] — but never materialized. Holds only the
+/// compact form (reduced template bodies + top-level items, ~the bytecode's size)
+/// plus a per-item row count, and expands any run of top-level items on demand.
+///
+/// Top-level items carry absolute var ids (identity substitution), so they are
+/// independent: a consumer can expand disjoint item windows in parallel and still
+/// place every row at its exact global index (`item_row_start`). This is the
+/// constraint source a streaming prover reads instead of the flat system.
+pub struct ReducedRowStream {
+    /// The circuit's field.
+    pub field: FieldSpec,
+    /// Kept variables, id order: `(id, is_public)`.
+    vars: Vec<(u32, bool)>,
+    defs: Vec<GDef>,
+    top: Vec<CItem>,
+    /// Prefix sums of rows per top-level item (`len = items + 1`).
+    item_start: Vec<usize>,
+    /// The templates compiled for numeric evaluation (built on first use).
+    compiled: std::sync::OnceLock<eval::Compiled>,
+}
+
+impl ReducedRowStream {
+    /// Decode `b` (a function blob) and reduce each template, exactly as
+    /// [`expand_function_blob_reduced`] does, then make one streaming pass to
+    /// count rows per item and collect the referenced-var set (for the var prune).
+    /// Total: a malformed artifact is a clean `Err`, never a panic.
+    pub fn new(b: &[u8]) -> Result<Self, String> {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| Self::new_inner(b)));
+        std::panic::set_hook(prev);
+        out.map_err(|_| "malformed function artifact (XBC reduced decode failed)".to_string())
+    }
+
+    fn new_inner(b: &[u8]) -> Self {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let CompactCore {
+            field,
+            num_vars,
+            inputs,
+            mut defs,
+            top_c,
+            keep_extra,
+            ..
+        } = decode_core(b);
+        let num_inputs = inputs.len();
+        for def in &mut defs {
+            let base_pins: BTreeMap<u32, ()> = def
+                .plugs
+                .iter()
+                .chain(def.outputs.iter())
+                .map(|&v| (v, ()))
+                .collect();
+            def.c_items = minimize_items(
+                &def.c_items,
+                &base_pins,
+                &field.name,
+                &field.modulus_decimal,
+            );
+        }
+        let input_pins: BTreeMap<u32, ()> = (0..num_inputs as u32).map(|v| (v, ())).collect();
+        let top = minimize_items(&top_c, &input_pins, &field.name, &field.modulus_decimal);
+
+        // One streaming pass: rows per item + referenced vars (atomic bitset).
+        let words: Vec<AtomicU64> = (0..num_vars.div_ceil(64))
+            .map(|_| AtomicU64::new(0))
+            .collect();
+        let counts: Vec<usize> = top
+            .par_iter()
+            .map(|it| {
+                let mut n = 0usize;
+                expand_c_visit(&defs, std::slice::from_ref(it), &IDENTITY, &mut |row| {
+                    n += 1;
+                    for lc in [&row.a, &row.b, &row.c] {
+                        for t in &lc.terms {
+                            let v = t.var as usize;
+                            words[v / 64].fetch_or(1 << (v % 64), Ordering::Relaxed);
+                        }
+                    }
+                });
+                n
+            })
+            .collect();
+        let mut item_start = Vec::with_capacity(counts.len() + 1);
+        let mut acc = 0usize;
+        item_start.push(0);
+        for c in counts {
+            acc += c;
+            item_start.push(acc);
+        }
+        let referenced = |v: usize| words[v / 64].load(Ordering::Relaxed) >> (v % 64) & 1 == 1;
+        let vars = (0..num_vars)
+            .filter(|&id| id < num_inputs || referenced(id) || keep_extra.contains(&(id as u32)))
+            .map(|id| {
+                let public = inputs
+                    .get(id)
+                    .is_some_and(|v| matches!(v.role, VarRole::PublicInput));
+                (id as u32, public)
+            })
+            .collect();
+        ReducedRowStream {
+            field,
+            vars,
+            defs,
+            top,
+            item_start,
+            compiled: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The kept variables in id order as `(id, is_public)` — the ids of
+    /// `expand_function_blob_reduced(b)?.vars`.
+    pub fn vars(&self) -> &[(u32, bool)] {
+        &self.vars
+    }
+
+    /// Free the kept-variable list (e.g. once a prover has built its own layout).
+    pub fn release_vars(&mut self) {
+        self.vars = Vec::new();
+    }
+
+    /// Total rows (== `expand_function_blob_reduced(b)?.constraints.len()`).
+    pub fn num_constraints(&self) -> usize {
+        *self.item_start.last().unwrap_or(&0)
+    }
+
+    /// Number of independent top-level items.
+    pub fn num_items(&self) -> usize {
+        self.top.len()
+    }
+
+    /// Global index of the first row item `i` expands to (`i == num_items()` gives
+    /// the total).
+    pub fn item_row_start(&self, i: usize) -> usize {
+        self.item_start[i]
+    }
+
+    /// Expand top-level items `items` in order, emitting each row. Rows arrive in
+    /// global order starting at `item_row_start(items.start)`.
+    pub fn visit_items(&self, items: std::ops::Range<usize>, emit: &mut dyn FnMut(R1csRow)) {
+        expand_c_visit(&self.defs, &self.top[items], &IDENTITY, emit);
+    }
+
+    /// The **transpose** of [`eval_items`](Self::eval_items), for every row:
+    /// `emit(var, m, Σ_rows w[row]·M[row][var])` contributions for each matrix `m`
+    /// (A, B, C), where `var = None` is the constant column. Contributions to one
+    /// variable may arrive in several pieces; the caller sums them. Plug terms are
+    /// pushed back through the caller's plug expressions once per call, so the cost
+    /// matches one evaluation pass. `w.len()` must be `num_constraints()`.
+    pub fn transpose_eval(
+        &self,
+        w: &[ark_bn254::Fr],
+        emit: &mut dyn FnMut(Option<u32>, usize, ark_bn254::Fr),
+    ) {
+        assert_eq!(w.len(), self.num_constraints());
+        let c = self
+            .compiled
+            .get_or_init(|| eval::compile(&self.defs, &self.top));
+        let mut row = 0usize;
+        for item in &c.top {
+            eval::adjoint(c, item, 0, &mut [], w, &mut row, emit);
+        }
+    }
+
+    /// **Evaluate** rows of top-level items `items` against an assignment instead
+    /// of expanding them: `emit([⟨A,z⟩, ⟨B,z⟩, ⟨C,z⟩])` per row, in row order
+    /// (matrices not in `want` are left zero). Each template is compiled once to
+    /// field coefficients and resolved variable references; a call evaluates its
+    /// plug expressions to values once and runs the template body against them —
+    /// no symbolic substitution, no allocation per term. Equal to evaluating the
+    /// rows [`visit_items`](Self::visit_items) emits (evaluation is linear), for
+    /// the BN254 scalar field. `z(id)` is the value of global variable `id`.
+    pub fn eval_items(
+        &self,
+        items: std::ops::Range<usize>,
+        z: &(dyn Fn(u32) -> ark_bn254::Fr + Sync),
+        want: [bool; 3],
+        emit: &mut dyn FnMut([ark_bn254::Fr; 3]),
+    ) {
+        let c = self
+            .compiled
+            .get_or_init(|| eval::compile(&self.defs, &self.top));
+        let top = eval::Frame {
+            base: 0,
+            plugs: &[],
+        };
+        for item in &c.top[items] {
+            eval::eval(c, item, &top, z, want, emit);
+        }
+    }
+}
+
+/// Numeric template evaluation (see [`ReducedRowStream::eval_items`]).
+mod eval {
+    use super::{CItem, GDef, R1csRow};
+    use crate::field::FieldConst;
+    use crate::linear_combination::LinearCombination;
+    use ark_bn254::Fr;
+    use ark_ff::{PrimeField, Zero};
+
+    /// A variable as seen from inside a template body.
+    #[derive(Clone, Copy)]
+    pub enum VRef {
+        /// A fresh internal: `call base + offset`.
+        Internal(u32),
+        /// The `i`-th plug: the caller's (evaluated) argument.
+        Plug(u32),
+        /// An absolute variable id.
+        Global(u32),
+    }
+
+    pub struct Lc {
+        k: Fr,
+        terms: Vec<(VRef, Fr)>,
+    }
+
+    pub enum Item {
+        Rows(Vec<[Lc; 3]>),
+        Call {
+            def: u32,
+            base: VRef,
+            plugs: Vec<Lc>,
+        },
+    }
+
+    pub struct Compiled {
+        defs: Vec<Vec<Item>>,
+        /// One entry per top-level item (indices match the stream's items).
+        pub top: Vec<Vec<Item>>,
+    }
+
+    pub struct Frame<'a> {
+        pub base: u32,
+        pub plugs: &'a [Fr],
+    }
+
+    fn fr(fc: &FieldConst) -> Fr {
+        if let Some(n) = fc.as_i64() {
+            let m = Fr::from(n.unsigned_abs());
+            return if n < 0 { -m } else { m };
+        }
+        let (sign, bytes) = fc.big().to_bytes_le();
+        let m = Fr::from_le_bytes_mod_order(&bytes);
+        if sign == num_bigint::Sign::Minus {
+            -m
+        } else {
+            m
+        }
+    }
+
+    fn resolve(v: u32, def: Option<&GDef>) -> VRef {
+        match def {
+            None => VRef::Global(v),
+            Some(d) if v >= d.base_var => VRef::Internal(v - d.base_var),
+            Some(d) => match d.plugs.iter().position(|&p| p == v) {
+                Some(i) => VRef::Plug(i as u32),
+                None => VRef::Global(v),
+            },
+        }
+    }
+
+    fn lc(l: &LinearCombination, def: Option<&GDef>) -> Lc {
+        Lc {
+            k: fr(&l.constant),
+            terms: l
+                .terms
+                .iter()
+                .map(|t| (resolve(t.var, def), fr(&t.coeff)))
+                .collect(),
+        }
+    }
+
+    fn row(r: &R1csRow, def: Option<&GDef>) -> [Lc; 3] {
+        [lc(&r.a, def), lc(&r.b, def), lc(&r.c, def)]
+    }
+
+    fn items(src: &[CItem], def: Option<&GDef>) -> Vec<Item> {
+        let mut out: Vec<Item> = Vec::new();
+        let push_row = |out: &mut Vec<Item>, r: [Lc; 3]| match out.last_mut() {
+            Some(Item::Rows(rs)) => rs.push(r),
+            _ => out.push(Item::Rows(vec![r])),
+        };
+        for it in src {
+            match it {
+                CItem::Row(r) => push_row(&mut out, row(r, def)),
+                CItem::Rolled(rs) => {
+                    for r in rs {
+                        push_row(&mut out, row(r, def));
+                    }
+                }
+                CItem::Call(d, base, plugs) => out.push(Item::Call {
+                    def: *d,
+                    base: resolve(*base, def),
+                    plugs: plugs.iter().map(|p| lc(p, def)).collect(),
+                }),
+            }
+        }
+        out
+    }
+
+    pub fn compile(defs: &[GDef], top: &[CItem]) -> Compiled {
+        Compiled {
+            defs: defs.iter().map(|d| items(&d.c_items, Some(d))).collect(),
+            top: top
+                .iter()
+                .map(|it| items(std::slice::from_ref(it), None))
+                .collect(),
+        }
+    }
+
+    #[inline]
+    fn val(r: VRef, f: &Frame, z: &dyn Fn(u32) -> Fr) -> Fr {
+        match r {
+            VRef::Internal(o) => z(f.base + o),
+            VRef::Plug(i) => f.plugs[i as usize],
+            VRef::Global(id) => z(id),
+        }
+    }
+
+    #[inline]
+    fn eval_lc(l: &Lc, f: &Frame, z: &dyn Fn(u32) -> Fr) -> Fr {
+        let mut acc = l.k;
+        for &(r, c) in &l.terms {
+            acc += val(r, f, z) * c;
+        }
+        acc
+    }
+
+    /// Push `w[row]·coeff` back onto variables for every row of `items` (in a frame
+    /// with internal base `base`); plug terms accumulate into `my_adj[plug][m]` for
+    /// the caller to route through its plug expressions.
+    pub fn adjoint(
+        c: &Compiled,
+        items: &[Item],
+        base: u32,
+        my_adj: &mut [[Fr; 3]],
+        w: &[Fr],
+        row: &mut usize,
+        emit: &mut dyn FnMut(Option<u32>, usize, Fr),
+    ) {
+        // Route `s · lc` (an LC in this frame) to variables / this frame's plugs.
+        fn route(
+            l: &Lc,
+            s: Fr,
+            m: usize,
+            base: u32,
+            my_adj: &mut [[Fr; 3]],
+            emit: &mut dyn FnMut(Option<u32>, usize, Fr),
+        ) {
+            if !l.k.is_zero() {
+                emit(None, m, s * l.k);
+            }
+            for &(r, coef) in &l.terms {
+                let v = s * coef;
+                match r {
+                    VRef::Internal(o) => emit(Some(base + o), m, v),
+                    VRef::Global(id) => emit(Some(id), m, v),
+                    VRef::Plug(i) => my_adj[i as usize][m] += v,
+                }
+            }
+        }
+        for it in items {
+            match it {
+                Item::Rows(rows) => {
+                    for r in rows {
+                        let wr = w[*row];
+                        *row += 1;
+                        if wr.is_zero() {
+                            continue;
+                        }
+                        for (m, l) in r.iter().enumerate() {
+                            route(l, wr, m, base, my_adj, emit);
+                        }
+                    }
+                }
+                Item::Call {
+                    def,
+                    base: cb,
+                    plugs,
+                } => {
+                    let child_base = match *cb {
+                        VRef::Internal(o) => base + o,
+                        VRef::Global(id) => id,
+                        VRef::Plug(_) => unreachable!("a call base is always a fresh var"),
+                    };
+                    let mut child_adj = vec![[Fr::zero(); 3]; plugs.len()];
+                    adjoint(
+                        c,
+                        &c.defs[*def as usize],
+                        child_base,
+                        &mut child_adj,
+                        w,
+                        row,
+                        emit,
+                    );
+                    for (p, adj) in plugs.iter().zip(&child_adj) {
+                        for (m, &s) in adj.iter().enumerate() {
+                            if !s.is_zero() {
+                                route(p, s, m, base, my_adj, emit);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn eval(
+        c: &Compiled,
+        items: &[Item],
+        f: &Frame,
+        z: &dyn Fn(u32) -> Fr,
+        want: [bool; 3],
+        emit: &mut dyn FnMut([Fr; 3]),
+    ) {
+        for it in items {
+            match it {
+                Item::Rows(rows) => {
+                    for r in rows {
+                        let mut v = [Fr::zero(); 3];
+                        for m in 0..3 {
+                            if want[m] {
+                                v[m] = eval_lc(&r[m], f, z);
+                            }
+                        }
+                        emit(v);
+                    }
+                }
+                Item::Call { def, base, plugs } => {
+                    let pv: Vec<Fr> = plugs.iter().map(|p| eval_lc(p, f, z)).collect();
+                    let base = match *base {
+                        VRef::Internal(o) => f.base + o,
+                        VRef::Global(id) => id,
+                        VRef::Plug(_) => unreachable!("a call base is always a fresh var"),
+                    };
+                    let inner = Frame { base, plugs: &pv };
+                    eval(c, &c.defs[*def as usize], &inner, z, want, emit);
+                }
+            }
+        }
     }
 }
 

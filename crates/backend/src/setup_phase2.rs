@@ -309,7 +309,7 @@ pub fn setup_from_ptau<C: ConstraintSynthesizer<Fr>>(
 /// `h_query` diffs `tau_g1[n + k]` for `k < n-1`), and `[..n]` of each of
 /// `tau_g2`, `alpha_tau_g1`, `beta_tau_g1`. A malformed transcript with shorter
 /// vectors would otherwise panic on an out-of-bounds index.
-fn check_ptau_section_lengths(ptau: &PtauFile, n: usize) -> Result<(), Phase2Error> {
+pub(crate) fn check_ptau_section_lengths(ptau: &PtauFile, n: usize) -> Result<(), Phase2Error> {
     let checks: [(&'static str, usize, usize); 4] = [
         ("tau_g1", 2 * n - 1, ptau.tau_g1.len()),
         ("tau_g2", n, ptau.tau_g2.len()),

@@ -15,12 +15,13 @@ use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
 use ark_serialize::Compress;
-use xark_backend::{keys::KeyMetadata, setup};
+use xark_backend::keys::KeyMetadata;
+use xark_backend::serialization::canonical_write_to_file;
 use xark_ir::Visibility;
 use xark_prover::XarkCircuit;
 use xark_snarkjs::vk_to_snarkjs;
 
-use super::{circuit_hash, load_backend_r1cs, num_public_inputs, synth_err};
+use super::{circuit_hash, load_backend_r1cs, num_public_inputs};
 use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
@@ -74,7 +75,72 @@ pub struct SetupArgs {
     /// bandwidth). `xark prove` auto-detects which format the key is in.
     #[arg(long, default_value_t = false)]
     pub uncompressed: bool,
+
+    /// Which R1CS form to generate the key for. Both prove with the streaming
+    /// prover; they differ in where the rows come from.
+    ///
+    /// * `reduced` — the template-reduced circuit, streamed straight from
+    ///   `circuit.xbc` (no extra artifact; setup skips the global minimize pass).
+    /// * `minimized` — the boundary-minimized circuit (a few % smaller on some
+    ///   circuits); setup also writes `r1cs.stream`, which prove streams.
+    /// * `auto` (default) — `reduced` at or above 2^20 constraints, where the global
+    ///   minimize costs GBs of setup memory for ~0% gain (Ed25519: 576 of 2.36M
+    ///   rows); below that, `minimized` only if it shrinks the FFT domain or saves
+    ///   ≥ 1% of rows or variables (sha256: 4.9%), else `reduced`.
+    #[arg(long, value_enum, default_value_t = R1csForm::Auto)]
+    pub r1cs_form: R1csForm,
+
+    /// Shorthand for `--r1cs-form reduced`.
+    #[arg(long, default_value_t = false, conflicts_with = "r1cs_form")]
+    pub streamable: bool,
+
+    /// QAP evaluation domain.
+    ///
+    /// * `smooth` — the smallest of `2^k`, `3·2^k`, `9·2^k` points. A circuit just
+    ///   past a power of two gets a domain up to 44% smaller, so a smaller key and
+    ///   a faster quotient FFT and `H` MSM (Ed25519: 4.19M → 2.36M points). The
+    ///   verifier is unchanged, but only xark's provers (`xark prove`, xark-wasm)
+    ///   can prove against the key — not snarkjs or rapidsnark. Dev-mode only: a
+    ///   Powers-of-Tau transcript's Lagrange bases are radix-2.
+    /// * `radix2` — `2^k` points, what every Groth16 prover expects.
+    /// * `auto` (default) — `smooth`, except `radix2` for a Powers-of-Tau setup or
+    ///   an explicit `--r1cs` program (whose proofs use the arkworks prover).
+    #[arg(long, value_enum, default_value_t = QapDomain::Auto)]
+    pub domain: QapDomain,
 }
+
+/// See [`SetupArgs::domain`].
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QapDomain {
+    Auto,
+    Radix2,
+    Smooth,
+}
+
+impl QapDomain {
+    /// The concrete domain kind for a setup with/without a `.ptau` and an
+    /// explicit `--r1cs` program.
+    fn resolve(self, ptau: bool, explicit_r1cs: bool) -> xark_groth16::DomainKind {
+        match self {
+            QapDomain::Smooth => xark_groth16::DomainKind::Smooth,
+            QapDomain::Auto if !ptau && !explicit_r1cs => xark_groth16::DomainKind::Smooth,
+            _ => xark_groth16::DomainKind::Radix2,
+        }
+    }
+}
+
+/// See [`SetupArgs::r1cs_form`].
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum R1csForm {
+    Auto,
+    Reduced,
+    Minimized,
+}
+
+/// `auto` always picks `reduced` at or above this many (template-reduced) rows.
+pub const AUTO_REDUCED_ROWS: usize = 1 << 20;
+/// Below it, `minimized` must save at least this fraction of rows or variables.
+const AUTO_MIN_SAVING: f64 = 0.01;
 
 /// Wrapper RNG threading `CryptoRng + RngCore` through both the OS RNG path and
 /// the deterministic test-fixture path. `setup` requires `CryptoRng` (a marker
@@ -149,24 +215,175 @@ fn write_r1cs_cache(
     }
 }
 
+/// The circuit the key is generated for, the form's metadata name, and why.
+/// `prog` is the template-reduced R1CS (or an explicit `--r1cs` program, which has
+/// no bytecode to stream and is always minimized).
+fn keyed_circuit(
+    prog: &xark_ir::R1csProgram,
+    form: R1csForm,
+    explicit_r1cs: bool,
+    kind: xark_groth16::DomainKind,
+) -> (XarkCircuit, &'static str, String) {
+    let domain =
+        |p: &xark_ir::R1csProgram| kind.size(p.constraints.len() + num_public_inputs(p) + 1);
+    let reduced = || XarkCircuit::for_setup_preminimized(prog.clone());
+    match form {
+        _ if explicit_r1cs => (
+            XarkCircuit::for_setup(prog.clone()),
+            "minimized",
+            "explicit --r1cs program".into(),
+        ),
+        R1csForm::Reduced => (reduced(), "reduced", "requested".into()),
+        R1csForm::Minimized => (
+            XarkCircuit::for_setup(prog.clone()),
+            "minimized",
+            "requested".into(),
+        ),
+        R1csForm::Auto if prog.constraints.len() >= AUTO_REDUCED_ROWS => (
+            reduced(),
+            "reduced",
+            format!(
+                "{} constraints ≥ 2^20: the global minimize isn't worth its setup memory",
+                prog.constraints.len()
+            ),
+        ),
+        R1csForm::Auto => {
+            let min = XarkCircuit::for_setup(prog.clone());
+            let (r, m) = (prog, min.prog());
+            let saved = |a: usize, b: usize| 1.0 - b as f64 / a.max(1) as f64;
+            let rows = saved(r.constraints.len(), m.constraints.len());
+            let vars = saved(r.variables.len(), m.variables.len());
+            let smaller_domain = domain(m) < domain(r);
+            let why = format!(
+                "minimize saves {:.1}% rows, {:.1}% variables{}",
+                rows * 100.0,
+                vars * 100.0,
+                if smaller_domain {
+                    ", shrinks the FFT domain"
+                } else {
+                    ""
+                }
+            );
+            if smaller_domain || rows.max(vars) >= AUTO_MIN_SAVING {
+                (min, "minimized", why)
+            } else {
+                (reduced(), "reduced", why)
+            }
+        }
+    }
+}
+
+/// Write `r1cs.stream` (the keyed circuit, row-file encoded) for a `minimized`
+/// key, so prove can stream it. Best-effort, like the cache.
+fn write_row_file(out_dir: &std::path::Path, fingerprint: &str, circuit: &XarkCircuit) {
+    let bytes = xark_ir::r1cs_stream::encode(fingerprint, circuit.prog());
+    let path = out_dir.join("r1cs.stream");
+    match fs::write(&path, &bytes) {
+        Ok(()) => println!("Wrote {}", path.display()),
+        Err(e) => eprintln!("warning: could not write {}: {e}", path.display()),
+    }
+}
+
+/// The circuit the key is generated for, as a row source.
+enum Keyed {
+    /// The template-reduced rows, streamed straight from `circuit.xbc`.
+    Bytecode(xark_groth16::BytecodeSource),
+    /// The boundary-minimized program (small circuits, or an explicit `--r1cs`).
+    Program(XarkCircuit),
+}
+
+impl Keyed {
+    fn with_source<T>(&self, f: impl FnOnce(&dyn xark_groth16::ConstraintSource) -> T) -> T {
+        match self {
+            Keyed::Bytecode(src) => f(src),
+            Keyed::Program(circ) => f(&xark_groth16::ProgramSource::new(circ.prog())),
+        }
+    }
+}
+
+/// Decide the key form and build its row source. The bytecode's row count picks
+/// `reduced` for large circuits without ever expanding them; only a candidate for
+/// `minimized` (or an explicit `--r1cs` program) is materialized, for the minimize
+/// pass. Returns `(source, form, reason, fingerprint, reduced rows, public inputs,
+/// QAP domain kind)`.
+#[allow(clippy::type_complexity)]
+fn plan_keyed(
+    args: &SetupArgs,
+    project: &XarkProject,
+    r1cs_path: &std::path::Path,
+    form: R1csForm,
+    ptau: bool,
+) -> Result<(
+    Keyed,
+    &'static str,
+    String,
+    String,
+    usize,
+    usize,
+    xark_groth16::DomainKind,
+)> {
+    let xbc = project.circuit_xbc();
+    let flat = super::dbg_flag("XARK_FLAT_MINIMIZE") || super::dbg_flag("XARK_NO_MINIMIZE");
+    if args.r1cs.is_none() && xbc.exists() && !flat {
+        let kind = args.domain.resolve(ptau, false);
+        let bytes = fs::read(&xbc).with_context(|| format!("reading {}", xbc.display()))?;
+        if !super::is_function_artifact(&bytes) {
+            bail!(
+                "{} is not a current circuit artifact — rebuild with `xark build`",
+                xbc.display()
+            );
+        }
+        let hash = super::sha256_hex(&bytes);
+        let src = xark_groth16::BytecodeSource::new(&bytes).map_err(|e| anyhow::anyhow!(e))?;
+        let rows = xark_groth16::ConstraintSource::num_constraints(&src);
+        let num_pi = xark_groth16::ConstraintSource::layout(&src).num_instance() - 1;
+        let reduced = |why: String| {
+            Ok((
+                Keyed::Bytecode(src),
+                "reduced",
+                why,
+                hash.clone(),
+                rows,
+                num_pi,
+                kind,
+            ))
+        };
+        return match form {
+            R1csForm::Reduced => reduced("requested".into()),
+            R1csForm::Auto if rows >= AUTO_REDUCED_ROWS => reduced(format!(
+                "{rows} constraints ≥ 2^20: the global minimize isn't worth its setup memory"
+            )),
+            _ => {
+                let prog = xark_ir::function_decode::expand_function_blob_reduced(&bytes)
+                    .map_err(|e| anyhow::anyhow!(e))?
+                    .into_r1cs();
+                let (circuit, name, why) = keyed_circuit(&prog, form, false, kind);
+                if name == "reduced" {
+                    reduced(why)
+                } else {
+                    Ok((Keyed::Program(circuit), name, why, hash, rows, num_pi, kind))
+                }
+            }
+        };
+    }
+    // An explicit `--r1cs` program (or a debug flat build): materialized.
+    let (prog, hash) = load_backend_r1cs(&xbc, args.r1cs.as_deref(), r1cs_path)?;
+    let (rows, num_pi) = (prog.constraints.len(), num_public_inputs(&prog));
+    let kind = args.domain.resolve(ptau, true);
+    let (circuit, name, why) = keyed_circuit(&prog, form, true, kind);
+    Ok((Keyed::Program(circuit), name, why, hash, rows, num_pi, kind))
+}
+
 pub fn run(args: SetupArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
     let r1cs_path = args.r1cs.clone().unwrap_or_else(|| project.r1cs_json());
     let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
-
-    // Prefer the self-contained `circuit.xbc` (deriving the R1CS from it); fall
-    // back to `r1cs.json` for an explicit `--r1cs` or an `--emit-json` build.
     let prof = super::dbg_flag("XARK_BUILD_TIME");
-    let t_load = std::time::Instant::now();
-    let (prog, hash) = load_backend_r1cs(&project.circuit_xbc(), args.r1cs.as_deref(), &r1cs_path)?;
-    if prof {
-        eprintln!(
-            "SETUP_TIME: load+expand         = {:.2}s",
-            t_load.elapsed().as_secs_f64()
-        );
-    }
-    let num_pi = num_public_inputs(&prog);
-    let num_constraints = prog.constraints.len();
+    let form = if args.streamable {
+        R1csForm::Reduced
+    } else {
+        args.r1cs_form
+    };
 
     // Resolve the ptau path: explicit flag, or auto-detected when neither
     // --ptau-file nor --insecure-dev-mode is supplied.
@@ -177,7 +394,6 @@ pub fn run(args: SetupArgs) -> Result<()> {
     } else {
         None
     };
-
     // Only an *explicit* `--ptau-file` conflicts with `--insecure-dev-mode`
     // (auto-detection is skipped when `--insecure-dev-mode` is set, so any
     // `ptau_path` here under that flag came from `--ptau-file`).
@@ -187,15 +403,30 @@ pub fn run(args: SetupArgs) -> Result<()> {
         );
     }
     // `--deterministic-rng` leaks the trapdoor, so require `--insecure-dev-mode`
+    if ptau_path.is_some() && args.domain == QapDomain::Smooth {
+        bail!(
+            "--domain smooth is dev-mode only: a Powers-of-Tau transcript's Lagrange bases \
+             are for 2^k domains (use --insecure-dev-mode, or --domain radix2)"
+        );
+    }
     if args.deterministic_rng.is_some() && !args.insecure_dev_mode {
         bail!("--deterministic-rng requires --insecure-dev-mode");
     }
-    // No `.ptau` and no explicit `--insecure-dev-mode`: rather than block, fall
-    // back to insecure dev-mode with a hardcoded deterministic seed (1) so the
-    // common `xark build && xark setup && xark prove` loop just works. A real
-    // `--ptau-file` still runs production phase-2; a user-supplied
-    // `--deterministic-rng <n>` still overrides the seed.
+    // No `.ptau` and no explicit `--insecure-dev-mode`: fall back to insecure
+    // dev-mode so the common `xark build && xark setup && xark prove` loop just
+    // works. A real `--ptau-file` still runs production phase-2.
     let dev_fallback = ptau_path.is_none() && !args.insecure_dev_mode;
+
+    let t_load = std::time::Instant::now();
+    let (keyed, form_name, why, hash, num_constraints, num_pi, kind) =
+        plan_keyed(&args, &project, &r1cs_path, form, ptau_path.is_some())?;
+    println!("R1CS form: {form_name} ({why})");
+    if prof {
+        eprintln!(
+            "SETUP_TIME: load+plan           = {:.2}s",
+            t_load.elapsed().as_secs_f64()
+        );
+    }
 
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("creating output dir {}", out_dir.display()))?;
@@ -204,8 +435,43 @@ pub fn run(args: SetupArgs) -> Result<()> {
     let meta_path = out_dir.join("metadata.json");
     let snarkjs_vk_path = out_dir.join("snarkjs-verification_key.json");
 
-    // Production phase-2 path.
-    if let Some(ref ptau_file) = ptau_path {
+    if let Keyed::Program(circuit) = &keyed {
+        circuit
+            .validate()
+            .map_err(|e| anyhow::anyhow!("malformed circuit: {e}"))?;
+        write_row_file(&out_dir, &hash, circuit);
+        if args.cache {
+            write_r1cs_cache(&out_dir, &hash, circuit, prof);
+        }
+    }
+    let compress = if args.uncompressed {
+        Compress::No
+    } else {
+        Compress::Yes
+    };
+    let pk_out = || -> Result<std::io::BufWriter<fs::File>> {
+        let f = fs::File::create(&pk_path)
+            .with_context(|| format!("creating {}", pk_path.display()))?;
+        Ok(std::io::BufWriter::with_capacity(1 << 20, f))
+    };
+    let mut metadata = KeyMetadata::new_dev(hash, num_pi, num_constraints);
+    metadata.r1cs_form = Some(form_name.to_string());
+    let rows = keyed.with_source(|src| src.num_constraints() + src.layout().num_instance());
+    let domain_size = kind.size(rows);
+    metadata.qap_domain_size = Some(domain_size);
+    if kind == xark_groth16::DomainKind::Smooth {
+        let radix2 = xark_groth16::DomainKind::Radix2.size(rows);
+        println!(
+            "QAP domain: {domain_size} points (radix-2 would be {radix2}); only xark's provers \
+             can prove against this key (`--domain radix2` for snarkjs / rapidsnark)"
+        );
+    }
+
+    // Keys are generated from the streamed rows and written vector by vector:
+    // neither the constraint system nor the proving key is ever held whole.
+    let t_keygen = std::time::Instant::now();
+    let vk = if let Some(ref ptau_file) = ptau_path {
+        // Production phase-2 path.
         let phase2_seed_hex = match &args.phase2_seed {
             Some(s) => s.clone(),
             None => {
@@ -224,32 +490,27 @@ pub fn run(args: SetupArgs) -> Result<()> {
         }
         let mut seed_arr = [0u8; 32];
         seed_arr.copy_from_slice(&seed_bytes);
-
         let ptau_bytes =
             fs::read(ptau_file).with_context(|| format!("reading {}", ptau_file.display()))?;
         let ptau = xark_backend::ptau::parse_ptau(&ptau_bytes).context("parsing .ptau file")?;
-
-        let circuit = XarkCircuit::for_setup(prog.clone());
-        circuit
-            .validate()
-            .map_err(|e| anyhow::anyhow!("malformed circuit: {e}"))?;
-        if args.cache {
-            write_r1cs_cache(&out_dir, &hash, &circuit, prof);
-        }
-        let keys = xark_backend::ptau::setup_from_ptau(circuit, &ptau, &seed_arr)
+        drop(ptau_bytes);
+        let vk = keyed.with_source(|src| -> Result<_> {
+            xark_backend::ptau::validate_for_circuit(
+                &ptau,
+                src.num_constraints(),
+                src.layout().num_instance(),
+            )
             .map_err(|e| anyhow::anyhow!("phase-2 setup failed: {e}"))?;
-
-        keys.write_proving_key_mode(
-            &pk_path,
-            if args.uncompressed {
-                Compress::No
-            } else {
-                Compress::Yes
-            },
-        )?;
-        keys.write_verifying_key(&vk_path)?;
-
-        let mut metadata = KeyMetadata::new_dev(hash, num_pi, num_constraints);
+            let powers = xark_groth16::setup::PtauPowers {
+                tau_g1: &ptau.tau_g1,
+                tau_g2: &ptau.tau_g2,
+                alpha_tau_g1: &ptau.alpha_tau_g1,
+                beta_tau_g1: &ptau.beta_tau_g1,
+                beta_g2: ptau.beta_g2,
+            };
+            xark_groth16::setup::phase2_setup(src, &powers, &seed_arr, pk_out()?, compress)
+                .map_err(|e| anyhow::anyhow!("phase-2 setup failed: {e}"))
+        })?;
         metadata.setup_mode = "phase2-from-ptau".into();
         metadata.production_safe = true;
         // commit to the (to-be-discarded) phase-2 seed for audit; never keep the seed
@@ -258,16 +519,46 @@ pub fn run(args: SetupArgs) -> Result<()> {
             .file_name()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string());
-        fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)
-            .with_context(|| format!("writing {}", meta_path.display()))?;
+        vk
+    } else {
+        // Dev-mode path. Only explicit `--deterministic-rng <n>` makes the key
+        // reproducible; the no-`.ptau` fallback uses OsRng (a fixed seed would make
+        // every dev key byte-identical with a known trapdoor).
+        let mut rng = match args.deterministic_rng {
+            Some(seed) => {
+                eprintln!(
+                    "WARN: --deterministic-rng makes the Groth16 trapdoor recoverable from the \
+                     seed; do not reuse the resulting keys outside test fixtures."
+                );
+                SetupRng::Det(ChaCha20Rng::seed_from_u64(seed))
+            }
+            None => SetupRng::Os(OsRng),
+        };
+        metadata.deterministic_rng_seed = args.deterministic_rng;
+        keyed.with_source(|src| -> Result<_> {
+            xark_groth16::setup::dev_setup(src, &mut rng, pk_out()?, compress, kind)
+                .map_err(|e| anyhow::anyhow!("setup failed: {e}"))
+        })?
+    };
+    if prof {
+        eprintln!(
+            "SETUP_TIME: keygen+write        = {:.2}s",
+            t_keygen.elapsed().as_secs_f64()
+        );
+    }
+    drop(keyed);
 
-        let snarkjs_vk = vk_to_snarkjs(&keys.verifying_key, num_pi);
-        fs::write(&snarkjs_vk_path, serde_json::to_string_pretty(&snarkjs_vk)?)?;
+    canonical_write_to_file(&vk, &vk_path)?;
+    let snarkjs_vk = vk_to_snarkjs(&vk, num_pi);
+    fs::write(&snarkjs_vk_path, serde_json::to_string_pretty(&snarkjs_vk)?)?;
+    fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)
+        .with_context(|| format!("writing {}", meta_path.display()))?;
 
-        println!("Wrote {}", pk_path.display());
-        println!("Wrote {}", vk_path.display());
-        println!("Wrote {}", snarkjs_vk_path.display());
-        println!("Wrote {}", meta_path.display());
+    println!("Wrote {}", pk_path.display());
+    println!("Wrote {}", vk_path.display());
+    println!("Wrote {}", snarkjs_vk_path.display());
+    println!("Wrote {}", meta_path.display());
+    if ptau_path.is_some() {
         println!(
             "{}",
             crate::style::warn(
@@ -279,127 +570,52 @@ pub fn run(args: SetupArgs) -> Result<()> {
                  trustless phase-2, use the multi-party `xark ceremony` flow instead."
             )
         );
-        print_next_steps(&project, &args.path, &prog);
-        return Ok(());
-    }
-
-    // Dev-mode path.
-    // `for_setup` runs the boundary-minimize (self-reported `MINIMIZE:` line);
-    // structural `validate()` on a multi-million-constraint circuit is itself a
-    // non-trivial phase, so time it separately.
-    let circuit = XarkCircuit::for_setup(prog.clone());
-    let t_validate = std::time::Instant::now();
-    circuit
-        .validate()
-        .map_err(|e| anyhow::anyhow!("malformed circuit: {e}"))?;
-    if prof {
-        eprintln!(
-            "SETUP_TIME: validate             = {:.2}s",
-            t_validate.elapsed().as_secs_f64()
-        );
-    }
-    if args.cache {
-        write_r1cs_cache(&out_dir, &hash, &circuit, prof);
-    }
-    // Only explicit `--deterministic-rng <n>` makes the key reproducible. The
-    // no-`.ptau` dev fallback uses OsRng: still insecure, but a fixed seed would
-    // be worse (every dev key byte-identical with a known trapdoor).
-    let effective_seed = args.deterministic_rng;
-    let mut rng = match effective_seed {
-        Some(seed) => {
-            eprintln!(
-                "WARN: --deterministic-rng makes the Groth16 trapdoor recoverable from the \
-                 seed; do not reuse the resulting keys outside test fixtures."
-            );
-            SetupRng::Det(ChaCha20Rng::seed_from_u64(seed))
-        }
-        None => SetupRng::Os(OsRng),
-    };
-    let t_keygen = std::time::Instant::now();
-    let keys = setup(circuit, &mut rng).map_err(synth_err)?;
-    if prof {
-        eprintln!(
-            "SETUP_TIME: groth16 keygen       = {:.2}s",
-            t_keygen.elapsed().as_secs_f64()
-        );
-    }
-
-    let t_write = std::time::Instant::now();
-    keys.write_proving_key_mode(
-        &pk_path,
-        if args.uncompressed {
-            Compress::No
-        } else {
-            Compress::Yes
-        },
-    )?;
-    keys.write_verifying_key(&vk_path)?;
-
-    let snarkjs_vk = vk_to_snarkjs(&keys.verifying_key, num_pi);
-    fs::write(&snarkjs_vk_path, serde_json::to_string_pretty(&snarkjs_vk)?)?;
-    if prof {
-        eprintln!(
-            "SETUP_TIME: write pk+vk          = {:.2}s",
-            t_write.elapsed().as_secs_f64()
-        );
-    }
-
-    let mut metadata = KeyMetadata::new_dev(hash, num_pi, num_constraints);
-    metadata.deterministic_rng_seed = effective_seed;
-    fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)
-        .with_context(|| format!("writing {}", meta_path.display()))?;
-
-    println!("Wrote {}", pk_path.display());
-    println!("Wrote {}", vk_path.display());
-    println!("Wrote {}", snarkjs_vk_path.display());
-    println!("Wrote {}", meta_path.display());
-    println!(
-        "\n{}",
-        crate::style::warn(
-            "⚠️  WARNING: setup_mode = insecure-dev-mode. Do not use in production."
-        )
-    );
-    if dev_fallback {
+    } else {
         println!(
-            "{}",
+            "\n{}",
             crate::style::warn(
-                "note: no .ptau found — generated an insecure single-party OsRng dev key; \
-                 supply --ptau-file for production."
+                "⚠️  WARNING: setup_mode = insecure-dev-mode. Do not use in production."
             )
         );
+        if dev_fallback {
+            println!(
+                "{}",
+                crate::style::warn(
+                    "note: no .ptau found — generated an insecure single-party OsRng dev key; \
+                     supply --ptau-file for production."
+                )
+            );
+        }
     }
-    print_next_steps(&project, &args.path, &prog);
+    print_next_steps(&project, &args.path, &r1cs_path);
     Ok(())
 }
 
-/// Guided post-setup footer: show the exact `xark prove` command with a
-/// placeholder for every declared input, so the next step is unambiguous.
-fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, prog: &xark_ir::R1csProgram) {
-    // Only the *declared* inputs — never the witnesses the solver derives
-    // (e.g. `to_bits` range-check bits). The primitive program carries the
-    // roles that tell them apart; the R1CS marks both `Private`, so falling
-    // back to it (if the `circuit.xbc` can't be expanded) may over-list.
-    // Declared inputs come first and in order, so that fallback is still usable.
-    let names: Vec<String> = match super::load_circuit_auto(&project.circuit_xbc()).ok() {
-        Some(prim) => {
-            use xark_ir::primitive::VarRole;
-            let mut vars: Vec<_> = prim
-                .vars
-                .iter()
-                .filter(|v| matches!(v.role, VarRole::PublicInput | VarRole::PrivateInput))
-                .collect();
-            vars.sort_by_key(|v| v.id);
-            vars.iter().map(|v| v.name.clone()).collect()
+fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, r1cs_path: &std::path::Path) {
+    // Only the *declared* inputs — never the witnesses the solver derives (e.g.
+    // `to_bits` range-check bits). `circuit.xbc`'s header lists them, in order, so
+    // nothing is expanded; a JSON-only build falls back to the R1CS's non-internal
+    // variables (declared inputs come first and in order, so it's still usable).
+    let names: Vec<String> = match fs::read(project.circuit_xbc()) {
+        Ok(bytes) if super::is_function_artifact(&bytes) => {
+            xark_ir::function_decode::decode_input_vars(&bytes)
+                .into_iter()
+                .map(|v| v.name)
+                .collect()
         }
-        None => {
-            let mut vars: Vec<_> = prog
-                .variables
-                .iter()
-                .filter(|v| v.visibility != Visibility::Internal)
-                .collect();
-            vars.sort_by_key(|v| v.id);
-            vars.iter().map(|v| v.name.clone()).collect()
-        }
+        _ => fs::read_to_string(r1cs_path)
+            .ok()
+            .and_then(|s| xark_ir::json::from_json(&s).ok())
+            .map(|prog: xark_ir::R1csProgram| {
+                let mut vars: Vec<_> = prog
+                    .variables
+                    .into_iter()
+                    .filter(|v| v.visibility != Visibility::Internal)
+                    .collect();
+                vars.sort_by_key(|v| v.id);
+                vars.into_iter().map(|v| v.name).collect()
+            })
+            .unwrap_or_default(),
     };
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let hint = super::inputs_hint(&name_refs);

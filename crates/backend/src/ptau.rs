@@ -168,6 +168,23 @@ pub fn check_ptau_covers_circuit(
     })
 }
 
+/// Every check [`setup_from_ptau`] runs on a transcript before deriving keys for a
+/// circuit with `num_constraints` rows and `num_instance_variables` (incl. the
+/// constant): domain coverage, section lengths, and the (τ, α, β) ladder
+/// consistency. For callers that derive keys themselves (the streaming setup).
+pub fn validate_for_circuit(
+    ptau: &PtauFile,
+    num_constraints: usize,
+    num_instance_variables: usize,
+) -> Result<(), Phase2Error> {
+    check_ptau_covers_circuit(ptau, num_constraints, num_instance_variables)?;
+    let n = (num_constraints + num_instance_variables)
+        .next_power_of_two()
+        .max(1);
+    crate::setup_phase2::check_ptau_section_lengths(ptau, n)?;
+    verify_powers_consistency(ptau)
+}
+
 /// Re-export of [`crate::setup_phase2::setup_from_ptau`].
 ///
 /// Consumes the circuit in Setup mode, evaluates the QAP polynomials at τ using

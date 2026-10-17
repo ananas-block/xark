@@ -6,21 +6,19 @@
 //! |----------------|----------------|----------------------------------------------------|
 //! | `circuit.xbc`  | `xark build`   | `circuit_xbc: Uint8Array` (binary)                 |
 //! | `pk.bin`       | `xark setup`   | `pk_bytes: Uint8Array`                             |
-//! | witness inputs | (your circuit) | `inputs: { name: "value", … }` (a plain JS object) |
+//! | witness inputs | (your circuit) | `inputs: { name: value, … }` (a plain JS object; nested OK) |
 //!
 //! The compile (`xark build`) and setup (`xark setup`) steps require the host
 //! rustc driver / ceremony tooling and cannot run in wasm — produce those
 //! artifacts on the server, ship them to the client, and prove client-side.
 //!
 //! `circuit.xbc` is the self-contained binary artifact `xark build` always
-//! writes. From it we derive *both* views the prover needs, exactly as `xark
-//! prove` does:
-//!
-//! * [`expand_function_blob_reduced`] → the **minimized R1CS** the proving key
-//!   was generated from (the key from `xark setup` is keyed to this circuit).
-//! * [`expand_function_blob`] → the full circuit **with its witness-generation
-//!   program**, used to solve the witness. (The reduced variant leaves witness
-//!   generation empty by design, so it cannot solve.)
+//! writes. From it the prover streams both what it needs, as `xark prove` does:
+//! the witness (solved by streaming the hint program) and the constraint rows the
+//! key was made for (the template-reduced rows straight from the bytecode, or the
+//! minimized circuit, rebuilt when the key is in that form). The proving key is
+//! read a chunk of points at a time, so neither it nor the constraint system is
+//! ever expanded whole.
 //!
 //! Every artifact — circuit, proving/verifying key, proof, public inputs — is
 //! binary. Only the witness inputs (a tiny `name → value` map) stay JSON.
@@ -60,11 +58,15 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate
 use ark_snark::SNARK;
 use wasm_bindgen::prelude::*;
 
-use xark_ir::function_decode::{expand_function_blob, expand_function_blob_reduced};
-use xark_ir::solver;
-use xark_ir::{CircuitProgram, R1csProgram, VarId};
-use xark_prover::{lower_witness, try_fr_from_decimal, XarkCircuit};
+use xark_ir::VarId;
+use xark_prover::{flatten_inputs, resolve_input_ids, InputValue};
 use xark_snarkjs::{proof_to_snarkjs as snarkjs_proof, public_inputs_to_snarkjs as snarkjs_public};
+
+mod streaming;
+pub use streaming::{
+    begin_streaming_proof, kernel_cols, kernel_msm, kernel_rows, preload_streaming,
+    prove_streaming, prove_streaming_preloaded, wasm_memory_bytes, StreamingProof,
+};
 
 // ---- byte inputs: accept a `Uint8Array` or a raw `ArrayBuffer` -------------
 
@@ -86,68 +88,81 @@ extern "C" {
 
 // ---- preload: parse the circuit artifacts once, prove many times -------------
 
-struct PreparedArtifacts {
-    /// Full circuit (witness-gen intact) — solved on every [`prove_preloaded`] call.
-    circuit: CircuitProgram,
-    /// The **minimized** R1CS the proving key is keyed to — already run
-    /// through the boundary minimize in [`preload`] (identically to how `xark
-    /// setup` keyed the pk), so [`prove_preloaded`] can prove against it directly
-    /// without re-minimizing on every call.
-    r1cs: R1csProgram,
-    by_name: BTreeMap<String, VarId>,
-    pk: ProvingKey<Bn254>,
-}
-
 thread_local! {
-    static ARTIFACTS: RefCell<Option<PreparedArtifacts>> = const { RefCell::new(None) };
+    static ARTIFACTS: RefCell<Option<streaming::Prepared>> = const { RefCell::new(None) };
 }
 
-/// Resolve a `name → value` JS object to `VarId → decimal` for the solver,
-/// validating each value as a field element (mirrors `xark prove --inputs`).
-/// `by_name` is the circuit's `name → VarId` map (built once in [`preload`]).
+/// Resolve a JS inputs object to `VarId → decimal` for the solver, with the same
+/// resolver as `xark prove --inputs` ([`xark_prover::resolve_input_ids`]): per-leaf
+/// names, logical inputs (`0x`-hex bytes, hashes, scalars), and nested objects/arrays
+/// mirroring the input's Rust type. Values may be strings (decimal or `0x`-hex),
+/// integer numbers, bigints, or booleans.
 fn resolve_inputs(
-    by_name: &BTreeMap<String, VarId>,
+    vars: &[xark_ir::primitive::Var],
     inputs: JsValue,
 ) -> Result<BTreeMap<VarId, String>, String> {
-    let inputs: BTreeMap<String, String> = serde_wasm_bindgen::from_value(inputs)
-        .map_err(|e| format!("parsing inputs (expect object name→value): {e}"))?;
-
-    let mut id_inputs: BTreeMap<VarId, String> = BTreeMap::new();
-
-    for (k, v) in &inputs {
-        let &id = by_name
-            .get(k)
-            .ok_or_else(|| format!("unknown input `{k}`"))?;
-        try_fr_from_decimal(v).map_err(|e| format!("invalid value for input `{k}`: {e}"))?;
-        id_inputs.insert(id, v.clone());
-    }
-
-    Ok(id_inputs)
+    let InputValue::Map(entries) =
+        js_to_input(&inputs).map_err(|e| format!("parsing inputs: {e}"))?
+    else {
+        return Err("inputs must be an object of name → value".into());
+    };
+    resolve_input_ids(vars, &flatten_inputs(entries))
 }
 
-/// Generates proof with already-expanded circuit views + the proving key.
-/// `r1cs` must be the **pre-minimized** backend R1CS the pk is keyed to.
-fn prove_with(
-    circuit: &CircuitProgram,
-    r1cs: &R1csProgram,
-    pk: &ProvingKey<Bn254>,
-    id_inputs: &BTreeMap<VarId, String>,
-) -> Result<ProofBundle, js_sys::Error> {
-    let assign_fp = solver::solve_and_check_cp(circuit, id_inputs)
-        .map_err(|e| js_error(&format!("witness does not satisfy the circuit: {e:?}")))?;
-    let assign = lower_witness(&assign_fp);
-
-    let instance = XarkCircuit::for_proving_preminimized(r1cs.clone(), assign);
-    instance
-        .validate()
-        .map_err(|e| js_error(&format!("malformed circuit: {e}")))?;
-    let public = instance.public_inputs();
-
-    let mut rng = rand::rngs::OsRng;
-    let proof = Groth16::<Bn254>::prove(pk, instance, &mut rng)
-        .map_err(|e| js_error(&format!("proving: {e}")))?;
-
-    encode_result(&proof, &public)
+/// A JS value → [`InputValue`]. Numbers must be safe integers (so nothing is silently
+/// rounded); pass anything larger as a bigint or a string.
+fn js_to_input(v: &JsValue) -> Result<InputValue, String> {
+    if let Some(s) = v.as_string() {
+        return Ok(InputValue::Scalar(s));
+    }
+    if v.is_bigint() {
+        let s: String = js_sys::BigInt::from(v.clone())
+            .to_string(10)
+            .map_err(|_| "unprintable bigint".to_string())?
+            .into();
+        return Ok(InputValue::Scalar(s));
+    }
+    if let Some(n) = v.as_f64() {
+        if !js_sys::Number::is_safe_integer(v) {
+            return Err(format!(
+                "number {n} is not a safe integer; pass large values as a bigint or string"
+            ));
+        }
+        return Ok(InputValue::Scalar(format!("{}", n as i64)));
+    }
+    if let Some(b) = v.as_bool() {
+        return Ok(InputValue::Scalar(if b { "1" } else { "0" }.into()));
+    }
+    if js_sys::Array::is_array(v) {
+        return js_sys::Array::from(v)
+            .iter()
+            .map(|x| js_to_input(&x))
+            .collect::<Result<_, _>>()
+            .map(InputValue::List);
+    }
+    if let Some(bytes) = v.dyn_ref::<js_sys::Uint8Array>() {
+        // A byte array (`[u8; N]` input): one leaf per byte.
+        return Ok(InputValue::List(
+            bytes
+                .to_vec()
+                .into_iter()
+                .map(|b| InputValue::Scalar(b.to_string()))
+                .collect(),
+        ));
+    }
+    if v.is_object() {
+        return js_sys::Object::entries(v.unchecked_ref())
+            .iter()
+            .map(|e| {
+                let e = js_sys::Array::from(&e);
+                let k = e.get(0).as_string().unwrap_or_default();
+                let x = js_to_input(&e.get(1)).map_err(|err| format!("`{k}`: {err}"))?;
+                Ok((k, x))
+            })
+            .collect::<Result<_, String>>()
+            .map(InputValue::Map);
+    }
+    Err(format!("unsupported input value {v:?}"))
 }
 
 /// The result of [`prove`] / [`prove_preloaded`]: the canonical compressed
@@ -182,92 +197,58 @@ fn encode_result(proof: &Proof<Bn254>, public: &[Fr]) -> Result<ProofBundle, js_
     })
 }
 
-/// Load + prepare every artifact from the raw bytes: expand the two `.xbc`
-/// views, build the `name → VarId` map, minimize the backend R1CS the pk is
-/// keyed to, and deserialize the proving key.
-fn load_artifacts(circuit_xbc: &[u8], pk_bytes: &[u8]) -> Result<PreparedArtifacts, js_sys::Error> {
-    // Full circuit (with witness-gen) for the solver.
-    let circuit = expand_function_blob(circuit_xbc)
-        .map_err(|e| js_error(&format!("parsing circuit.xbc: {e}")))?;
-
-    // The proving key is tied to a specific R1CS form. Reproducing it mirrors
-    // `xark setup` in two steps — the reduced expand, then `for_setup`.
-    let reduced = expand_function_blob_reduced(circuit_xbc)
-        .map_err(|e| js_error(&format!("parsing circuit.xbc: {e}")))?
-        .into_r1cs();
-
-    let by_name: BTreeMap<String, VarId> = circuit
-        .vars
-        .iter()
-        .map(|v| (v.name.clone(), v.id))
-        .collect();
-    let r1cs = XarkCircuit::for_setup(reduced).prog().clone();
-    let pk = deserialize_proving_key(pk_bytes)?;
-
-    Ok(PreparedArtifacts {
-        circuit,
-        r1cs,
-        by_name,
-        pk,
-    })
-}
-
 /// Parse and cache a circuit's `circuit.xbc` + `pk.bin` once for
 /// [`prove_preloaded`]. Call once per circuit; subsequent calls silently
 /// replace the cached state.
 ///
 /// `circuit_xbc` is the self-contained binary artifact `xark build` always
-/// writes; `pk_bytes` is the `pk.bin` from `xark setup`.
+/// writes; `pk_bytes` is the `pk.bin` from `xark setup`. The key is decoded once
+/// into wasm memory (about 2.2× its compressed size) so repeat proofs skip point
+/// decompression; for the largest circuits prefer `preloadStreaming`, which
+/// leaves it in its JS buffer.
 #[wasm_bindgen]
 pub fn preload(circuit_xbc: &Bytes, pk_bytes: &Bytes) -> Result<(), js_sys::Error> {
-    let circuit_xbc = to_bytes(circuit_xbc, "circuit.xbc")?;
-    let pk_bytes = to_bytes(pk_bytes, "pk.bin")?;
-    let artifacts = load_artifacts(&circuit_xbc, &pk_bytes)?;
-
-    ARTIFACTS.with(|cell| *cell.borrow_mut() = Some(artifacts));
-
+    let prepared = streaming::prepare_auto(circuit_xbc, pk_bytes, true)?;
+    ARTIFACTS.with(|cell| *cell.borrow_mut() = Some(prepared));
     Ok(())
 }
 
 /// Prove using the artifacts cached by a prior [`preload`] call — skipping the
-/// `.xbc` expansion, `pk.bin` deserialization, and R1CS minimize on every call.
+/// `.xbc` parse, row-source build and `pk.bin` decode on every call.
 ///
-/// Does not self-verify; verify a returned proof with [`verify`] when needed.
 /// Returns the same shape as [`prove`]. Throws if [`preload`] hasn't been called.
 #[wasm_bindgen]
 pub fn prove_preloaded(inputs: JsValue) -> Result<ProofBundle, js_sys::Error> {
     ARTIFACTS.with(|cell| -> Result<ProofBundle, js_sys::Error> {
-        let state = cell.borrow();
-        let s = state
-            .as_ref()
+        let mut state = cell.borrow_mut();
+        let p = state
+            .as_mut()
             .ok_or_else(|| js_error("call preload() first"))?;
-        let id_inputs = resolve_inputs(&s.by_name, inputs).map_err(|e| js_error(&e))?;
-        prove_with(&s.circuit, &s.r1cs, &s.pk, &id_inputs)
+        streaming::prove_auto(p, inputs)
     })
 }
 
-/// Generate a Groth16 proof entirely in memory.
+/// Generate a Groth16 proof.
 ///
 /// See the crate docs for the shape of each argument and the return object.
 /// Every byte argument accepts a `Uint8Array` **or** an `ArrayBuffer` — so the
 /// result of `await response.arrayBuffer()` can be passed directly.
 ///
-/// Throws an `Error` on any error: a malformed `.xbc`, unknown input,
-/// an unsatisfiable witness, or a malformed proving key.
+/// Uses the streaming prover: the key is read from `pk_bytes` a chunk of points
+/// at a time and the constraint rows are streamed, so memory stays far below the
+/// key and circuit sizes (Ed25519 verification fits). The proof is checked
+/// against the key's verifying key before it is returned.
 ///
-/// Does not self-verify (matching snarkjs / arkworks / gnark) — verify a
-/// returned proof with [`verify`] when needed.
+/// Throws an `Error` on any error: a malformed `.xbc`, unknown input,
+/// an unsatisfiable witness, or a proving key for a different circuit.
 #[wasm_bindgen]
 pub fn prove(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
     inputs: JsValue,
 ) -> Result<ProofBundle, js_sys::Error> {
-    let circuit_xbc = to_bytes(circuit_xbc, "circuit.xbc")?;
-    let pk_bytes = to_bytes(pk_bytes, "pk.bin")?;
-    let s = load_artifacts(&circuit_xbc, &pk_bytes)?;
-    let id_inputs = resolve_inputs(&s.by_name, inputs).map_err(|e| js_error(&e))?;
-    prove_with(&s.circuit, &s.r1cs, &s.pk, &id_inputs)
+    let mut p = streaming::prepare_auto(circuit_xbc, pk_bytes, false)?;
+    streaming::prove_auto(&mut p, inputs)
 }
 
 /// Verify a Groth16 proof against its public inputs, in memory.
@@ -357,25 +338,38 @@ fn deserialize_bytes<T: CanonicalDeserialize>(
         .map_err(|e| js_error(&format!("deserializing {what}: {e}")))
 }
 
-/// Deserialize a `pk.bin` written by `xark setup`, honoring the optional
-/// self-describing header so both compressed and `--uncompressed` keys load.
-///
-/// The layout must match `pk_compression`/`write_proving_key_mode` in
-/// `crates/backend/src/keys.rs`: a 6-byte header `b"XKPK"` + version + mode
-/// (mode `1` = uncompressed, else compressed) precedes the serialized key.
-/// Legacy untagged keys are compressed. Keep this in sync with keys.rs.
-fn deserialize_proving_key(bytes: &[u8]) -> Result<ProvingKey<Bn254>, js_sys::Error> {
-    const PK_MAGIC: &[u8; 4] = b"XKPK";
-    let (compress, body) = if bytes.len() >= 6 && &bytes[..4] == PK_MAGIC {
-        let mode = if bytes[5] == 1 {
-            Compress::No
-        } else {
-            Compress::Yes
-        };
-        (mode, &bytes[6..])
-    } else {
-        (Compress::Yes, bytes)
-    };
-    ProvingKey::<Bn254>::deserialize_with_mode(body, compress, Validate::Yes)
-        .map_err(|e| js_error(&format!("deserializing proving key: {e}")))
+/// The `XKPK` header at the start of `bytes` (`xark_groth16::pk::KeyFormat`:
+/// point mode, and for v2 keys the QAP domain size). Legacy untagged keys are
+/// compressed.
+fn key_format(bytes: &[u8]) -> Result<xark_groth16::pk::KeyFormat, js_sys::Error> {
+    xark_groth16::pk::KeyFormat::parse(bytes, true)
+        .map_err(|e| js_error(&e.to_string()))
+        .map(|f| f.expect("parse at EOF always decides"))
+}
+
+/// Deserialize a whole `pk.bin` from a reader (honoring its `XKPK` header),
+/// unchecked: the key is the caller's own setup
+/// output, and every proof is self-verified against its embedded `vk`.
+pub(crate) fn deserialize_proving_key_from(
+    mut r: impl std::io::Read,
+) -> Result<ProvingKey<Bn254>, js_sys::Error> {
+    let mut head = [0u8; xark_groth16::pk::MAX_HEADER_LEN];
+    r.read_exact(&mut head)
+        .map_err(|e| js_error(&format!("reading proving key: {e}")))?;
+    let fmt = key_format(&head)?;
+    ProvingKey::<Bn254>::deserialize_with_mode(
+        std::io::Read::chain(&head[fmt.header_len..], r),
+        fmt.compress(),
+        Validate::No,
+    )
+    .map_err(|e| js_error(&format!("deserializing proving key: {e}")))
+}
+
+/// Lowercase hex SHA-256 (the `circuit.xbc` fingerprint `xark setup` records).
+pub(crate) fn sha256_hex(b: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(b)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
 }

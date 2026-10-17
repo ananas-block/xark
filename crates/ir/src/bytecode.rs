@@ -160,7 +160,7 @@ const FC_BIG: u8 = 5; // + sign byte + varint len + LE magnitude
 /// other u64-sized values as tag + varint, and full field-sized values as
 /// tag + sign + varint length + LE magnitude.
 fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
-    let b: BigInt = fc.decimal().parse().unwrap_or_else(|_| BigInt::from(0));
+    let b: BigInt = fc.big();
     if b.sign() == Sign::NoSign {
         buf.push(FC_ZERO);
         return;

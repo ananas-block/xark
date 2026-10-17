@@ -81,6 +81,13 @@ impl LinearCombination {
     /// Combine duplicate variables, drop zero-coefficient terms, and sort terms
     /// by `VarId` for deterministic output.
     pub fn simplified(mut self) -> Self {
+        // Already canonical (strictly increasing vars, no zero coefficients): the
+        // common case after substitution, so skip the sort and the rebuild.
+        if self.terms.windows(2).all(|w| w[0].var < w[1].var)
+            && !self.terms.iter().any(|t| t.coeff.is_zero())
+        {
+            return self;
+        }
         self.terms.sort_by_key(|t| t.var);
 
         let mut merged: Vec<Term> = Vec::with_capacity(self.terms.len());

@@ -19,6 +19,7 @@ use xark_backend::proof::ProofBundle;
 use xark_backend::serialization::write_public_inputs;
 use xark_backend::solana::{assemble_proof_bytes_le, assemble_public_inputs_bytes_le};
 use xark_backend::{keys::Groth16Keys, prove};
+use xark_groth16::{ConstraintSource, PkSource};
 use xark_ir::VarId;
 use xark_prover::{XarkCircuit, fr_from_decimal};
 use xark_snarkjs::{proof_to_snarkjs, public_inputs_to_snarkjs};
@@ -76,11 +77,13 @@ pub struct ProveArgs {
     /// information about the witness across proofs.
     #[arg(long, value_name = "SEED")]
     pub deterministic_rng: Option<u64>,
-    /// Warm the minimized-R1CS cache (`r1cs.min.wcz`): on a cache *miss*, write
-    /// the minimized circuit this prove just derived so subsequent proves against
-    /// the same key reload it and skip the ~25s minimize + validate. A hit (cache
-    /// already present and current) is always used regardless of this flag; the
-    /// flag only controls *writing* it. Ideal for producing many proofs.
+    /// Warm the caches that make later proofs against this key faster. On a miss,
+    /// write: the decoded proving key (`pk.decoded.bin`, uncompressed: later
+    /// proofs skip point decompression — Ed25519 prove ~2.3× faster, at 2× the
+    /// key's disk size), and for keys without an `r1cs.stream`, the minimized R1CS
+    /// (`r1cs.min.wcz`, skips the ~25s minimize + validate). A current cache is
+    /// always used regardless of this flag; the flag only controls *writing* it.
+    /// Ideal for producing many proofs.
     #[arg(long, default_value_t = false)]
     pub cache: bool,
 
@@ -90,6 +93,13 @@ pub struct ProveArgs {
     /// constraint-heavy circuits. The proof is identical (self-verified).
     #[arg(long, default_value_t = false)]
     pub stream: bool,
+
+    /// Streaming prover only: keep a single domain-sized vector in memory during
+    /// the quotient step by parking the others in a temp file next to the proof
+    /// (rows are streamed once more). For proving the largest circuits on small
+    /// machines.
+    #[arg(long, default_value_t = false)]
+    pub low_memory: bool,
 }
 
 /// See `setup::SetupRng` for rationale: `prove` bounds its RNG by
@@ -181,6 +191,53 @@ pub fn run(args: ProveArgs) -> Result<()> {
     // The minimized-R1CS cache `xark setup` writes next to the proving key.
     let cache_path = pk_path.with_file_name("r1cs.min.wcz");
 
+    // Streaming prover: a `reduced` key streams rows straight from the bytecode; a
+    // `minimized` key streams them from the `r1cs.stream` setup wrote next to it
+    // (rebuilt from `circuit.xbc` if missing or unreadable). Either way neither the
+    // R1CS nor the key is ever fully in memory.
+    if args.r1cs.is_none() && args.circuit.is_none() && xbc.exists() {
+        let row_file = pk_path.with_file_name("r1cs.stream");
+        let kind = match key_form(&pk_path).as_deref() {
+            Some("reduced") => Some(StreamKind::Bytecode),
+            Some("minimized") => Some(StreamKind::RowFile(row_file)),
+            _ if row_file.exists() => Some(StreamKind::RowFile(row_file)),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let (proof, public, fingerprint) = prove_streaming(
+                &args,
+                &xbc,
+                &pk_path,
+                kind,
+                &inputs,
+                profile.as_ref(),
+                timing,
+            )?;
+            return write_outputs(
+                &args,
+                &project,
+                &proof_out,
+                &out_dir,
+                proof,
+                public,
+                &fingerprint,
+            );
+        }
+    }
+
+    // Everything below proves with arkworks, which only knows radix-2 domains.
+    if let Some(n) = key_meta(&pk_path, "qap_domain_size").and_then(|v| v.as_u64())
+        && !n.is_power_of_two()
+    {
+        anyhow::bail!(
+            "{} uses a smooth QAP domain ({n} points), which only the streaming prover \
+             handles, and it can't be used here (an explicit --r1cs/--circuit, or a missing \
+             or stale r1cs.stream). Re-run `xark setup` (add `--domain radix2` for a key \
+             any Groth16 prover accepts)",
+            pk_path.display()
+        );
+    }
+
     // Load the proving key and load+solve the circuit CONCURRENTLY: they're
     // independent (only the Groth16 prove below needs both), and the witness
     // solve is single-threaded — it leaves cores free for the parallel key
@@ -218,7 +275,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
                 let template_min =
                     !super::dbg_flag("XARK_FLAT_MINIMIZE") && !super::dbg_flag("XARK_NO_MINIMIZE");
                 // Resolve inputs from the (cheap) decoded var table — no full expand.
-                let vars = xark_ir::function_decode::decode_vars(&bytes);
+                let vars = xark_ir::function_decode::decode_input_vars(&bytes);
                 let t_expand = te.elapsed();
                 let id_inputs = resolve_input_ids(&vars, &inputs)?;
                 drop(vars);
@@ -319,6 +376,13 @@ pub fn run(args: ProveArgs) -> Result<()> {
     // so persist it (tagged with this circuit's fingerprint) for the next prove.
     // A hit (`preminimized`) needs no write — it came from the cache already.
     if args.cache && !preminimized {
+        let row_file = pk_path.with_file_name("r1cs.stream");
+        if let Err(e) = std::fs::write(
+            &row_file,
+            xark_ir::r1cs_stream::encode(&circuit_fingerprint, circuit.prog()),
+        ) {
+            eprintln!("warning: could not write {}: {e}", row_file.display());
+        }
         match xark_ir::r1cs_cache::serialize(&circuit_fingerprint, circuit.prog()) {
             Ok(bytes) => match std::fs::write(&cache_path, &bytes) {
                 Ok(()) if timing => {
@@ -334,24 +398,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
         }
     }
 
-    // reproducible randomness breaks zero-knowledge on a production key
-    if args.deterministic_rng.is_some() && key_is_production_safe(&pk_path) {
-        anyhow::bail!(
-            "--deterministic-rng cannot be used with a production key \
-             (metadata.production_safe = true): reproducible prover randomness breaks \
-             zero-knowledge. Remove the flag to prove with OS randomness."
-        );
-    }
-
-    let mut rng = match args.deterministic_rng {
-        Some(seed) => {
-            eprintln!(
-                "WARN: --deterministic-rng makes proofs reproducible; do not use in production."
-            );
-            ProveRng::Det(ChaCha20Rng::seed_from_u64(seed))
-        }
-        None => ProveRng::Os(OsRng),
-    };
+    let mut rng = prove_rng(&args, &pk_path)?;
     let t_prove_start = std::time::Instant::now();
     let proof = match pk_opt {
         Some(pk) => prove(&pk, circuit, &public, &mut rng).map_err(synth_err)?,
@@ -369,14 +416,219 @@ pub fn run(args: ProveArgs) -> Result<()> {
         );
     }
 
+    write_outputs(
+        &args,
+        &project,
+        &proof_out,
+        &out_dir,
+        proof,
+        public,
+        &circuit_fingerprint,
+    )
+}
+
+/// The prover RNG: OS randomness, or — test fixtures only — a fixed seed (refused
+/// for production keys: reproducible randomness breaks zero-knowledge).
+fn prove_rng(args: &ProveArgs, pk_path: &std::path::Path) -> Result<ProveRng> {
+    if args.deterministic_rng.is_some() && key_is_production_safe(pk_path) {
+        anyhow::bail!(
+            "--deterministic-rng cannot be used with a production key \
+             (metadata.production_safe = true): reproducible prover randomness breaks \
+             zero-knowledge. Remove the flag to prove with OS randomness."
+        );
+    }
+    Ok(match args.deterministic_rng {
+        Some(seed) => {
+            eprintln!(
+                "WARN: --deterministic-rng makes proofs reproducible; do not use in production."
+            );
+            ProveRng::Det(ChaCha20Rng::seed_from_u64(seed))
+        }
+        None => ProveRng::Os(OsRng),
+    })
+}
+
+/// The R1CS form the key was generated for (`metadata.json` `r1cs_form`):
+/// `"reduced"`, `"minimized"`, or `None` for a key that predates the field
+/// (minimized).
+fn key_form(pk_path: &std::path::Path) -> Option<String> {
+    key_meta(pk_path, "r1cs_form").and_then(|f| f.as_str().map(str::to_string))
+}
+
+/// Field `key` of the `metadata.json` next to the proving key.
+fn key_meta(pk_path: &std::path::Path, key: &str) -> Option<serde_json::Value> {
+    let dir = pk_path.parent()?;
+    fs::read_to_string(dir.join("metadata.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|mut v| v.get_mut(key).map(serde_json::Value::take))
+}
+
+/// Where the streaming prover reads constraint rows from.
+enum StreamKind {
+    /// The template-reduced rows, expanded from `circuit.xbc`.
+    Bytecode,
+    /// The keyed rows from an `r1cs.stream` row file.
+    RowFile(PathBuf),
+}
+
+/// The streaming path: solve by streaming the hint
+/// program, then prove with `xark-groth16` — rows expanded window-by-window from
+/// the bytecode and the key read chunk-by-chunk, so neither the R1CS nor the key
+/// is ever resident. Self-verified against the key's `vk`.
+#[allow(clippy::type_complexity)]
+fn prove_streaming(
+    args: &ProveArgs,
+    xbc: &std::path::Path,
+    pk_path: &std::path::Path,
+    kind: StreamKind,
+    inputs: &BTreeMap<String, String>,
+    profile: Option<&xark_ir::profile::ProfileProgram>,
+    timing: bool,
+) -> Result<(
+    ark_groth16::Proof<ark_bn254::Bn254>,
+    Vec<ark_bn254::Fr>,
+    String,
+)> {
+    let t = std::time::Instant::now();
+    let bytes = std::fs::read(xbc).with_context(|| format!("reading {}", xbc.display()))?;
+    let fingerprint = super::sha256_hex(&bytes);
+    // Whether the rows came without re-running the minimize (the `cached=` marker).
+    let mut cached = true;
+    let src: Box<dyn ConstraintSource> = match kind {
+        StreamKind::Bytecode => {
+            Box::new(xark_groth16::BytecodeSource::new(&bytes).map_err(|e| anyhow::anyhow!(e))?)
+        }
+        StreamKind::RowFile(path) => {
+            let read = std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|rf| xark_groth16::RowFileSource::new(rf).map_err(|e| e.to_string()))
+                .and_then(|src| {
+                    if src.file().fingerprint() == fingerprint {
+                        Ok(src)
+                    } else {
+                        Err("written for a different circuit.xbc".into())
+                    }
+                });
+            match read {
+                Ok(src) => Box::new(src),
+                Err(why) => {
+                    // Rebuild the minimized circuit exactly as `xark setup` keyed it;
+                    // `--cache` writes it back for the next proof.
+                    eprintln!(
+                        "note: {} unusable ({why}); rebuilding the minimized circuit",
+                        path.display()
+                    );
+                    cached = false;
+                    let reduced = xark_ir::function_decode::expand_function_blob_reduced(&bytes)
+                        .map_err(|e| anyhow::anyhow!(e))?
+                        .into_r1cs();
+                    let circuit = XarkCircuit::for_setup(reduced);
+                    let rows = xark_ir::r1cs_stream::encode(&fingerprint, circuit.prog());
+                    drop(circuit);
+                    if args.cache {
+                        fs::write(&path, &rows)
+                            .with_context(|| format!("writing {}", path.display()))?;
+                        println!("Wrote {}", path.display());
+                    }
+                    Box::new(
+                        xark_groth16::RowFileSource::new(rows).map_err(|e| anyhow::anyhow!(e))?,
+                    )
+                }
+            }
+        }
+    };
+    let vars = xark_ir::function_decode::decode_input_vars(&bytes);
+    let id_inputs = resolve_input_ids(&vars, inputs)?;
+    drop(vars);
+    let assign_fp = stream_soundness(&bytes, profile, &id_inputs)?;
+    let t_solve = t.elapsed();
+    let z = src.layout().assignment(|id| {
+        assign_fp.get(&id).map(|v| {
+            v.as_bn254_fr()
+                .unwrap_or_else(|| fr_from_decimal(&v.to_decimal()))
+        })
+    });
+    drop(assign_fp);
+    let public = z[1..src.layout().num_instance()].to_vec();
+    let mut pk = xark_groth16::SerializedPk::open(pk_path).with_context(|| {
+        format!(
+            "reading proving key {} (run `xark setup` first?)",
+            pk_path.display()
+        )
+    })?;
+    // A decoded (uncompressed) copy of a compressed key skips the per-point
+    // decompression. Used only if its header — vk, β, δ, vector lengths — is
+    // exactly this key's (a different setup has a different vk).
+    let decoded = pk_path.with_file_name("pk.decoded.bin");
+    let mut tee_tmp = None;
+    if pk.is_compressed() {
+        match xark_groth16::SerializedPk::open(&decoded) {
+            Ok(c) if !c.is_compressed() && c.header() == pk.header() => {
+                eprintln!("using decoded key cache {}", decoded.display());
+                pk = c;
+            }
+            _ if args.cache => {
+                let tmp = decoded.with_extension("bin.tmp");
+                let f = fs::File::create(&tmp)
+                    .with_context(|| format!("creating {}", tmp.display()))?;
+                pk.tee_uncompressed(Box::new(std::io::BufWriter::with_capacity(1 << 20, f)))?;
+                tee_tmp = Some(tmp);
+            }
+            _ => {}
+        }
+    }
+    let mut rng = prove_rng(args, pk_path)?;
+    let t_prove = std::time::Instant::now();
+    let cfg = xark_groth16::ProverConfig {
+        spill_dir: args.low_memory.then(|| {
+            pk_path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(std::env::temp_dir)
+        }),
+        ..xark_groth16::ProverConfig::default()
+    };
+    let proof = xark_groth16::prove(&*src, &z, &mut pk, &mut rng, &cfg)
+        .map_err(|e| anyhow::anyhow!("streaming prove: {e}"))?;
+    if let Some(tmp) = tee_tmp {
+        if pk.finish_tee()? {
+            fs::rename(&tmp, &decoded).with_context(|| format!("writing {}", decoded.display()))?;
+            println!("Wrote {} (decoded key cache)", decoded.display());
+        } else {
+            let _ = fs::remove_file(&tmp);
+        }
+    }
+    if timing {
+        eprintln!(
+            "PROVE_TIME: [streaming] solve={t_solve:?} prove={:?} ({} constraints) cached={cached}",
+            t_prove.elapsed(),
+            src.num_constraints()
+        );
+    }
+    Ok((proof, public, fingerprint))
+}
+
+/// Write the proof, public inputs, snarkjs files, and the self-contained bundle,
+/// and print the proof / calldata summary.
+#[allow(clippy::too_many_arguments)]
+fn write_outputs(
+    args: &ProveArgs,
+    project: &XarkProject,
+    proof_out: &std::path::Path,
+    out_dir: &std::path::Path,
+    proof: ark_groth16::Proof<ark_bn254::Bn254>,
+    public: Vec<ark_bn254::Fr>,
+    circuit_fingerprint: &str,
+) -> Result<()> {
     let bundle = ProofBundle {
         proof,
         public_inputs: public.clone(),
     };
 
-    fs::create_dir_all(&out_dir)
+    fs::create_dir_all(out_dir)
         .with_context(|| format!("creating output dir {}", out_dir.display()))?;
-    bundle.write_proof(&proof_out)?;
+    bundle.write_proof(proof_out)?;
 
     // Public inputs as canonical binary (primary format for verify/export).
     let public_path = out_dir.join("public_inputs.bin");
@@ -555,6 +807,9 @@ fn autobuild_and_setup(
             // If this prove is streaming, pair it with an uncompressed key so the
             // stream skips decompression too (the auto-setup feeds only this prove).
             uncompressed: args.stream,
+            r1cs_form: setup::R1csForm::Auto,
+            streamable: false,
+            domain: setup::QapDomain::Auto,
         })?;
     }
     Ok(())

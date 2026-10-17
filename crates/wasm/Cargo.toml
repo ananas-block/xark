@@ -17,6 +17,11 @@ crate-type = ["cdylib", "rlib"]
 # `wasm32-unknown-unknown` without threads, and the arkworks `parallel` feature
 # stays off so MSM/FFT run single-threaded too.
 
+[features]
+# Benchmark exports (`benchPrepare`, `benchToCoset`, …) for the FFT tile sweep.
+# Not part of the published bundle: `wasm-pack build -- --features bench`.
+bench = ["dep:ark-poly"]
+
 [dependencies]
 # All xark deps with `default-features = false` so the arkworks `parallel`
 # (rayon) feature stays OFF — rayon's thread pool (and `std::time`) are
@@ -25,6 +30,8 @@ crate-type = ["cdylib", "rlib"]
 xark-ir = { path = "../ir", default-features = false }
 xark-prover = { path = "../prover", default-features = false }
 xark-snarkjs = { path = "../snarkjs" }
+# The streaming prover (`proveStreaming`) and its worker kernels.
+xark-groth16 = { path = "../groth16" }
 
 # Only the arkworks crates actually named in `lib.rs`. `ark-ff` / `ark-ec` /
 # `ark-relations` / `ark-std` are pulled transitively (via `ark-groth16` etc.)
@@ -41,4 +48,8 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 getrandom = { version = "0.2", features = ["js"] }
 rand = "0.8"
+sha2 = "0.11"
+rand_chacha = { version = "0.3", default-features = false }
+ark-ff = { version = "0.6", default-features = false, features = ["std"] }
+ark-poly = { version = "0.6", default-features = false, features = ["std"], optional = true }
 console_error_panic_hook = "0.1"

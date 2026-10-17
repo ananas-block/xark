@@ -108,3 +108,22 @@ test("byte args reject a non-bytes value with a clear message", () => {
     /Uint8Array or ArrayBuffer/,
   );
 });
+
+test("inputs share the CLI resolver: numbers, bigints, and 0x-hex all work", () => {
+  for (const inputs of [
+    { secret: 3, result: 27 },
+    { secret: 3n, result: 27n },
+    { secret: "0x03", result: "0x1b" },
+  ]) {
+    const out = prove(xbc, pk, inputs);
+    assert.deepStrictEqual(public_inputs_to_snarkjs(out.publicInputs), ["27"]);
+  }
+});
+
+test("numbers outside the safe-integer range are rejected, not rounded", () => {
+  assert.throws(() => prove(xbc, pk, { secret: 3, result: 2 ** 60 }), /safe integer/);
+});
+
+test("an unknown input names the circuit's real inputs", () => {
+  assert.throws(() => prove(xbc, pk, { secrett: 3, result: 27 }), /unknown input `secrett`.*secret/);
+});

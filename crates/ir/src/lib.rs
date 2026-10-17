@@ -17,6 +17,7 @@ pub mod primitive;
 pub mod profile;
 pub mod r1cs;
 pub mod r1cs_cache;
+pub mod r1cs_stream;
 pub mod solver;
 
 pub use circuit::{CircuitProgram, R1csRow, expr_from_r1cs};

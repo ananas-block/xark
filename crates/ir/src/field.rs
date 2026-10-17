@@ -7,9 +7,16 @@
 //! element; a backend reduces into `[0, p)` once it knows the modulus.
 //!
 //! Values are overwhelmingly tiny, so we store an `i64` inline and fall back to a
-//! heap `BigInt` only for rare field-sized values. The `Small`/`Big` split is
-//! *canonical* (a value is `Small` iff it fits in `i64`), so derived `Eq` is
+//! shared heap `BigInt` only for rare field-sized values. The `Small`/`Big` split
+//! is *canonical* (a value is `Small` iff it fits in `i64`), so derived `Eq` is
 //! correct and the serialized decimal is byte-identical.
+//!
+//! A big value is unreduced and can be far wider than the field (folded MDS
+//! products in Poseidon run to thousands of bits), so reducing it is costly. Its
+//! BN254 reduction is computed once and cached on the shared allocation: every
+//! clone (each template call's copy of a coefficient) reuses it.
+
+use std::sync::{Arc, OnceLock};
 
 use num_bigint::BigInt;
 use num_traits::{One, Signed, ToPrimitive};
@@ -21,7 +28,36 @@ enum Repr {
     Small(i64),
     /// A value outside `i64` range (e.g. a ~254-bit round constant). Maintained
     /// so that it never holds a value representable as `Small` (canonical).
-    Big(BigInt),
+    Big(Arc<Big>),
+}
+
+/// A big value and its BN254 reduction (computed on first use). Compared,
+/// ordered and printed by `value` alone.
+struct Big {
+    value: BigInt,
+    bn254: OnceLock<ark_bn254::Fr>,
+}
+
+impl PartialEq for Big {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+impl Eq for Big {}
+impl PartialOrd for Big {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Big {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+impl std::fmt::Debug for Big {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
 }
 
 /// A field constant, serialized transparently as the bare decimal string
@@ -35,16 +71,45 @@ pub struct FieldConst {
 fn norm(v: BigInt) -> Repr {
     match v.to_i64() {
         Some(i) => Repr::Small(i),
-        None => Repr::Big(v),
+        None => Repr::Big(Arc::new(Big {
+            value: v,
+            bn254: OnceLock::new(),
+        })),
     }
 }
 
+/// `v mod r` for BN254's scalar field `r` (any sign or width).
+fn reduce_bn254(v: &BigInt) -> ark_bn254::Fr {
+    use ark_bn254::Fr;
+    use ark_ff::{BigInt as Limbs, BigInteger, PrimeField};
+    static R: OnceLock<num_bigint::BigUint> = OnceLock::new();
+    let r = R.get_or_init(|| num_bigint::BigUint::from_bytes_le(&Fr::MODULUS.to_bytes_le()));
+    let m = v.magnitude() % r;
+    let mut l = [0u64; 4];
+    for (d, x) in l.iter_mut().zip(m.to_u64_digits()) {
+        *d = x;
+    }
+    let f = Fr::from_bigint(Limbs::new(l)).expect("reduced below the modulus");
+    if v.is_negative() { -f } else { f }
+}
+
 impl FieldConst {
+    /// This constant reduced into BN254's scalar field — computed once per big
+    /// value and shared by its clones.
+    pub fn to_bn254_fr(&self) -> ark_bn254::Fr {
+        use ark_bn254::Fr;
+        match &self.repr {
+            Repr::Small(i) if *i < 0 => -Fr::from(i.unsigned_abs()),
+            Repr::Small(i) => Fr::from(*i as u64),
+            Repr::Big(b) => *b.bn254.get_or_init(|| reduce_bn254(&b.value)),
+        }
+    }
+
     /// The value as a `BigInt` (allocates only for the `Big` case).
     pub fn big(&self) -> BigInt {
         match &self.repr {
             Repr::Small(i) => BigInt::from(*i),
-            Repr::Big(b) => b.clone(),
+            Repr::Big(b) => b.value.clone(),
         }
     }
 
@@ -76,7 +141,7 @@ impl FieldConst {
     pub fn decimal(&self) -> String {
         match &self.repr {
             Repr::Small(i) => i.to_string(),
-            Repr::Big(b) => b.to_string(),
+            Repr::Big(b) => b.value.to_string(),
         }
     }
 
@@ -103,7 +168,7 @@ impl FieldConst {
     pub fn is_negative(&self) -> bool {
         match &self.repr {
             Repr::Small(i) => *i < 0,
-            Repr::Big(b) => b.is_negative(),
+            Repr::Big(b) => b.value.is_negative(),
         }
     }
 
@@ -112,7 +177,7 @@ impl FieldConst {
         match &self.repr {
             // `unsigned_abs` handles `i64::MIN` without overflow.
             Repr::Small(i) => i.unsigned_abs().to_string(),
-            Repr::Big(b) => b.abs().to_string(),
+            Repr::Big(b) => b.value.abs().to_string(),
         }
     }
 
@@ -167,8 +232,8 @@ impl FieldConst {
         match &self.repr {
             Repr::Small(i) => (*i < 0, i.unsigned_abs() == 1, i.unsigned_abs().to_string()),
             Repr::Big(b) => {
-                let abs = b.abs();
-                (b.is_negative(), abs.is_one(), abs.to_string())
+                let abs = b.value.abs();
+                (b.value.is_negative(), abs.is_one(), abs.to_string())
             }
         }
     }
