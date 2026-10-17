@@ -61,6 +61,8 @@ pub use crate::lang::{
 // `require_eq` dispatches through `RequireEqCircuit`, comparing scalars, fixed
 // arrays, and composite types; downstream crates impl it for their own shapes.
 pub use crate::lang::RequireEqCircuit;
+#[doc(hidden)]
+pub use crate::lang::bytes_to_fields;
 // The recognized scalar-equality intrinsic every `RequireEqCircuit` impl bottoms
 // out at — re-exported (doc-hidden) so the compiler's intrinsic scan finds it by
 // name. Authors never touch it; they write `require_eq`.

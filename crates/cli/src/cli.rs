@@ -169,10 +169,16 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
             );
             eprintln!(
                 "\n{}",
-                crate::style::next_steps(&[(
-                    format!("xark setup {}", crate_dir.display()),
-                    "generate the proving/verifying keys",
-                )])
+                crate::style::next_steps(&[
+                    (
+                        format!("xark setup {}", crate_dir.display()),
+                        "generate the proving/verifying keys",
+                    ),
+                    (
+                        format!("xark codegen ts {}", crate_dir.display()),
+                        "generate a typed TypeScript client (no setup needed)",
+                    ),
+                ])
             );
             0
         }
@@ -405,7 +411,11 @@ pub fn cmd_init(args: &[String]) -> i32 {
          [dev-dependencies]\n\
          xark-prover = \"{ver}\"\n\
          # From git:               xark-prover = {{ git = \"https://github.com/blueshift-gg/xark\" }}\n\
-         # From a local checkout:  xark-prover = {{ path = \"../xark/crates/prover\" }}\n"
+         # From a local checkout:  xark-prover = {{ path = \"../xark/crates/prover\" }}\n\n\
+         # `xark` is set only by the circuit build; declare it so rustc's `unexpected_cfgs`\n\
+         # lint (1.80+) stays quiet.\n\
+         [lints.rust]\n\
+         unexpected_cfgs = {{ level = \"warn\", check-cfg = ['cfg(xark)'] }}\n"
     );
     let fn_ident = ident_of(&name);
     let inputs_struct = format!("{}Inputs", pascal_of(&fn_ident));
@@ -524,7 +534,7 @@ fn pascal_of(ident: &str) -> String {
 /// under `cargo test` so the `xark-prover` test harness (which uses `std`) can
 /// link.
 const LIB_TEMPLATE: &str = "\
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 #[circuit]

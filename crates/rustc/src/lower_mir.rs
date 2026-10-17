@@ -742,6 +742,23 @@ impl<'tcx> LoweringEnv<'tcx> {
     /// The common `uN` width of a binary op's operands (at least one a `uN` local),
     /// else `None` — the signal to lower it as a native-integer op rather than a
     /// bool-wire op.
+    /// Like [`Self::operand_uint_width`], but also inside an inlined callee (e.g. the
+    /// `v as u64` in `impl From<u8> for Field`), by typing the operand against the
+    /// callee's MIR with the current frame's generic args substituted.
+    fn operand_uint_width_any(&self, op: &Operand<'tcx>) -> Option<u32> {
+        let Some(&def_id) = self.inlining.last() else {
+            return self.operand_uint_width(op);
+        };
+        let body = self.tcx.optimized_mir(def_id);
+        let ty = op.ty(&body.local_decls, self.tcx);
+        let ty = self.tcx.instantiate_and_normalize_erasing_regions(
+            self.cur_substs(),
+            rustc_middle::ty::TypingEnv::fully_monomorphized(),
+            rustc_middle::ty::EarlyBinder::bind(ty),
+        );
+        uint_width(ty)
+    }
+
     fn binop_uint_width(&self, a: &Operand<'tcx>, b: &Operand<'tcx>) -> Option<u32> {
         self.operand_uint_width(a)
             .or_else(|| self.operand_uint_width(b))
@@ -2458,6 +2475,111 @@ fn flatten_field_leaves<'tcx>(
     }
 }
 
+/// The circuit's input interface as JSON, written beside `circuit.xbc` as `schema.json`
+/// so clients can be generated from build output alone (no `setup`, no proof):
+///
+/// ```text
+/// {"version": 1, "circuit": "<fn>",
+///  "inputs": [{"name", "visibility": "public"|"private", "type"}, …],
+///  "types": {"<Struct>": {"struct": [{"name", "type"}, …]}, …},
+///  "public_inputs": ["<leaf>", …]}
+/// ```
+///
+/// A `type` is `"field"`, `{"uint": N}`, `{"array": {"of": <type>, "len": N}}`,
+/// `{"tuple": [<type>, …]}`, or `{"ref": "<Struct>"}`. It is read from the entry's MIR
+/// types, so it describes exactly what the compiler binds. `public_inputs` lists the
+/// public leaves in proof order (the order a verifier passes them).
+pub fn input_schema<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    entry: &EntryInfo,
+    body: &Body<'tcx>,
+) -> CompileResult<serde_json::Value> {
+    use serde_json::{Value, json};
+
+    fn ty_json<'tcx>(
+        tcx: TyCtxt<'tcx>,
+        ty: rustc_middle::ty::Ty<'tcx>,
+        types: &mut serde_json::Map<String, Value>,
+    ) -> CompileResult<Value> {
+        if let Some(d) = ty.ty_adt_def()
+            && tcx.item_name(d.did()).as_str() == "Field"
+        {
+            return Ok(json!("field"));
+        }
+        if let Some(w) = uint_width(ty) {
+            return Ok(json!({ "uint": w }));
+        }
+        match ty.kind() {
+            rustc_middle::ty::TyKind::Array(elem, len) => {
+                let n = len.try_to_target_usize(tcx).ok_or_else(|| {
+                    CompileError::new("circuit input array length must be constant")
+                })?;
+                Ok(json!({ "array": { "of": ty_json(tcx, *elem, types)?, "len": n } }))
+            }
+            rustc_middle::ty::TyKind::Tuple(elems) => Ok(json!({
+                "tuple": elems
+                    .iter()
+                    .map(|e| ty_json(tcx, e, types))
+                    .collect::<CompileResult<Vec<_>>>()?
+            })),
+            rustc_middle::ty::TyKind::Adt(def, args) if def.is_struct() => {
+                let name = tcx.item_name(def.did()).to_string();
+                if !types.contains_key(&name) {
+                    // Reserve first, so a struct reached twice is described once.
+                    types.insert(name.clone(), Value::Null);
+                    let fields = def
+                        .non_enum_variant()
+                        .fields
+                        .iter()
+                        .map(|f| {
+                            Ok(json!({
+                                "name": f.name.to_string(),
+                                "type": ty_json(tcx, f.ty(tcx, args), types)?,
+                            }))
+                        })
+                        .collect::<CompileResult<Vec<_>>>()?;
+                    types.insert(name.clone(), json!({ "struct": fields }));
+                }
+                Ok(json!({ "ref": name }))
+            }
+            _ => Err(CompileError::new(format!(
+                "unsupported circuit input type `{ty}`"
+            ))),
+        }
+    }
+
+    let mut types = serde_json::Map::new();
+    let mut inputs = Vec::new();
+    let mut public_inputs = Vec::new();
+    for (i, input) in entry.inputs.iter().enumerate() {
+        let ty = body.local_decls[rustc_middle::mir::Local::from_usize(i + 1)].ty;
+        let public = matches!(input.visibility, Visibility::Public);
+        inputs.push(json!({
+            "name": input.name,
+            "visibility": if public { "public" } else { "private" },
+            "type": ty_json(tcx, ty, &mut types)?,
+        }));
+        if public {
+            let mut leaves = Vec::new();
+            flatten_field_leaves(tcx, ty, &mut Vec::new(), &input.name, &mut leaves)?;
+            public_inputs.extend(leaves.into_iter().map(|(_, name, _)| name));
+        }
+    }
+    // `#[circuit]` compiles the body under a hidden `__<fn>_entry` name; report `<fn>`.
+    let circuit = entry
+        .name
+        .strip_prefix("__")
+        .and_then(|n| n.strip_suffix("_entry"))
+        .unwrap_or(&entry.name);
+    Ok(json!({
+        "version": 1,
+        "circuit": circuit,
+        "inputs": inputs,
+        "types": types,
+        "public_inputs": public_inputs,
+    }))
+}
+
 /// Lower the `circuit` body into both the R1CS and the primitive IR.
 pub fn lower<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -3311,6 +3433,23 @@ fn lower_statement<'tcx>(
                 Rvalue::Cast(_, operand, ty) => {
                     if let Some(v) = env.operand_to_int(operand) {
                         env.set_int_at(dest, &dest_path, truncate_int_cast(v, *ty));
+                    } else if let (Some(from), Some(to)) =
+                        (env.operand_uint_width_any(operand), uint_width(*ty))
+                        && let Ok(lc) = env.operand_to_lc(operand)
+                    {
+                        // A `uN` witness cast: widening keeps the value (`< 2^from <= 2^to`),
+                        // so it is the identity on the wire. Narrowing would need a
+                        // truncation gadget the subset doesn't provide.
+                        if to < from {
+                            return Err(CompileError::new(format!(
+                                "narrowing cast of a witness (`u{from}` as `u{to}`) is not supported"
+                            ))
+                            .with_help(
+                                "widening casts are free; to truncate, decompose with \
+                                 `Field::from(x).to_bits::<N>()` and recombine the low bits",
+                            ));
+                        }
+                        env.set_field_at(dest, &dest_path, lc);
                     }
                     Ok(())
                 }
@@ -3640,14 +3779,24 @@ fn lower_call<'tcx>(
             let out = env.emit_pow(base, n);
             env.set_field(dest, out);
         }
-        KnownCall::FieldConstantU64 => {
-            let v = env.operand_to_u64(arg(0)?)?;
-            env.set_field(dest, LinearCombination::constant(v.to_string()));
-        }
-        KnownCall::FieldConstantU128 => {
-            let v = env.operand_to_u128(arg(0)?)?;
-            env.set_field(dest, LinearCombination::constant(v.to_string()));
-        }
+        // `Field::from(x)` for a native `uN`: a constant folds to a constant LC; a `uN`
+        // *witness* (a range-checked input, or the result of `uN` arithmetic) is already a
+        // field wire `< 2^N`, so the conversion is the identity on its LC — zero
+        // constraints. This is what lets a `uN` struct field flatten into `to_fields()`.
+        KnownCall::FieldConstantU64 => match env.operand_to_u64(arg(0)?) {
+            Ok(v) => env.set_field(dest, LinearCombination::constant(v.to_string())),
+            Err(e) => {
+                let x = env.operand_to_lc(arg(0)?).map_err(|_| e)?;
+                env.set_field(dest, x);
+            }
+        },
+        KnownCall::FieldConstantU128 => match env.operand_to_u128(arg(0)?) {
+            Ok(v) => env.set_field(dest, LinearCombination::constant(v.to_string())),
+            Err(e) => {
+                let x = env.operand_to_lc(arg(0)?).map_err(|_| e)?;
+                env.set_field(dest, x);
+            }
+        },
         KnownCall::FieldConstantDecimal => {
             let s = env.operand_to_str(arg(0)?)?;
             let field_const = xark_ir::FieldConst::from_decimal(&s).ok_or_else(|| {

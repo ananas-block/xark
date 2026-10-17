@@ -12,7 +12,7 @@ use ark_bn254::Fr;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
-use xark_ir::primitive::{PrimitiveProgram, VarRole};
+use xark_ir::primitive::PrimitiveProgram;
 use xark_ir::profile::ProfileProgram;
 use xark_ir::solver::Fp;
 use xark_ir::{R1csProgram, VarId, Visibility};
@@ -36,6 +36,7 @@ pub(crate) fn dbg_flag(name: &str) -> bool {
 pub mod ceremony;
 pub mod check;
 pub mod client;
+pub mod codegen;
 pub mod completions;
 pub mod doctor;
 pub mod export;
@@ -95,6 +96,8 @@ pub enum Command {
     Export(export::ExportArgs),
     /// Scaffold a TypeScript client (verify with snarkjs + on-chain calldata).
     Client(client::ClientArgs),
+    /// Generate a typed client from the build's `schema.json` (no setup or proof needed).
+    Codegen(codegen::CodegenArgs),
     /// Phase-2 MPC ceremony for trusted setup.
     Ceremony(ceremony::CeremonyArgs),
     /// Print circuit statistics (variables, constraints, public inputs).
@@ -148,6 +151,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Verify(a) => verify::run(a),
         Command::Export(a) => export::run(a),
         Command::Client(a) => client::run(a),
+        Command::Codegen(a) => codegen::run(a),
         Command::Ceremony(a) => ceremony::run(a),
         Command::Inspect(a) => inspect::run(a),
         Command::Profile(a) => profile::run(a),
@@ -313,18 +317,15 @@ pub fn parse_input_text(text: &str, source: &std::path::Path) -> Result<BTreeMap
         let map = obj.as_object().ok_or_else(|| {
             anyhow::anyhow!("{}: expected a JSON object of name→value", source.display())
         })?;
-        for (name, value) in map {
-            let v = match value {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                other => anyhow::bail!(
-                    "{}: input `{name}` must be a decimal string or number, got {other}",
-                    source.display()
-                ),
-            };
-            out.insert(name.clone(), v);
-        }
-        return Ok(out);
+        let entries = map
+            .iter()
+            .map(|(name, value)| {
+                json_to_input(value)
+                    .map(|v| (name.clone(), v))
+                    .map_err(|e| anyhow::anyhow!("{}: input `{name}`: {e}", source.display()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return Ok(xark_prover::flatten_inputs(entries));
     }
 
     for (lineno, raw) in text.lines().enumerate() {
@@ -343,6 +344,34 @@ pub fn parse_input_text(text: &str, source: &std::path::Path) -> Result<BTreeMap
         out.insert(name.trim().to_string(), value.to_string());
     }
     Ok(out)
+}
+
+/// A JSON input value → [`xark_prover::InputValue`]: strings and integers are scalars,
+/// `true`/`false` are `1`/`0`, arrays and objects nest (flattened to `name[i]` /
+/// `name.field`). Non-integer or out-of-`u64`/`i64` numbers are rejected rather than
+/// rounded: pass big values as decimal or `0x`-hex strings.
+fn json_to_input(v: &serde_json::Value) -> Result<xark_prover::InputValue> {
+    use xark_prover::InputValue;
+    Ok(match v {
+        serde_json::Value::String(s) => InputValue::Scalar(s.clone()),
+        serde_json::Value::Number(n) => match (n.as_u64(), n.as_i64()) {
+            (Some(u), _) => InputValue::Scalar(u.to_string()),
+            (None, Some(i)) => InputValue::Scalar(i.to_string()),
+            _ => anyhow::bail!(
+                "number {n} is not an exact integer; pass large values as a decimal string"
+            ),
+        },
+        serde_json::Value::Bool(b) => InputValue::Scalar(if *b { "1" } else { "0" }.into()),
+        serde_json::Value::Array(xs) => {
+            InputValue::List(xs.iter().map(json_to_input).collect::<Result<_>>()?)
+        }
+        serde_json::Value::Object(m) => InputValue::Map(
+            m.iter()
+                .map(|(k, x)| Ok((k.clone(), json_to_input(x)?)))
+                .collect::<Result<_>>()?,
+        ),
+        serde_json::Value::Null => anyhow::bail!("null is not an input value"),
+    })
 }
 
 /// Render a copy-pasteable `--inputs` JSON template naming every declared input,
@@ -466,253 +495,14 @@ pub fn load_profile(dir: &std::path::Path) -> Option<ProfileProgram> {
         .and_then(|s| xark_ir::profile::from_json(&s).ok())
 }
 
-/// A `0x`-prefixed hex string → raw bytes (rejects a missing prefix / odd length).
-fn parse_hex_bytes(s: &str) -> Result<Vec<u8>> {
-    let h = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .ok_or_else(|| anyhow::anyhow!("expected a 0x-prefixed hex string, got `{s}`"))?;
-    hex::decode(h).map_err(|e| anyhow::anyhow!("invalid hex `{s}`: {e}"))
-}
-
-/// A 256-bit input value → big-endian bytes: a `0x`-hex string (the natural form
-/// of a crypto scalar/coordinate) or a plain decimal.
-fn value_to_be_bytes(v: &str) -> Result<Vec<u8>> {
-    if v.starts_with("0x") || v.starts_with("0X") {
-        parse_hex_bytes(v)
-    } else {
-        num_bigint::BigUint::parse_bytes(v.trim().as_bytes(), 10)
-            .map(|n| n.to_bytes_be())
-            .ok_or_else(|| anyhow::anyhow!("expected a decimal or `0x`-hex value, got `{v}`"))
-    }
-}
-
-/// The limb bit-width for an `N`-limb non-native value: 2×128 (the packed secp
-/// half form) or 3×86 (the default field-element layout).
-fn limb_bits(n_limbs: usize) -> Result<u32> {
-    match n_limbs {
-        2 => Ok(128),
-        3 => Ok(86),
-        n => anyhow::bail!("unsupported {n}-limb layout (expected 2×128 or 3×86)"),
-    }
-}
-
-/// Count the `prefix.limbs[i]` leaves present in `vars` (`0` if none).
-fn count_limbs(vars: &[xark_ir::primitive::Var], prefix: &str) -> usize {
-    let key = format!("{prefix}.limbs");
-    vars.iter()
-        .filter(|v| array_index(&v.name, &key).is_some())
-        .count()
-}
-
-/// The distinct `<field>` names of a compound input `prefix.<field>.limbs[i]`
-/// (e.g. `["x", "y"]` for a point, `["r", "s"]` for a signature), name-sorted.
-fn sub_fields(vars: &[xark_ir::primitive::Var], prefix: &str) -> Vec<String> {
-    let pre = format!("{prefix}.");
-    let mut fs: Vec<String> = vars
-        .iter()
-        .filter_map(|v| {
-            let (f, tail) = v.name.strip_prefix(&pre)?.split_once('.')?;
-            tail.starts_with("limbs[").then(|| f.to_string())
-        })
-        .collect();
-    fs.sort_unstable();
-    fs.dedup();
-    fs
-}
-
-/// A byte-array leaf `name[i]` → its index `i` (only a flat 1-D index; nested /
-/// multi-dim names like `x.bits[0][1]` return `None`).
-fn array_index(leaf: &str, name: &str) -> Option<usize> {
-    let inner = leaf
-        .strip_prefix(name)?
-        .strip_prefix('[')?
-        .strip_suffix(']')?;
-    if inner.contains('[') {
-        return None;
-    }
-    inner.parse().ok()
-}
-
-/// A SHA-256 digest leaf `name.bits[w][j]` → `(word, bit)`.
-fn digest_index(leaf: &str, name: &str) -> Option<(usize, usize)> {
-    let rest = leaf.strip_prefix(name)?.strip_prefix(".bits[")?;
-    let (w, rest) = rest.split_once("][")?;
-    let j = rest.strip_suffix(']')?;
-    Some((w.parse().ok()?, j.parse().ok()?))
-}
-
-/// The logical input a leaf belongs to (`input[3]` → `input`, `d.bits[0][1]` → `d`).
-fn logical_root(leaf: &str) -> &str {
-    let cut = leaf.find(['[', '.']).unwrap_or(leaf.len());
-    &leaf[..cut]
-}
-
-/// Resolve `name → value` inputs to `VarId → decimal` for the solver.
-///
-/// Shared by `xark prove` and `xark check --inputs`. A name may be a single leaf
-/// or a **logical input** that fans out to its leaves:
-///   * scalar `Field` → decimal, or `0x`-hex (reduced mod p);
-///   * byte array `[u8; N]` (leaves `name[i]`) → a `0x`-hex string of exactly `N`
-///     bytes, one byte per leaf;
-///   * hash (leaves `name.hi` / `name.lo`) → a `0x`-hex string of 32 bytes packed
-///     into two 128-bit field halves (top 16 bytes → `hi`, low 16 → `lo`);
-///   * SHA-256 digest (leaves `name.bits[w][j]`) → a `0x`-hex string of 32 bytes,
-///     decomposed into the 256 bit leaves in the gadget's word/byte/bit layout.
-///
-/// A wrong value can only yield an unsatisfiable witness (a clear failure), never
-/// a false proof, so this stays a convenience over the always-safe flat form.
+/// Resolve `name → value` inputs to `VarId → decimal` for the solver. Shared by
+/// `xark prove` and `xark check --inputs`; the logic lives in
+/// [`xark_prover::resolve_input_ids`] so the wasm prover accepts exactly the same inputs.
 pub fn resolve_input_ids(
     vars: &[xark_ir::primitive::Var],
     inputs: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<VarId, String>> {
-    let by_name: BTreeMap<&str, VarId> = vars.iter().map(|v| (v.name.as_str(), v.id)).collect();
-    let is_hex = |s: &str| s.starts_with("0x") || s.starts_with("0X");
-    let mut id_inputs: BTreeMap<VarId, String> = BTreeMap::new();
-
-    for (k, v) in inputs {
-        // 1. Exact leaf — a scalar value (decimal, or `0x`-hex reduced mod p).
-        if let Some(&id) = by_name.get(k.as_str()) {
-            let dec = if is_hex(v) {
-                xark_prover::hex_to_field_decimal(v)
-                    .map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?
-            } else {
-                xark_prover::try_fr_from_decimal(v)
-                    .map_err(|e| anyhow::anyhow!("invalid value for input `{k}`: {e}"))?;
-                v.clone()
-            };
-            id_inputs.insert(id, dec);
-            continue;
-        }
-
-        // 2. Byte array `name[i]` — a `0x`-hex string, one byte per leaf.
-        let mut arr: Vec<(usize, VarId)> = vars
-            .iter()
-            .filter_map(|var| array_index(&var.name, k).map(|i| (i, var.id)))
-            .collect();
-        if !arr.is_empty() {
-            arr.sort_unstable_by_key(|(i, _)| *i);
-            let bytes = parse_hex_bytes(v).map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?;
-            if bytes.len() != arr.len() {
-                anyhow::bail!(
-                    "input `{k}` is a {}-byte array, but the hex value has {} bytes",
-                    arr.len(),
-                    bytes.len()
-                );
-            }
-            for ((_, id), byte) in arr.iter().zip(bytes) {
-                id_inputs.insert(*id, byte.to_string());
-            }
-            continue;
-        }
-
-        // 3. Packed hash `name.hi` / `name.lo` — a 32-byte `0x`-hex value split into
-        //    two 128-bit field halves (top 16 bytes → hi, low 16 → lo, big-endian).
-        if let (Some(&hi_id), Some(&lo_id)) = (
-            by_name.get(format!("{k}.hi").as_str()),
-            by_name.get(format!("{k}.lo").as_str()),
-        ) {
-            let bytes = parse_hex_bytes(v).map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?;
-            if bytes.len() != 32 {
-                anyhow::bail!(
-                    "hash input `{k}` needs a 32-byte hex value, but got {} bytes",
-                    bytes.len()
-                );
-            }
-            let pack = |chunk: &[u8]| chunk.iter().fold(0u128, |acc, &b| (acc << 8) | b as u128);
-            id_inputs.insert(hi_id, pack(&bytes[..16]).to_string());
-            id_inputs.insert(lo_id, pack(&bytes[16..]).to_string());
-            continue;
-        }
-
-        // 4. SHA-256 digest `name.bits[w][j]` — a 32-byte `0x`-hex hash. Byte `idx`
-        //    occupies word `idx/4`, big-endian slot within the word; leaf bit `j`
-        //    of word `w` is bit `j%8` of hash byte `4w + (3 - j/8)`.
-        let dig: Vec<((usize, usize), VarId)> = vars
-            .iter()
-            .filter_map(|var| digest_index(&var.name, k).map(|wj| (wj, var.id)))
-            .collect();
-        if !dig.is_empty() {
-            let bytes = parse_hex_bytes(v).map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?;
-            if bytes.len() != 32 {
-                anyhow::bail!(
-                    "digest input `{k}` needs a 32-byte hex value, but got {} bytes",
-                    bytes.len()
-                );
-            }
-            for ((w, j), id) in dig {
-                let byte = bytes[4 * w + (3 - j / 8)];
-                id_inputs.insert(id, ((byte >> (j % 8)) & 1).to_string());
-            }
-            continue;
-        }
-
-        // 5. Non-native scalar `name.limbs[i]` — a 256-bit value (a `0x`-hex crypto
-        //    scalar or a decimal) fanned out to its `N` little-endian limbs via the
-        //    same `limb_leaves` the gadget's host `NativeInput` uses. `N` picks the
-        //    layout: 2 → 128-bit halves (packed secp), 3 → 86-bit limbs.
-        let n_scalar = count_limbs(vars, k);
-        if n_scalar > 0 {
-            let be = value_to_be_bytes(v).map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?;
-            let bits = limb_bits(n_scalar)?;
-            for (name, dec) in xark_prover::limb_leaves(&be, k, n_scalar, bits) {
-                if let Some(&id) = by_name.get(name.as_str()) {
-                    id_inputs.insert(id, dec);
-                }
-            }
-            continue;
-        }
-
-        // 6. Non-native compound `name.<field>.limbs[i]` (an affine point `x ‖ y`,
-        //    an ECDSA signature `r ‖ s`, …) — a big-endian concatenation of its
-        //    32-byte fields (with an optional SEC1 `0x04` tag), each field fanned
-        //    out like case 5. Fields are taken in name order (`r`<`s`, `x`<`y`),
-        //    matching the wire concatenation.
-        let fields = sub_fields(vars, k);
-        if !fields.is_empty() {
-            let mut bytes = parse_hex_bytes(v).map_err(|e| anyhow::anyhow!("input `{k}`: {e}"))?;
-            let want = fields.len() * 32;
-            if bytes.len() == want + 1 && bytes[0] == 0x04 {
-                bytes.remove(0); // strip the SEC1 uncompressed-point tag
-            }
-            if bytes.len() != want {
-                anyhow::bail!(
-                    "compound input `{k}` ({} fields: {fields:?}) needs a {want}-byte \
-                     big-endian value{}, but got {} bytes",
-                    fields.len(),
-                    if fields.len() == 2 {
-                        " (or 65 with the 0x04 SEC1 tag)"
-                    } else {
-                        ""
-                    },
-                    bytes.len()
-                );
-            }
-            for (i, f) in fields.iter().enumerate() {
-                let chunk = &bytes[i * 32..(i + 1) * 32];
-                let n = count_limbs(vars, &format!("{k}.{f}"));
-                for (name, dec) in
-                    xark_prover::limb_leaves(chunk, &format!("{k}.{f}"), n, limb_bits(n)?)
-                {
-                    if let Some(&id) = by_name.get(name.as_str()) {
-                        id_inputs.insert(id, dec);
-                    }
-                }
-            }
-            continue;
-        }
-
-        // Unknown — list the circuit's logical inputs (deduped roots, not leaves).
-        let mut roots: Vec<&str> = vars
-            .iter()
-            .filter(|v| !matches!(v.role, VarRole::Derived))
-            .map(|v| logical_root(&v.name))
-            .collect();
-        roots.sort_unstable();
-        roots.dedup();
-        anyhow::bail!("unknown input `{k}` (circuit inputs: {roots:?})");
-    }
-    Ok(id_inputs)
+    xark_prover::resolve_input_ids(vars, inputs).map_err(anyhow::Error::msg)
 }
 
 /// The witness-based under-constrained soundness gate, shared by `xark prove`
@@ -919,6 +709,37 @@ mod tests {
     }
 
     #[test]
+    fn parses_nested_json_to_flatten_names() {
+        // Objects nest as `name.field`, arrays as `name[i]`; bools are 0/1.
+        let inputs = parse_input_text(
+            r#"{"id": {"dob": 19940312, "tags": [1, "0x02"], "ok": true}, "x": "7"}"#,
+            Path::new("witness.json"),
+        )
+        .unwrap();
+        let got: Vec<(&str, &str)> = inputs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("id.dob", "19940312"),
+                ("id.ok", "1"),
+                ("id.tags[0]", "1"),
+                ("id.tags[1]", "0x02"),
+                ("x", "7"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_inexact_json_numbers() {
+        // A float, or an integer past u64, would be silently rounded; ask for a string.
+        assert!(parse_input_text(r#"{"a": 1.5}"#, Path::new("w.json")).is_err());
+        assert!(parse_input_text(r#"{"a": 18446744073709551616}"#, Path::new("w.json")).is_err());
+    }
+
+    #[test]
     fn parses_json_without_losing_large_values() {
         let inputs = parse_input_text(
             r#"{"amount": 34, "field": "21888242871839275222246405745257275088548364400416034343698204186575808495616"}"#,
@@ -934,13 +755,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_scalar_json_values() {
-        let err = parse_input_text(r#"{"path": [1, 2]}"#, Path::new("witness.json")).unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("input `path` must be a decimal string or number")
-        );
+    fn rejects_null_json_values() {
+        // Arrays and objects now nest (see `parses_nested_json_to_flatten_names`); a
+        // null still has no meaning as an input.
+        let err =
+            parse_input_text(r#"{"path": [1, null]}"#, Path::new("witness.json")).unwrap_err();
+        assert!(err.to_string().contains("input `path`"), "{err}");
+        assert!(err.to_string().contains("null"), "{err}");
     }
 
     #[test]

@@ -20,6 +20,9 @@ use xark_ir::profile::ProfileProgram;
 use xark_ir::solver::{self, Fp};
 use xark_ir::{FieldConst, LinearCombination as IrLc, R1csProgram, VarId, Visibility};
 
+pub mod inputs;
+pub use inputs::{InputValue, flatten_inputs, resolve_input_ids};
+
 /// Developer-diagnostics env-flag probe. Only reads the environment under the
 /// `debug` feature; a normal release build compiles this to `false` so the
 /// diagnostic branches (and their `XARK_*` knobs) vanish entirely.
@@ -460,6 +463,13 @@ pub trait NativeInput {
     /// Fan a native value out to `(leaf-name, decimal)` pairs under `prefix`,
     /// matching the compiler's flatten names for this circuit type.
     fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)>;
+
+    /// This type's schema JSON for `<Fn>Inputs::schema()`. `#[derive(CircuitInput)]`
+    /// describes the struct in `defs` and returns `{"ref": "<Name>"}`; any other input
+    /// type defaults to `{"opaque": "<rust path>"}`, meaning a gadget-specific encoding.
+    fn schema(_defs: &mut BTreeMap<String, String>) -> String {
+        format!("{{\"opaque\":{:?}}}", std::any::type_name::<Self>())
+    }
 }
 
 /// Split a big-endian byte string into `n_limbs` little-endian `bits`-bit limbs,

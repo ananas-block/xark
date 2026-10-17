@@ -35,8 +35,8 @@ each `cargo install`.
 
 Write a circuit as a `#![no_std]` function over `Field` values, using the `xark`
 prelude. `require_eq` emits a circuit equality constraint (not a native `bool`);
-`Private<T>` / `Public<T>` mark input visibility; `Field` supports `+ - * ^`
-(with `^ n` meaning exponentiation).
+`Private<T>` / `Public<T>` mark input visibility; `Field` supports `+ - *`,
+`.pow(n)` for exponentiation by a constant, and `^` as boolean XOR.
 
 ```rust
 #![no_std]
@@ -44,7 +44,7 @@ use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.
 pub fn circuit(secret: Private<Field>, result: Public<Field>) {
-    require_eq(secret ^ 3, result);
+    require_eq(secret.pow(3), result);
 }
 ```
 
@@ -57,7 +57,11 @@ xark init my-circuit
 # Compile: Rust → MIR → xark-IR → R1CS. All output (artifacts + an isolated
 # cargo target) lives under the crate's target/xark/.
 xark build examples/cube
-# → writes examples/cube/target/xark/cube/ (circuit.json + r1cs.json)
+# → writes examples/cube/target/xark/cube/ (circuit.xbc + schema.json)
+
+# Generate a typed TypeScript client from schema.json: no setup or proof needed.
+xark codegen ts examples/cube
+# → examples/cube/target/xark/cube/cube.ts
 
 # Generate Groth16 keys. With no .ptau this produces an INSECURE dev key
 # (single-party OsRng); pass --ptau-file (or run `xark ceremony`) for production.
@@ -71,6 +75,30 @@ xark prove examples/cube --input secret=3 --input result=27
 # diagnostics with source spans (great for editors / CI).
 xark check examples/cube
 ```
+
+### Typed clients
+
+`xark build` also writes `schema.json`: every input's name, visibility, and type
+(`Field`, `uN` widths, arrays, tuples, and `#[derive(CircuitInput)]` structs), plus the
+public inputs in proof order. `xark codegen ts` turns it into one dependency-free `.ts`
+file with an interface per struct and typed `prove` / `verify` over the `xark-wasm`
+module you pass in:
+
+```ts
+import * as wasm from "xark-wasm";
+import { TypedKyc } from "./typed_kyc.ts";
+
+const kyc = new TypedKyc(wasm, { circuit, provingKey, verifyingKey });
+const { proof, publicInputs } = kyc.prove({
+  id: { document: bytes, born: 19940312, netWorth: 2_400_000n, salt },
+  policy: { bornBefore: 20081015, minNetWorth: 1_000_000 },
+  commitment,
+});
+kyc.verify(proof, publicInputs); // true
+```
+
+Fields are camelCased; values are range- and length-checked against their Rust types
+before proving, with errors that name the field (`id.born: 4294967296 is outside u32`).
 
 ## Editor diagnostics (rust-analyzer)
 

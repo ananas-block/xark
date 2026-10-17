@@ -1,10 +1,11 @@
 //! The `xark` language markers used by circuit programs: the `Field` circuit
 //! type, the `Private`/`Public` visibility aliases, and `#[inline(never)]`
 //! marker/intrinsic functions the compiler recognizes in MIR. None of these
-//! functions execute — the compiler stops after MIR extraction, so their bodies
-//! are irrelevant (`loop {}`).
+//! functions execute in a circuit — the compiler stops after MIR extraction — and on
+//! the host they panic with an explanation rather than computing anything.
 
-// Marker stubs are recognized by name and never run; `loop {}` is the intended shape.
+// Marker stubs are recognized by name and never run in a circuit; their body is
+// `intrinsics::__xark_marker` (a `loop {}` there, an explanatory panic on the host).
 #![allow(clippy::empty_loop)]
 // The compiler rejects compound assignment on `Field`, so `acc = acc + …` is
 // required, not `acc += …`.
@@ -682,7 +683,7 @@ macro_rules! impl_field_int_cmp {
             // satisfy the trait — a circuit compare yields a `{0,1}` wire, not an
             // `Option<Ordering>`.
             fn partial_cmp(&self, _rhs: &$t) -> Option<Ordering> {
-                loop {}
+                crate::intrinsics::__xark_marker()
             }
             fn lt(&self, rhs: &$t) -> bool {
                 let _ = self.to_bits::<$n>(); // range-check the witness operand < 2^N
@@ -857,13 +858,13 @@ pub fn require_ne(a: impl Into<Field>, b: impl Into<Field>) {
 /// value that must be trusted has to be pinned afterwards. A marker — never executes.
 #[inline(never)]
 pub fn witness_begin() {
-    loop {}
+    crate::intrinsics::__xark_marker()
 }
 
 /// Close a [`witness_begin`] region — subsequent ops emit constraints again.
 #[inline(never)]
 pub fn witness_end() {
-    loop {}
+    crate::intrinsics::__xark_marker()
 }
 
 /// The dispatch behind [`require_eq`]. Scalar impls (`Field`, `bool`) bottom out
@@ -905,14 +906,28 @@ impl<const N: usize, A: Copy + RequireEqCircuit<B>, B: Copy> RequireEqCircuit<[B
     }
 }
 
+/// Bytes to their `Field` values, element-wise: what a `[u8; N]` `#[circuit]` parameter
+/// becomes in the body (the gadgets take `[Field; N]`). Free: each byte is already a
+/// range-checked wire, so `Field::from` is the identity on it.
+#[doc(hidden)]
+pub fn bytes_to_fields<const N: usize>(bytes: [u8; N]) -> [Field; N] {
+    let mut out = [Field::from_u8(0); N];
+    let mut i = 0;
+    while i < N {
+        out[i] = Field::from(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 /// The scalar equality **intrinsic** the compiler recognizes by name and lowers
 /// to a two-`Field` R1CS constraint — the leaf every [`RequireEqCircuit`] impl
 /// bottoms out at. `#[doc(hidden)]` plumbing; authors write [`require_eq`], which
-/// dispatches here. Marker body (`loop {}`); never executed.
+/// dispatches here. Marker body; never executed in a circuit.
 #[doc(hidden)]
 #[inline(never)]
 pub fn __xark_require_eq_scalar<L: Into<Field>, R: Into<Field>>(_lhs: L, _rhs: R) {
-    loop {}
+    crate::intrinsics::__xark_marker()
 }
 
 /// Emit a circuit constraint `a < b` (less than).

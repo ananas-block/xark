@@ -24,21 +24,27 @@ use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.
 pub fn circuit(secret: Private<Field>, result: Public<Field>) {
-    require_eq(secret ^ 3, result);
+    require_eq(secret.pow(3), result);
 }
 ```
 
 ## Supported
 
-- **Types:** `Field`; fixed-size arrays `[Field; N]` (nested too); tuples and plain structs of
-  `Field`. Circuit inputs must be `Field` or arrays/tuples/structs of `Field`, with **constant**
-  array lengths.
-- **`Field` arithmetic:** `+`, `-`, `*`, unary `-`, `^ n` (exponentiation by a **constant** `n`).
-  Multiplication by a constant is free (folds into a linear combination); only `var * var` emits a gate.
+- **Types:** `Field`; native `u8`..`u128`; fixed-size arrays (nested too); tuples and plain structs
+  of these. Circuit inputs must be built from `Field` and `uN` with **constant** array lengths; each
+  `uN` input is range-checked `< 2^N` on entry, and each `[u8; N]` `#[circuit]` parameter byte-wise.
+  `#[derive(CircuitInput)]` structs may hold `Field`, `uN`, arrays, and other derived structs.
+- **`Field` arithmetic:** `+`, `-`, `*`, `/`, unary `-`, `.pow(n)` (exponentiation by a **constant**
+  `n`). `^` is boolean XOR (`.xor()`), not a power. Multiplication by a constant is free (folds into a
+  linear combination); only `var * var` emits a gate.
+- **Native `uN` witnesses:** comparisons, `wrapping_*` and checked `+ - *`, bitwise ops and shifts.
+  `Field::from(x)` and widening `as` casts are free (the value is already range-checked); a narrowing
+  `as` cast of a witness is rejected.
 - **Constants & host integers:** integer literals and `usize`/`u*` values for loop bounds, indices,
   widths — as long as compile-time constant.
-- **Control flow, compile-time only:** `if cond { … } else { … }` where `cond` is constant; `while i < N`
-  / `for i in 0..N` where `N` is constant (loops are fully **unrolled**).
+- **Control flow:** `if`/`match` on a constant; `while i < N` / `for i in 0..N` where `N` is constant
+  (loops are fully **unrolled**). An `if` on a witness `bool` is lowered to a branchless **mux** when
+  both arms only copy values or build tuples/arrays/structs (no calls, no arithmetic).
 - **Functions:** ordinary function calls, including across crates — **gadgets are just Rust libraries**
   (`xark-sha256`, `xark-bits`, …). They're inlined.
 - **Bit / integer gadgets:** `Field::to_bits::<N>()` / `from_bits::<N>()`, comparisons, and the gadget
@@ -51,7 +57,8 @@ pub fn circuit(secret: Private<Field>, result: Public<Field>) {
 | `a += b`, `a -= b`, `a *= b` | compound assignment on `Field` isn't modeled | `a = a + b` |
 | `for x in slice` / iterators | iterator desugaring isn't a circuit operation | `for i in 0..N { let x = arr[i]; }` |
 | `while cond` on a `Field`-derived `cond` | witness-dependent control flow — loop length would depend on inputs | make the bound a constant |
-| `if secret_field == 0 { … }` | branches can't depend on a witness value | compute both sides and **mux**: `b + cond·(a − b)` with a boolean `cond` |
+| `if secret_field == 0 { a * b } else { … }` | a witness-dependent branch that computes can't be muxed | compute both sides first, then branch on the results (or mux by hand: `b + cond·(a − b)`) |
+| `let y = x as u8;` with `x: u64` a witness | a narrowing cast would need a truncation gadget | decompose with `Field::from(x).to_bits::<N>()` and recombine the low bits |
 | `arr[i]` where `i` is a `Field`/input | witness-dependent indexing would leak / can't be lowered | use a constant or loop-counter index; for a data-dependent choice, mux |
 | `let n = read_len(); [Field; n]` | array length must be constant | use a `const` / const-generic `N` |
 | `&mut x` on a `Field` | a mutable borrow of a `Field` isn't supported | restructure to `x = …` (SSA-style) |

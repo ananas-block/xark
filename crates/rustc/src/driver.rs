@@ -135,6 +135,17 @@ impl R1csCallbacks {
                     entry_path.display()
                 );
             }
+            // The input interface, for client codegen (`xark codegen ts`) straight from
+            // build output — no `setup`, no proof.
+            let schema = crate::lower_mir::input_schema(tcx, &entry, body)?;
+            let schema_path = self.output_dir.join("schema.json");
+            let text = serde_json::to_string_pretty(&schema).expect("schema is plain JSON");
+            if let Err(e) = std::fs::write(&schema_path, text + "\n") {
+                eprintln!(
+                    "xark: warning: could not write {}: {e}",
+                    schema_path.display()
+                );
+            }
         }
         Ok(())
     }

@@ -34,7 +34,11 @@ fn print_roadmap() {
             "xark init my-circuit",
             "scaffold a circuit crate (rust-analyzer ready)",
         ),
-        ("xark build .", "compile the circuit → R1CS"),
+        ("xark build .", "compile the circuit → R1CS (+ schema.json)"),
+        (
+            "xark codegen ts .",
+            "generate a typed TypeScript client from the schema",
+        ),
         ("xark setup .", "generate the proving/verifying keys"),
         (
             "xark prove . --inputs …",

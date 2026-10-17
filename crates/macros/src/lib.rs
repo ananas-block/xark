@@ -9,16 +9,17 @@
 //! ```
 //!
 //! The macro: (1) rewrites the signature into the Field-backed types the compiler
-//! lowers (`[u8; N]` → `[Field; N]`, a `NativeInput` gadget → its native form),
-//! emitting the body verbatim; (2) generates a native-typed `<Fn>Inputs` struct,
-//! named so parameters can't be transposed; (3) implements `ProveInputs`, fanning
-//! each parameter out to its witness leaves using the compiler's structural-flatten
-//! leaf names and decimal values. Core stays gadget-agnostic — `Hash` packing lives
-//! in `xark-hash`, not here.
+//! lowers (`[u8; N]` stays real bytes, range-checked by the compiler and converted to
+//! `[Field; N]` at the top of the body; a `NativeInput` gadget → its native form), emitting the body verbatim; (2)
+//! generates a native-typed `<Fn>Inputs` struct, named so parameters can't be
+//! transposed; (3) implements `ProveInputs`, fanning each parameter out to its witness
+//! leaves using the compiler's structural-flatten leaf names and decimal values; (4)
+//! generates `<Fn>Inputs::schema()`, a JSON description of the inputs for client
+//! codegen. Core stays gadget-agnostic — `Hash` packing lives in `xark-hash`, not here.
 //!
 //! `#[derive(CircuitInput)]` — see [`derive_circuit_input`] — generates the
-//! `Into<[Field; N]>` whose flatten order mechanically matches the compiler's
-//! structural-flatten order.
+//! `Into<[Field; N]>` (and `to_fields`) whose flatten order mechanically matches the
+//! compiler's structural-flatten order, plus the host-side leaves and schema.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -43,7 +44,12 @@ pub fn circuit(_attr: TokenStream, item: TokenStream) -> TokenStream {
 enum Fanout {
     /// A `Field` scalar: one leaf named exactly `name`.
     Scalar,
-    /// `[u8; N]` → `[Field; N]`: `N` byte leaves `name[0..N]`.
+    /// A native `uN` scalar (width `N`): one leaf, range-checked by the compiler.
+    Uint(u32),
+    /// `[uN; LEN]` for `N > 8`: `LEN` leaves `name[i]`, each range-checked by the compiler.
+    IntArray(usize, u32),
+    /// `[u8; N]`: `N` byte leaves `name[0..N]`, range-checked by the compiler and
+    /// converted to `[Field; N]` at the top of the body.
     ByteArray(usize),
     /// `[Field; N]` → `[Field; N]`: `N` field leaves `name[0..N]`, native form
     /// `[String; N]` decimals (a field value per element — hashes, limbs, …).
@@ -89,28 +95,36 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
             quote! { #name: #wrapper<#cty> }
         })
         .collect();
-    // The compiler-visible circuit entry (the real `Field` body the xark compiler
-    // lowers to MIR), compiled only under `cfg(xark)`. In test/host builds the same
-    // `fn` name is instead the native-typed validator below — the two are
-    // cfg-exclusive, so `mycircuit::<fn>(a, b, c)` needs no rename and never collides.
-    let entry = quote! {
-        #[cfg(xark)]
-        #(#attrs)*
-        #vis fn #fn_ident(#(#sig_params),*) {
-            #(#stmts)*
+    // The real `Field` circuit body (the one the xark compiler lowers to MIR), emitted
+    // under a hidden name so it is **never cfg-gated** — it compiles in every build. The
+    // xark compiler auto-detects it as the entry (the sole fn with all-`Public`/`Private`
+    // params); `cargo`/host builds just carry it as present-but-unused code, which also
+    // keeps the circuit's `use`s live (no separate `__circuit_def` shim needed).
+    //
+    // Keeping it un-gated is what stops rust-analyzer greying the body you wrote: every
+    // item the macro emits at the `#[circuit]` span is active under the editor's cfg, so
+    // none of them mark the span inactive. The user's `fn` name is reused below for the
+    // native-typed validator, which is what host/test code calls — no collision, since
+    // the entry carries a distinct hidden name.
+    let entry_ident = format_ident!("__{}_entry", fn_ident);
+    // A `[u8; N]` parameter enters the circuit as real `u8`s, so the compiler range-checks
+    // each byte on entry and records the true type in `schema.json`; the body then sees
+    // it as `[Field; N]` (what the byte gadgets take). The conversion is free, and a
+    // gadget's own `to_bits::<8>` of a byte hits the bit cache the entry check filled.
+    let byte_convs = params.iter().filter_map(|p| match p.fanout {
+        Fanout::ByteArray(n) => {
+            let name = &p.name;
+            Some(quote! {
+                let #name: [::xark::Field; #n] = ::xark::bytes_to_fields(#name);
+            })
         }
-    };
-
-    // In test/host builds the entry above is cfg'd out, leaving the circuit's own
-    // `use`s (its `Private`/`Public` wrappers and gadget fns) unused. Emit a hidden,
-    // never-called copy of the body so those imports stay used (no spurious warnings).
-    let circuit_def_ident = format_ident!("__{}_circuit_def", fn_ident);
-    let sig_params_def = sig_params.clone();
-    let circuit_def = quote! {
-        #[cfg(not(xark))]
+        _ => None,
+    });
+    let entry = quote! {
         #[doc(hidden)]
-        #[allow(dead_code, unused_imports)]
-        fn #circuit_def_ident(#(#sig_params_def),*) {
+        #(#attrs)*
+        #vis fn #entry_ident(#(#sig_params),*) {
+            #(#byte_convs)*
             #(#stmts)*
         }
     };
@@ -131,14 +145,57 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
     });
     let host_ctor = params.iter().map(|p| &p.name);
 
+    // A machine-readable description of the circuit's inputs: each input's name,
+    // visibility, and type, with every `#[derive(CircuitInput)]` struct it reaches
+    // described once under `types`. Built at run time from the types themselves (a
+    // struct's fields live in another macro expansion), so it needs only `cargo build`,
+    // no `xark setup` and no proof. Client codegen (TypeScript types, …) consumes it.
+    let schema_inputs = params.iter().map(|p| {
+        let name = p.name.to_string();
+        let vis = if p.wrapper == "Public" {
+            "public"
+        } else {
+            "private"
+        };
+        let ty = match &p.fanout {
+            Fanout::Scalar => quote! { ::std::string::String::from("\"field\"") },
+            Fanout::Uint(w) => {
+                let j = format!("{{\"uint\":{w}}}");
+                quote! { ::std::string::String::from(#j) }
+            }
+            Fanout::ByteArray(n) => {
+                let j = format!("{{\"array\":{{\"of\":{{\"uint\":8}},\"len\":{n}}}}}");
+                quote! { ::std::string::String::from(#j) }
+            }
+            Fanout::FieldArray(n) => {
+                let j = format!("{{\"array\":{{\"of\":\"field\",\"len\":{n}}}}}");
+                quote! { ::std::string::String::from(#j) }
+            }
+            Fanout::IntArray(n, w) => {
+                let j = format!("{{\"array\":{{\"of\":{{\"uint\":{w}}},\"len\":{n}}}}}");
+                quote! { ::std::string::String::from(#j) }
+            }
+            Fanout::Native => {
+                let cty = &p.circuit_ty;
+                quote! { <#cty as ::xark_prover::NativeInput>::schema(&mut __defs) }
+            }
+        };
+        quote! {
+            ::std::format!(
+                "{{\"name\":\"{}\",\"visibility\":\"{}\",\"type\":{}}}",
+                #name, #vis, #ty
+            )
+        }
+    });
+
     Ok(quote! {
         #entry
-        #circuit_def
 
-        /// Native-typed validator for this circuit. In test/host builds the circuit
-        /// `fn` *is* this function (the `Field` body compiles only under `cfg(xark)`):
-        /// it takes the entry's native inputs, loads the built circuit from
-        /// `target/xark/<name>/`, and returns `Ok(())` if they satisfy it.
+        /// Native-typed validator for this circuit, carrying the name you gave the `#[circuit]`
+        /// fn. In host/test builds this *is* `<fn>` (the real `Field` body lives under a hidden
+        /// name): it takes the entry's native inputs, loads the built circuit from
+        /// `target/xark/<name>/`, and returns `Ok(())` if they satisfy it. Dropped from the
+        /// `xark` build, where the hidden entry is what gets compiled to a circuit.
         #[cfg(not(xark))]
         #(#attrs)*
         #vis fn #fn_ident(#(#host_params),*) -> ::core::result::Result<(), ::xark_prover::ProveError> {
@@ -161,6 +218,39 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
                     ::std::vec::Vec::new();
                 #(#fanouts)*
                 out
+            }
+        }
+
+        #[cfg(not(xark))]
+        impl #struct_name {
+            /// JSON description of this circuit's inputs, in declaration order (which is
+            /// also public-input order for the `public` ones):
+            ///
+            /// ```text
+            /// {"circuit": "<fn>",
+            ///  "inputs": [{"name", "visibility": "public"|"private", "type"}, …],
+            ///  "types": {"<Struct>": {"struct": [{"name", "type"}, …]}, …}}
+            /// ```
+            ///
+            /// A `type` is `"field"`, `{"uint": N}`, `{"array": {"of": <type>, "len": N}}`, `{"ref": "<Struct>"}` (a
+            /// `#[derive(CircuitInput)]` struct, described in `types`), or
+            /// `{"opaque": "<rust path>"}` (a gadget type with its own encoding). Leaf
+            /// names follow from it: `name.field`, `name[i]`. Generated by `#[circuit]`, so
+            /// client codegen needs only `cargo build`: no `xark setup`, no proof.
+            pub fn schema() -> ::std::string::String {
+                let mut __defs: ::std::collections::BTreeMap<::std::string::String, ::std::string::String> =
+                    ::std::collections::BTreeMap::new();
+                let __inputs: ::std::vec::Vec<::std::string::String> = ::std::vec![#(#schema_inputs),*];
+                let __types: ::std::vec::Vec<::std::string::String> = __defs
+                    .iter()
+                    .map(|(k, v)| ::std::format!("\"{}\":{}", k, v))
+                    .collect();
+                ::std::format!(
+                    "{{\"circuit\":\"{}\",\"inputs\":[{}],\"types\":{{{}}}}}",
+                    #fn_name_lit,
+                    __inputs.join(","),
+                    __types.join(","),
+                )
             }
         }
     })
@@ -238,7 +328,8 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
             "u8" | "u16" | "u32" | "u64" | "u128"
         )
     {
-        return Ok((quote! { #inner }, quote! { #inner }, Fanout::Scalar));
+        let w = uint_bits(&seg.ident.to_string()).expect("matched a uN above");
+        return Ok((quote! { #inner }, quote! { #inner }, Fanout::Uint(w)));
     }
     if let Type::Array(arr) = inner
         && let Type::Path(elem) = &*arr.elem
@@ -247,7 +338,7 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
             let n = eval_usize_lit(&arr.len)?;
             return Ok((
                 quote! { [u8; #n] },
-                quote! { [::xark::Field; #n] },
+                quote! { [u8; #n] },
                 Fanout::ByteArray(n),
             ));
         }
@@ -266,6 +357,17 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
                 Fanout::FieldArray(n),
             ));
         }
+        // `[uN; LEN]` (wider than a byte): the circuit sees the same native array, and
+        // the compiler range-checks each element on entry.
+        if let Some(w) = elem
+            .path
+            .segments
+            .last()
+            .and_then(|s| uint_bits(&s.ident.to_string()))
+        {
+            let n = eval_usize_lit(&arr.len)?;
+            return Ok((quote! { #inner }, quote! { #inner }, Fanout::IntArray(n, w)));
+        }
     }
     // Fallback: any other named type is a transparent gadget type (`Fq`/`Point`)
     // implementing `xark_prover::NativeInput`. Its `Native` associated type is the
@@ -280,9 +382,9 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
     }
     Err(syn::Error::new_spanned(
         inner,
-        "unsupported #[circuit] parameter type; supported: `Field`, `[u8; N]`, \
-         `[u8; 32]` (a SHA-256 digest), `[Field; N]`, or a gadget type \
-         implementing `NativeInput`",
+        "unsupported #[circuit] parameter type; supported: `Field`, `u8`..`u128`, \
+         `[u8; N]`, `[uN; N]`, `[Field; N]`, a `#[derive(CircuitInput)]` struct, or a \
+         gadget type implementing `NativeInput`",
     ))
 }
 
@@ -293,7 +395,7 @@ fn fanout_code(p: &CircuitParam) -> TokenStream2 {
     let name = &p.name;
     let name_lit = LitStr::new(&name.to_string(), name.span());
     match p.fanout {
-        Fanout::Scalar => quote! {
+        Fanout::Scalar | Fanout::Uint(_) => quote! {
             out.push((
                 ::std::string::String::from(#name_lit),
                 ::std::string::ToString::to_string(&self.#name),
@@ -301,7 +403,7 @@ fn fanout_code(p: &CircuitParam) -> TokenStream2 {
         },
         // Byte and field arrays fan out identically: leaf `name[i]` = the element
         // rendered as a decimal string.
-        Fanout::ByteArray(n) | Fanout::FieldArray(n) => quote! {
+        Fanout::ByteArray(n) | Fanout::FieldArray(n) | Fanout::IntArray(n, _) => quote! {
             {
                 let mut __i = 0usize;
                 while __i < #n {
@@ -323,6 +425,28 @@ fn fanout_code(p: &CircuitParam) -> TokenStream2 {
                 );
             }
         }
+    }
+}
+
+/// Bit width of a native unsigned integer type name (`"u64"` → `64`).
+fn uint_bits(ident: &str) -> Option<u32> {
+    Some(match ident {
+        "u8" => 8,
+        "u16" => 16,
+        "u32" => 32,
+        "u64" => 64,
+        "u128" => 128,
+        _ => return None,
+    })
+}
+
+/// Whether `ty` is a native unsigned integer, returning its width.
+fn uint_type_bits(ty: &Type) -> Option<u32> {
+    match ty {
+        Type::Path(tp) if tp.qself.is_none() && tp.path.segments.len() == 1 => {
+            uint_bits(&tp.path.segments[0].ident.to_string())
+        }
+        _ => None,
     }
 }
 
@@ -360,9 +484,10 @@ fn to_pascal(s: &str) -> String {
 /// struct Digest { bits: [[Field; 32]; 8] }   // ⇒ impl From<Digest> for [Field; 256]
 /// ```
 ///
-/// Supported field types: `Field` and (nested) fixed arrays of `Field` with
-/// **integer-literal** lengths. Generic types (const-generic lengths) are rejected —
-/// the flattened `N` must be a compile-time literal; write the `From` by hand.
+/// Supported field types: `Field`, native `u8`..`u128` (range-checked on entry, flattened
+/// with `Field::from`), another `#[derive(CircuitInput)]` struct (flattened inline), and
+/// fixed arrays of any of these with **integer-literal** lengths. Generic types are
+/// rejected — the flattened length must be a compile-time constant; write the `From` by hand.
 #[proc_macro_derive(CircuitInput)]
 pub fn derive_circuit_input(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -391,44 +516,83 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let mut total = 0usize;
-    let mut blocks = Vec::new();
-    for (i, field) in data.fields.iter().enumerate() {
-        let access = match &field.ident {
-            Some(id) => quote! { __v.#id },
+    // Per field: (flatten-name, accessor suffix, type).
+    let fields: Vec<(String, TokenStream2, &Type)> = data
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| match &f.ident {
+            Some(id) => (id.to_string(), quote! { #id }, &f.ty),
             None => {
                 let idx = syn::Index::from(i);
-                quote! { __v.#idx }
+                (i.to_string(), quote! { #idx }, &f.ty)
             }
-        };
-        let (count, stmts) = walk_type(&field.ty, &access, 0)?;
-        total += count;
-        blocks.push(stmts);
-    }
-    let n = total;
+        })
+        .collect();
 
-    // Host-side `NativeInput`: the native form IS this `Field`-composed struct itself
-    // (built host-side with `Field` values — no `String` mirror), and `leaves` renders
+    // Leaf count as a const expression: a nested struct contributes its own
+    // `FIELD_LEN`, so the total is only known to the type checker, not to this macro.
+    let mut counts = Vec::new();
+    let mut blocks = Vec::new();
+    let mut self_blocks = Vec::new();
+    for (_, acc, ty) in &fields {
+        let (count, stmts) = walk_type(ty, &quote! { __v.#acc }, 0)?;
+        counts.push(count);
+        blocks.push(stmts);
+        // The same structural flatten as the `From` impl, but reading through `&self`
+        // (every leaf is `Copy`), so callers get the field array without consuming or
+        // cloning. Powers the inherent `to_fields(&self)` below.
+        let (_, stmts) = walk_type(ty, &quote! { self.#acc }, 0)?;
+        self_blocks.push(stmts);
+    }
+    let n = quote! { (0usize #( + #counts )*) };
+
+    // Host-side `NativeInput`: the native form IS this struct itself (built host-side
+    // with `Field` and native integer values — no `String` mirror), and `leaves` renders
     // each field to its decimal under the compiler's structural-flatten names, so a
     // `#[circuit]` param of this type binds by name exactly as a gadget input does.
     let mut leaf_stmts = Vec::new();
-    for (i, field) in data.fields.iter().enumerate() {
-        let (fname, access) = match &field.ident {
-            Some(id) => (id.to_string(), quote! { native.#id }),
-            None => {
-                let idx = syn::Index::from(i);
-                (i.to_string(), quote! { native.#idx })
-            }
-        };
+    let mut schema_fields = Vec::new();
+    for (fname, acc, ty) in &fields {
         let field_prefix = quote! { std::format!("{}.{}", prefix, #fname) };
-        leaf_stmts.push(circuit_leaves(&field.ty, &access, &field_prefix, 0)?);
+        leaf_stmts.push(circuit_leaves(
+            ty,
+            &quote! { native.#acc },
+            &field_prefix,
+            0,
+        )?);
+        let ty_json = schema_type(ty)?;
+        schema_fields.push(quote! {
+            std::format!("{{\"name\":\"{}\",\"type\":{}}}", #fname, #ty_json)
+        });
     }
+    let name_lit = LitStr::new(&name.to_string(), name.span());
 
     Ok(quote! {
         #[automatically_derived]
-        impl ::core::convert::From<#name> for [::xark::Field; #n] {
-            fn from(__v: #name) -> [::xark::Field; #n] {
-                let mut out = [<::xark::Field as ::core::convert::From<u8>>::from(0u8); #n];
+        impl #name {
+            /// Number of `Field` leaves this input flattens to — maintained by
+            /// `#[derive(CircuitInput)]`, so you never recount by hand.
+            pub const FIELD_LEN: usize = #n;
+
+            /// Flatten into the circuit's `Field` leaves in structural order (fields in
+            /// declaration order, arrays by index, nested structs inline) — the same order
+            /// the compiler and the `From<Self> for [Field; FIELD_LEN]` impl use. Native
+            /// integers convert with `Field::from` (free: they are already range-checked
+            /// wires). Feed this straight to a hash gadget.
+            pub fn to_fields(&self) -> [::xark::Field; #name::FIELD_LEN] {
+                let mut out = [<::xark::Field as ::core::convert::From<u8>>::from(0u8); #name::FIELD_LEN];
+                let mut __i = 0usize;
+                #( #self_blocks )*
+                let _ = __i;
+                out
+            }
+        }
+
+        #[automatically_derived]
+        impl ::core::convert::From<#name> for [::xark::Field; #name::FIELD_LEN] {
+            fn from(__v: #name) -> [::xark::Field; #name::FIELD_LEN] {
+                let mut out = [<::xark::Field as ::core::convert::From<u8>>::from(0u8); #name::FIELD_LEN];
                 let mut __i = 0usize;
                 #( #blocks )*
                 let _ = __i;
@@ -451,19 +615,46 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     #( #leaf_stmts )*
                     __out
                 }
+                fn schema(defs: &mut std::collections::BTreeMap<String, String>) -> String {
+                    if !defs.contains_key(#name_lit) {
+                        // Reserve the name first so a type reached twice is described once.
+                        defs.insert(String::from(#name_lit), String::new());
+                        let fields: Vec<String> = std::vec![#( #schema_fields ),*];
+                        defs.insert(
+                            String::from(#name_lit),
+                            std::format!("{{\"struct\":[{}]}}", fields.join(",")),
+                        );
+                    }
+                    std::format!("{{\"ref\":\"{}\"}}", #name_lit)
+                }
             }
         };
     })
 }
 
 /// Emit the flatten statements for one field/element `access` of type `ty`, returning
-/// `(leaf count, statements)`. Recurses through arrays; a `Field` is one leaf.
-/// `depth` names the per-level loop variable so nested arrays don't collide.
-fn walk_type(ty: &Type, access: &TokenStream2, depth: usize) -> syn::Result<(usize, TokenStream2)> {
+/// `(leaf count expression, statements)`. A `Field` or native `uN` is one leaf, arrays
+/// recurse, and any other named type is a nested `#[derive(CircuitInput)]` struct that
+/// contributes its own `to_fields()`. `depth` names loop variables so nesting doesn't
+/// collide.
+fn walk_type(
+    ty: &Type,
+    access: &TokenStream2,
+    depth: usize,
+) -> syn::Result<(TokenStream2, TokenStream2)> {
     match ty {
         Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Field") => {
-            Ok((1, quote! { out[__i] = #access; __i += 1; }))
+            Ok((quote! { 1usize }, quote! { out[__i] = #access; __i += 1; }))
         }
+        _ if uint_type_bits(ty).is_some() => Ok((
+            quote! { 1usize },
+            quote! { out[__i] = <::xark::Field as ::core::convert::From<#ty>>::from(#access); __i += 1; },
+        )),
+        Type::Path(tp) if tp.path.is_ident("bool") => Err(syn::Error::new_spanned(
+            ty,
+            "`bool` is not a circuit input type yet; use `u8` (or `Field`) and constrain it \
+             to 0/1 with `require_bool`",
+        )),
         Type::Array(arr) => {
             let len = eval_usize_lit(&arr.len)?;
             let kv = format_ident!("__k{depth}");
@@ -477,12 +668,59 @@ fn walk_type(ty: &Type, access: &TokenStream2, depth: usize) -> syn::Result<(usi
                     }
                 }
             };
-            Ok((len * inner_count, block))
+            Ok((quote! { (#len * #inner_count) }, block))
+        }
+        Type::Path(_) => {
+            // A nested `#[derive(CircuitInput)]` struct: copy its own flatten in place.
+            let kv = format_ident!("__k{depth}");
+            let sub = format_ident!("__sub{depth}");
+            Ok((
+                quote! { <#ty>::FIELD_LEN },
+                quote! {
+                    {
+                        let #sub = #access.to_fields();
+                        let mut #kv = 0usize;
+                        while #kv < <#ty>::FIELD_LEN {
+                            out[__i] = #sub[#kv];
+                            __i += 1;
+                            #kv += 1;
+                        }
+                    }
+                },
+            ))
         }
         other => Err(syn::Error::new_spanned(
             other,
-            "#[derive(CircuitInput)] fields must be `Field` or fixed arrays of `Field` \
-             (nesting allowed); array lengths must be integer literals",
+            "#[derive(CircuitInput)] fields must be `Field`, `u8`..`u128`, fixed arrays of \
+             them, or another `#[derive(CircuitInput)]` struct; array lengths must be \
+             integer literals",
+        )),
+    }
+}
+
+/// The schema JSON (a `String` expression) for one field type; see `<Fn>Inputs::schema`.
+fn schema_type(ty: &Type) -> syn::Result<TokenStream2> {
+    if let Type::Path(tp) = ty
+        && tp.path.segments.last().is_some_and(|s| s.ident == "Field")
+    {
+        return Ok(quote! { String::from("\"field\"") });
+    }
+    if let Some(w) = uint_type_bits(ty) {
+        let j = format!("{{\"uint\":{w}}}");
+        return Ok(quote! { String::from(#j) });
+    }
+    match ty {
+        Type::Array(arr) => {
+            let len = eval_usize_lit(&arr.len)?;
+            let inner = schema_type(&arr.elem)?;
+            Ok(quote! {
+                std::format!("{{\"array\":{{\"of\":{},\"len\":{}}}}}", #inner, #len)
+            })
+        }
+        Type::Path(_) => Ok(quote! { <#ty as ::xark_prover::NativeInput>::schema(defs) }),
+        other => Err(syn::Error::new_spanned(
+            other,
+            "unsupported #[derive(CircuitInput)] field type",
         )),
     }
 }
@@ -647,6 +885,9 @@ fn circuit_leaves(
         Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Field") => {
             Ok(quote! { __out.push((#prefix, #access.to_decimal())); })
         }
+        _ if uint_type_bits(ty).is_some() => Ok(quote! {
+            __out.push((#prefix, std::string::ToString::to_string(&#access)));
+        }),
         Type::Array(arr) => {
             let len = eval_usize_lit(&arr.len)?;
             let kv = format_ident!("__k{depth}");

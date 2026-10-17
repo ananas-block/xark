@@ -3776,3 +3776,142 @@ fn witness_only_derives_without_constraints() {
         "claim ≠ x⁴ must be rejected"
     );
 }
+
+/// `Field::from(x)` on a native `uN` *witness* is the identity on its (already
+/// range-checked) wire, including through the widening cast inside `From<u8>`.
+#[test]
+fn uint_witness_converts_to_field() {
+    for ty in ["u8", "u32", "u64", "u128"] {
+        let src = format!(
+            "#![no_std]\nuse xark::prelude::*;\n\
+             pub fn circuit(a: Private<{ty}>, b: Public<Field>) {{\n\
+             require_eq(Field::from(a), b);\n}}\n"
+        );
+        let name = format!("uint_to_field_{ty}");
+        let c = compile_with_field(&write_case(&name, &src), &name, "bn254");
+        assert!(c.status_success, "{ty}: {}", c.stderr);
+        let p = c.program();
+        assert!(
+            solves(&p, &[("a", "200"), ("b", "200")]),
+            "{ty}: equal values solve"
+        );
+        assert!(
+            !solves(&p, &[("a", "200"), ("b", "201")]),
+            "{ty}: unequal values reject"
+        );
+    }
+}
+
+/// A narrowing cast of a witness has no sound identity lowering, so it is rejected.
+#[test]
+fn rejects_narrowing_witness_cast() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        pub fn circuit(a: Private<u64>, b: Public<Field>) {\n\
+        let x = a as u8;\n\
+        require_eq(Field::from(x), b);\n}\n";
+    let c = compile_with_field(&write_case("narrow_cast", src), "narrow_cast", "bn254");
+    assert!(!c.status_success, "narrowing a witness must not compile");
+    assert!(c.stderr.contains("narrowing cast"), "{}", c.stderr);
+}
+
+/// A `[u8; N]` `#[circuit]` parameter reaches the body as `[Field; N]`; the macro must
+/// still range-check every byte, or a prover could pass 256 (or any field element).
+#[test]
+fn byte_array_param_is_range_checked() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[circuit]\n\
+        pub fn bytes(b: Private<[u8; 2]>, s: Public<Field>) {\n\
+        require_eq(b[0] + b[1], s);\n}\n";
+    let c = compile_with_field(&write_case("byte_param", src), "byte_param", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let p = c.program();
+    assert!(solves(&p, &[("b[0]", "255"), ("b[1]", "1"), ("s", "256")]));
+    assert!(
+        !solves(&p, &[("b[0]", "256"), ("b[1]", "0"), ("s", "256")]),
+        "256 is not a byte"
+    );
+}
+
+/// `#[derive(CircuitInput)]` with native integers, a byte array, and a nested struct:
+/// leaves are named by the structural flatten, each `uN` is range-checked on entry, and
+/// `to_fields()` flattens nested structs inline.
+#[test]
+fn circuit_input_with_uints_and_nesting() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(Clone, Copy, CircuitInput)]\n\
+        pub struct Inner { pub a: u64, pub b: Field }\n\
+        #[derive(Clone, Copy, CircuitInput)]\n\
+        pub struct Outer { pub inner: Inner, pub tag: [u8; 2], pub c: u32 }\n\
+        #[circuit]\n\
+        pub fn nested(o: Private<Outer>, h: Public<Field>) {\n\
+        let f = o.to_fields();\n\
+        require_eq(f[0] + f[1] + f[2] + f[3] + f[4], h);\n}\n";
+    let c = compile_with_field(&write_case("nested_input", src), "nested_input", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let p = c.program();
+    let ok = [
+        ("o.inner.a", "10"),
+        ("o.inner.b", "20"),
+        ("o.tag[0]", "1"),
+        ("o.tag[1]", "2"),
+        ("o.c", "3"),
+        ("h", "36"),
+    ];
+    assert!(solves(&p, &ok));
+    let mut wrong_sum = ok;
+    wrong_sum[5] = ("h", "37");
+    assert!(!solves(&p, &wrong_sum));
+    let mut big_a = ok;
+    big_a[0] = ("o.inner.a", "18446744073709551616"); // 2^64
+    big_a[5] = ("h", "18446744073709551642");
+    assert!(
+        !solves(&p, &big_a),
+        "a u64 field >= 2^64 must fail its range check"
+    );
+    let mut big_byte = ok;
+    big_byte[2] = ("o.tag[0]", "256");
+    big_byte[5] = ("h", "291");
+    assert!(
+        !solves(&p, &big_byte),
+        "a u8 field >= 256 must fail its range check"
+    );
+}
+
+/// `xark build` writes `schema.json` beside `circuit.xbc`: the inputs as the compiler
+/// binds them (struct definitions, `uN` widths, byte arrays), plus the public leaves in
+/// proof order. `xark codegen` generates clients from it with no setup or proof.
+#[test]
+fn build_writes_input_schema() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(Clone, Copy, CircuitInput)]\n\
+        pub struct Policy { pub min: u64, pub tags: [u8; 2] }\n\
+        #[circuit]\n\
+        pub fn gate(secret: Private<Field>, policy: Public<Policy>, out: Public<Field>, b: Private<[u8; 3]>) {\n\
+        require(secret.ge::<64>(Field::from(policy.min)));\n\
+        require_eq(secret + b[0] + Field::from(policy.tags[1]), out);\n}\n";
+    let c = compile_with_field(&write_case("schema_case", src), "schema_case", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let text = std::fs::read_to_string(c.out_dir.join("schema.json")).expect("schema.json");
+    let schema: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        schema,
+        serde_json::json!({
+            "version": 1,
+            "circuit": "gate",
+            "inputs": [
+                { "name": "secret", "visibility": "private", "type": "field" },
+                { "name": "policy", "visibility": "public", "type": { "ref": "Policy" } },
+                { "name": "out", "visibility": "public", "type": "field" },
+                { "name": "b", "visibility": "private",
+                  "type": { "array": { "of": { "uint": 8 }, "len": 3 } } },
+            ],
+            "types": {
+                "Policy": { "struct": [
+                    { "name": "min", "type": { "uint": 64 } },
+                    { "name": "tags", "type": { "array": { "of": { "uint": 8 }, "len": 2 } } },
+                ] }
+            },
+            "public_inputs": ["policy.min", "policy.tags[0]", "policy.tags[1]", "out"],
+        })
+    );
+}
