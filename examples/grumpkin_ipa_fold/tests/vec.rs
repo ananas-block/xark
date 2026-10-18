@@ -5,17 +5,12 @@
 //! challenges in-circuit, the fold + final IPA relation hold (accept), it's
 //! analyzer-clean, a tampered transcript is rejected, and Groth16 verifies.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use xark_ir::{primitive, solver};
+
+use grumpkin_ipa_fold::GrumpkinIpaFoldInputs;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
-}
-fn load() -> primitive::PrimitiveProgram {
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_ipa_fold", "bn254");
-    assert!(c.status_success, "compiling grumpkin_ipa_fold failed:\n{}", c.stderr);
-    c.program()
 }
 
 // --- validated ark-grumpkin IPA transcript (see scratchpad `ipa.rs`) ---
@@ -56,54 +51,51 @@ const ASTAR_HI: &str = "41346699135982308264555816248439742743";
 const C_LO: &str = "18374556530022161497450493908745285757";
 const C_HI: &str = "69110116733184639059592971484944498067";
 
-fn honest(program: &primitive::PrimitiveProgram) -> BTreeMap<u32, String> {
-    let id = |name: &str| {
-        program
-            .vars
-            .iter()
-            .find(|v| v.name == name)
-            .unwrap_or_else(|| panic!("missing circuit var `{name}`"))
-            .id
-    };
-    let mut m = BTreeMap::new();
-    for (n, v) in [
-        ("g0.x", G0X), ("g0.y", G0Y), ("g1.x", G1X), ("g1.y", G1Y),
-        ("g2.x", G2X), ("g2.y", G2Y), ("g3.x", G3X), ("g3.y", G3Y),
-        ("u.x", UX), ("u.y", UY), ("p.x", PX), ("p.y", PY),
-        ("l0.x", L0X), ("l0.y", L0Y), ("r0.x", R0X), ("r0.y", R0Y),
-        ("l1.x", L1X), ("l1.y", L1Y), ("r1.x", R1X), ("r1.y", R1Y),
-        ("x0inv_lo", X0INV_LO), ("x0inv_hi", X0INV_HI),
-        ("x1inv_lo", X1INV_LO), ("x1inv_hi", X1INV_HI),
-        ("s0_lo", S0LO), ("s0_hi", S0HI), ("s1_lo", S1LO), ("s1_hi", S1HI),
-        ("s2_lo", S2LO), ("s2_hi", S2HI), ("s3_lo", S3LO), ("s3_hi", S3HI),
-        ("astar_lo", ASTAR_LO), ("astar_hi", ASTAR_HI),
-        ("c_lo", C_LO), ("c_hi", C_HI),
-    ] {
-        m.insert(id(n), v.to_string());
+fn pt(x: &str, y: &str) -> [String; 2] {
+    [x.into(), y.into()]
+}
+
+fn honest() -> GrumpkinIpaFoldInputs {
+    GrumpkinIpaFoldInputs {
+        g0: pt(G0X, G0Y),
+        g1: pt(G1X, G1Y),
+        g2: pt(G2X, G2Y),
+        g3: pt(G3X, G3Y),
+        u: pt(UX, UY),
+        p: pt(PX, PY),
+        l0: pt(L0X, L0Y),
+        r0: pt(R0X, R0Y),
+        l1: pt(L1X, L1Y),
+        r1: pt(R1X, R1Y),
+        x0inv_lo: X0INV_LO.into(),
+        x0inv_hi: X0INV_HI.into(),
+        x1inv_lo: X1INV_LO.into(),
+        x1inv_hi: X1INV_HI.into(),
+        s0_lo: S0LO.into(),
+        s0_hi: S0HI.into(),
+        s1_lo: S1LO.into(),
+        s1_hi: S1HI.into(),
+        s2_lo: S2LO.into(),
+        s2_hi: S2HI.into(),
+        s3_lo: S3LO.into(),
+        s3_hi: S3HI.into(),
+        astar_lo: ASTAR_LO.into(),
+        astar_hi: ASTAR_HI.into(),
+        c_lo: C_LO.into(),
+        c_hi: C_HI.into(),
     }
-    m
 }
 
 #[test]
 fn ipa_fold_verifies() {
-    let program = load();
-    let mut inputs = honest(&program);
+    let circuit = xark_prover::circuit("grumpkin_ipa_fold");
+    // satisfiable on the honest vector, with no under-constrained (forgeable)
+    // witness variable.
+    circuit.check_constrained(honest()).expect("grumpkin_ipa_fold must verify the honest IPA transcript");
 
-    // (1) the in-circuit Poseidon2 challenges + fold + final IPA relation hold.
-    let assign = solver::solve_and_check_recorded("grumpkin_ipa_fold", &program, &inputs)
-        .expect("grumpkin_ipa_fold must verify the honest IPA transcript");
-
-    // (2) analyzer-clean.
-    let holes = solver::analyze_underconstrained(&program, &assign);
-    assert!(holes.is_empty(), "under-constrained: {holes:?}");
-
-    // (3) tampering an R point breaks the Fiat–Shamir-bound fold → rejected.
-    let r0x = program.vars.iter().find(|v| v.name == "r0.x").unwrap().id;
-    inputs.insert(r0x, "123".to_string());
-    assert!(
-        solver::solve_and_check_recorded("grumpkin_ipa_fold", &program, &inputs).is_err(),
-        "a tampered transcript must be rejected"
-    );
+    let mut bad = honest();
+    bad.r0[0] = "123".into();
+    assert!(circuit.check(bad).is_err(), "a tampered transcript must be rejected");
 }
 
 #[test]
@@ -117,14 +109,8 @@ fn report_constraint_count() {
 
 #[test]
 fn groth16_setup_prove_verify() {
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_ipa_fold", "bn254");
-    assert!(c.status_success, "{}", c.stderr);
-    let xbc = std::fs::read(c.out_dir.join("circuit.xbc")).expect("read circuit.xbc");
-    let cp = xark_ir::function_decode::expand_function_blob(&xbc).expect("expand circuit.xbc");
-    let r1cs = cp.to_r1cs();
-    let prim = cp.to_primitive();
-    let inputs = honest(&prim);
-    let ok = xark_prover::prove_and_verify(&r1cs, &prim, &inputs)
-        .expect("groth16 setup/prove/verify");
-    assert!(ok, "the Groth16 proof of the IPA reduction must verify");
+    // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
+    xark_prover::circuit("grumpkin_ipa_fold")
+        .prove(honest())
+        .expect("the Groth16 proof must verify");
 }

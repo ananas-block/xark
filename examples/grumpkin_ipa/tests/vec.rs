@@ -5,18 +5,12 @@
 //! derived vars), (3) a wrong claimed `Q` is rejected, and (4) reports the
 //! minimized constraint count — the efficiency evidence.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use xark_ir::{primitive, solver};
+
+use grumpkin_ipa::GrumpkinIpaInputs;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
-}
-
-fn load() -> primitive::PrimitiveProgram {
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_ipa", "bn254");
-    assert!(c.status_success, "compiling grumpkin_ipa failed:\n{}", c.stderr);
-    c.program()
 }
 
 // --- ark-grumpkin reference vector (validated: same routine reproduces the
@@ -40,48 +34,38 @@ const S3HI: &str = "35439497807825386909150426018507431884";
 const QX: &str = "20903080311600324333489123549926276227734645934862144969632742816704833802883";
 const QY: &str = "21415318633544108147494823273278274647092448118324172091757610792088028377648";
 
-fn honest_inputs(program: &primitive::PrimitiveProgram) -> BTreeMap<u32, String> {
-    let id = |name: &str| {
-        program
-            .vars
-            .iter()
-            .find(|v| v.name == name)
-            .unwrap_or_else(|| panic!("missing circuit var `{name}`"))
-            .id
-    };
-    let mut m = BTreeMap::new();
-    for (n, v) in [
-        ("g0.x", G0X), ("g0.y", G0Y), ("g1.x", G1X), ("g1.y", G1Y),
-        ("g2.x", G2X), ("g2.y", G2Y), ("g3.x", G3X), ("g3.y", G3Y),
-        ("s0_lo", S0LO), ("s0_hi", S0HI), ("s1_lo", S1LO), ("s1_hi", S1HI),
-        ("s2_lo", S2LO), ("s2_hi", S2HI), ("s3_lo", S3LO), ("s3_hi", S3HI),
-        ("q.x", QX), ("q.y", QY),
-    ] {
-        m.insert(id(n), v.to_string());
+fn pt(x: &str, y: &str) -> [String; 2] {
+    [x.into(), y.into()]
+}
+
+fn honest() -> GrumpkinIpaInputs {
+    GrumpkinIpaInputs {
+        g0: pt(G0X, G0Y),
+        g1: pt(G1X, G1Y),
+        g2: pt(G2X, G2Y),
+        g3: pt(G3X, G3Y),
+        s0_lo: S0LO.into(),
+        s0_hi: S0HI.into(),
+        s1_lo: S1LO.into(),
+        s1_hi: S1HI.into(),
+        s2_lo: S2LO.into(),
+        s2_hi: S2HI.into(),
+        s3_lo: S3LO.into(),
+        s3_hi: S3HI.into(),
+        q: pt(QX, QY),
     }
-    m
 }
 
 #[test]
 fn deferred_msm_accumulator_verifies() {
-    let program = load();
-    let mut inputs = honest_inputs(&program);
+    let circuit = xark_prover::circuit("grumpkin_ipa");
+    // satisfiable on the honest vector, with no under-constrained (forgeable)
+    // witness variable.
+    circuit.check_constrained(honest()).expect("grumpkin_ipa must verify on the reference accumulator vector");
 
-    // (1) satisfiable on the honest vector.
-    let assign = solver::solve_and_check_recorded("grumpkin_ipa", &program, &inputs)
-        .expect("grumpkin_ipa must verify on the reference accumulator vector");
-
-    // (2) analyzer-clean: no under-constrained (forgeable) derived variables.
-    let holes = solver::analyze_underconstrained(&program, &assign);
-    assert!(holes.is_empty(), "under-constrained: {holes:?}");
-
-    // (3) a wrong claimed accumulated point is rejected.
-    let qx_id = program.vars.iter().find(|v| v.name == "q.x").unwrap().id;
-    inputs.insert(qx_id, "123".to_string());
-    assert!(
-        solver::solve_and_check_recorded("grumpkin_ipa", &program, &inputs).is_err(),
-        "a wrong claimed Q must be rejected"
-    );
+    let mut bad = honest();
+    bad.q[0] = "123".into();
+    assert!(circuit.check(bad).is_err(), "a wrong claimed Q must be rejected");
 }
 
 #[test]
@@ -96,16 +80,8 @@ fn report_constraint_count() {
 
 #[test]
 fn groth16_setup_prove_verify() {
-    // The full BN254 Groth16 pipeline on the accumulator vector: setup → prove
-    // → verify (dev-mode fixed-seed setup — see `prove_and_verify`).
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_ipa", "bn254");
-    assert!(c.status_success, "{}", c.stderr);
-    let xbc = std::fs::read(c.out_dir.join("circuit.xbc")).expect("read circuit.xbc");
-    let cp = xark_ir::function_decode::expand_function_blob(&xbc).expect("expand circuit.xbc");
-    let r1cs = cp.to_r1cs();
-    let prim = cp.to_primitive();
-    let inputs = honest_inputs(&prim);
-    let ok = xark_prover::prove_and_verify(&r1cs, &prim, &inputs)
-        .expect("groth16 setup/prove/verify");
-    assert!(ok, "the Groth16 proof of the accumulator claim must verify");
+    // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
+    xark_prover::circuit("grumpkin_ipa")
+        .prove(honest())
+        .expect("the Groth16 proof must verify");
 }

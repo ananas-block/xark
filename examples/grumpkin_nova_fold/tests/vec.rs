@@ -3,17 +3,12 @@
 //! gadget). The circuit derives the same challenge `r` in-circuit and checks the
 //! four fold equations. Accept / analyzer-clean / tamper-reject / Groth16.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use xark_ir::{primitive, solver};
+
+use grumpkin_nova_fold::GrumpkinNovaFoldInputs;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
-}
-fn load() -> primitive::PrimitiveProgram {
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_nova_fold", "bn254");
-    assert!(c.status_success, "compiling grumpkin_nova_fold failed:\n{}", c.stderr);
-    c.program()
 }
 
 // --- host reference (scratchpad `nova.rs`) ---
@@ -38,46 +33,38 @@ const CEY: &str = "6279653759954346604701321765885825095226249735961974659357923
 const U: &str = "320783020589613664432541343672636501592";
 const X: &str = "1817770450007810765117734280811606842328";
 
-fn honest(program: &primitive::PrimitiveProgram) -> BTreeMap<u32, String> {
-    let id = |name: &str| {
-        program
-            .vars
-            .iter()
-            .find(|v| v.name == name)
-            .unwrap_or_else(|| panic!("missing circuit var `{name}`"))
-            .id
-    };
-    let mut m = BTreeMap::new();
-    for (n, v) in [
-        ("cw1.x", CW1X), ("cw1.y", CW1Y), ("ce1.x", CE1X), ("ce1.y", CE1Y),
-        ("cw2.x", CW2X), ("cw2.y", CW2Y), ("ce2.x", CE2X), ("ce2.y", CE2Y),
-        ("ct.x", CTX), ("ct.y", CTY),
-        ("u1", U1), ("x1", X1), ("u2", U2), ("x2", X2),
-        ("cw.x", CWX), ("cw.y", CWY), ("ce.x", CEX), ("ce.y", CEY),
-        ("u", U), ("x", X),
-    ] {
-        m.insert(id(n), v.to_string());
+fn pt(x: &str, y: &str) -> [String; 2] {
+    [x.into(), y.into()]
+}
+
+fn honest() -> GrumpkinNovaFoldInputs {
+    GrumpkinNovaFoldInputs {
+        cw1: pt(CW1X, CW1Y),
+        ce1: pt(CE1X, CE1Y),
+        cw2: pt(CW2X, CW2Y),
+        ce2: pt(CE2X, CE2Y),
+        ct: pt(CTX, CTY),
+        u1: U1.into(),
+        x1: X1.into(),
+        u2: U2.into(),
+        x2: X2.into(),
+        cw: pt(CWX, CWY),
+        ce: pt(CEX, CEY),
+        u: U.into(),
+        x: X.into(),
     }
-    m
 }
 
 #[test]
 fn nova_fold_verifies() {
-    let program = load();
-    let mut inputs = honest(&program);
+    let circuit = xark_prover::circuit("grumpkin_nova_fold");
+    // satisfiable on the honest vector, with no under-constrained (forgeable)
+    // witness variable.
+    circuit.check_constrained(honest()).expect("grumpkin_nova_fold must verify the honest fold");
 
-    let assign = solver::solve_and_check_recorded("grumpkin_nova_fold", &program, &inputs)
-        .expect("grumpkin_nova_fold must verify the honest fold");
-    let holes = solver::analyze_underconstrained(&program, &assign);
-    assert!(holes.is_empty(), "under-constrained: {holes:?}");
-
-    // tamper the claimed folded comm_W → rejected (FS-bound).
-    let cwx = program.vars.iter().find(|v| v.name == "cw.x").unwrap().id;
-    inputs.insert(cwx, "123".to_string());
-    assert!(
-        solver::solve_and_check_recorded("grumpkin_nova_fold", &program, &inputs).is_err(),
-        "a wrong folded instance must be rejected"
-    );
+    let mut bad = honest();
+    bad.cw[0] = "123".into();
+    assert!(circuit.check(bad).is_err(), "a wrong folded instance must be rejected");
 }
 
 #[test]
@@ -91,14 +78,8 @@ fn report_constraint_count() {
 
 #[test]
 fn groth16_setup_prove_verify() {
-    let c = xark_test_harness::compile_file(&src(), "grumpkin_nova_fold", "bn254");
-    assert!(c.status_success, "{}", c.stderr);
-    let xbc = std::fs::read(c.out_dir.join("circuit.xbc")).expect("read circuit.xbc");
-    let cp = xark_ir::function_decode::expand_function_blob(&xbc).expect("expand circuit.xbc");
-    let r1cs = cp.to_r1cs();
-    let prim = cp.to_primitive();
-    let inputs = honest(&prim);
-    let ok = xark_prover::prove_and_verify(&r1cs, &prim, &inputs)
-        .expect("groth16 setup/prove/verify");
-    assert!(ok, "the Groth16 proof of the folding step must verify");
+    // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
+    xark_prover::circuit("grumpkin_nova_fold")
+        .prove(honest())
+        .expect("the Groth16 proof must verify");
 }

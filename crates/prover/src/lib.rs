@@ -764,6 +764,36 @@ impl Circuit {
         Ok(())
     }
 
+    /// [`Self::check`], and also that the inputs leave no witness variable free:
+    /// [`solver::analyze_underconstrained`] finds no variable that could take a
+    /// second value with everything else fixed. A necessary soundness check (it
+    /// catches the common "forgot to constrain a hint" bug, not every
+    /// under-constraint); use it on a few representative inputs.
+    pub fn check_constrained<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
+        let id_inputs = self.resolve_inputs(inputs);
+        let assign = self.solve_and_check(&id_inputs).map_err(|e| {
+            ProveError(xark_ir::diagnose::describe_unsatisfied(
+                &e,
+                &self.r1cs,
+                self.profile.as_ref(),
+            ))
+        })?;
+        let holes = solver::analyze_underconstrained(&self.prim, &assign);
+        if holes.is_empty() {
+            return Ok(());
+        }
+        let list: Vec<String> = holes
+            .iter()
+            .take(8)
+            .map(|h| format!("  `{}`: {}", h.name, h.reason))
+            .collect();
+        Err(ProveError(format!(
+            "{} witness variable(s) are under-constrained:\n{}",
+            holes.len(),
+            list.join("\n")
+        )))
+    }
+
     /// Prove the circuit against `inputs` **end to end** — solve the witness, then
     /// run a real (dev-mode, seed 1) Groth16 setup + prove + verify. Returns
     /// `Ok(())` when the proof verifies, or an actionable `Err`: an unsatisfiable
