@@ -19,8 +19,8 @@
 //! theoretic fact (`q` prime, `d ≠ 0`, `λ < q`) that propagation can't derive and
 //! splitting can't reach at that size. It's proven in Lean
 //! (`mul_mod_via_limbwise_constraints`, `ec_add_incomplete_*_sound`), and the same
-//! gadget code over narrow limbs is searched exhaustively (`snapshot.rs`,
-//! `small_field_curve_gadgets_are_sound`).
+//! gadget code over narrow limbs is searched exhaustively for both curve shapes,
+//! `a = 0` and `a = −3` (`snapshot.rs`, `small_field_curve_gadgets_are_sound`).
 //! Variables no constraint references are ignored (they can't affect acceptance).
 
 use std::collections::BTreeMap;
@@ -68,8 +68,22 @@ enum Resolved {
     Lin(usize, Fp, Fp),
 }
 
+/// A constraint with its coefficients reduced into the field and its variables
+/// densely indexed once, up front (`process` runs it many times).
+struct Row {
+    konst: Fp,
+    /// `c · left · right`.
+    muls: Vec<(Fp, usize, usize)>,
+    /// `c · var`.
+    lins: Vec<(Fp, usize)>,
+}
+
 struct Search<'a> {
     program: &'a PrimitiveProgram,
+    rows: Vec<Row>,
+    /// `0` and `1` in the field.
+    zero: Fp,
+    one: Fp,
     p: BigUint,
     pi: BigInt,
     /// Dense index for each referenced variable.
@@ -267,8 +281,34 @@ impl<'a> Search<'a> {
         }
         let n_cons = program.constraints.len();
         let n_vars = dom.len();
+        let rows = program
+            .constraints
+            .iter()
+            .map(|e| Row {
+                konst: Fp::from_const(&e.constant, &p),
+                muls: e
+                    .mul_terms
+                    .iter()
+                    .map(|t| {
+                        (
+                            Fp::from_const(&t.coeff, &p),
+                            index[&t.left],
+                            index[&t.right],
+                        )
+                    })
+                    .collect(),
+                lins: e
+                    .linear_terms
+                    .iter()
+                    .map(|t| (Fp::from_const(&t.coeff, &p), index[&t.var]))
+                    .collect(),
+            })
+            .collect();
         let s = Search {
             program,
+            rows,
+            zero: Fp::zero(&p),
+            one: Fp::from_i64(1, &p),
             pi: BigInt::from_biguint(Sign::Plus, p.clone()),
             p,
             index,
@@ -358,7 +398,14 @@ impl Search<'_> {
     }
 
     fn resolve(&self, v: usize) -> Resolved {
-        let (mut a, mut b, mut u) = (Fp::from_i64(1, &self.p), Fp::zero(&self.p), v);
+        // Fast path: no alias (the common case) — skip the `1·x + 0` arithmetic.
+        if self.alias[v].is_none() {
+            return match &self.dom[v] {
+                Dom::Val(x) => Resolved::Known(x.clone()),
+                _ => Resolved::Lin(v, self.one.clone(), self.zero.clone()),
+            };
+        }
+        let (mut a, mut b, mut u) = (self.one.clone(), self.zero.clone(), v);
         loop {
             if let Dom::Val(x) = &self.dom[u] {
                 return Resolved::Known(a.mul(x).add(&b));
@@ -440,22 +487,16 @@ impl Search<'_> {
 
     /// Propagate one constraint.
     fn process(&mut self, ci: usize) -> Result<(), Conflict> {
-        let expr = &self.program.constraints[ci];
-        let zero = Fp::zero(&self.p);
-        let mut konst = Fp::from_const(&expr.constant, &self.p);
+        let row = &self.rows[ci];
+        let zero = self.zero.clone();
+        let mut konst = row.konst.clone();
+        // Terms per unknown, merged below (sorted, so a long row stays n·log n).
         let mut lin: Vec<(usize, Fp)> = Vec::new();
-        let add_lin = |lin: &mut Vec<(usize, Fp)>, v: usize, c: Fp| {
-            if let Some(e) = lin.iter_mut().find(|e| e.0 == v) {
-                e.1 = e.1.add(&c);
-            } else {
-                lin.push((v, c));
-            }
-        };
+        let add_lin = |lin: &mut Vec<(usize, Fp)>, v: usize, c: Fp| lin.push((v, c));
         // A product of two unknowns: (left, right, coeff), `left <= right`.
         let mut quad: Vec<(usize, usize, Fp)> = Vec::new();
-        for mt in &expr.mul_terms {
-            let c = Fp::from_const(&mt.coeff, &self.p);
-            let (l, r) = (self.index[&mt.left], self.index[&mt.right]);
+        for (c, l, r) in &row.muls {
+            let (c, l, r) = (c, *l, *r);
             match (self.resolve(l), self.resolve(r)) {
                 (Resolved::Known(x), Resolved::Known(y)) => konst = konst.add(&c.mul(&x).mul(&y)),
                 (Resolved::Known(x), Resolved::Lin(u, a, b))
@@ -478,9 +519,8 @@ impl Search<'_> {
                 }
             }
         }
-        for lt in &expr.linear_terms {
-            let c = Fp::from_const(&lt.coeff, &self.p);
-            match self.resolve(self.index[&lt.var]) {
+        for (c, v) in &row.lins {
+            match self.resolve(*v) {
                 Resolved::Known(x) => konst = konst.add(&c.mul(&x)),
                 Resolved::Lin(u, a, b) => {
                     add_lin(&mut lin, u, c.mul(&a));
@@ -488,6 +528,15 @@ impl Search<'_> {
                 }
             }
         }
+        lin.sort_by_key(|e| e.0);
+        let mut merged: Vec<(usize, Fp)> = Vec::with_capacity(lin.len());
+        for (v, c) in lin {
+            match merged.last_mut() {
+                Some(e) if e.0 == v => e.1 = e.1.add(&c),
+                _ => merged.push((v, c)),
+            }
+        }
+        let mut lin = merged;
         lin.retain(|e| !e.1.is_zero());
         quad.retain(|e| !e.2.is_zero());
 
