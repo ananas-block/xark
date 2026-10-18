@@ -7,26 +7,6 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// `--frontend` / `XARK_FRONTEND`: only `wasm` remains; the MIR frontend (the
-/// pinned-nightly `xark-rustc` driver) was removed. `Err(exit code)` otherwise.
-fn check_frontend(frontend: Option<&str>) -> Result<(), i32> {
-    match frontend {
-        None | Some("wasm") => Ok(()),
-        Some("mir") => {
-            eprintln!(
-                "{} the MIR frontend (`--frontend mir`) was removed; xark builds with any \
-                 stable Rust toolchain now (drop the flag)",
-                crate::style::err("error:")
-            );
-            Err(2)
-        }
-        Some(other) => {
-            eprintln!("{} unknown frontend `{other}`", crate::style::err("error:"));
-            Err(2)
-        }
-    }
-}
-
 /// `xark build <crate-dir> [--out DIR] [--field F]`
 ///
 /// Builds the circuit crate for wasm32 with `cargo` (any stable toolchain), then
@@ -50,8 +30,6 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     // the prover/checker load `circuit.xbc`, so a normal build skips the (multi-GB
     // on large circuits) JSON serialization.
     let mut emit_json = false;
-    // `--frontend` / `XARK_FRONTEND`: accepted for `wasm` (the only frontend).
-    let mut frontend: Option<String> = std::env::var("XARK_FRONTEND").ok();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -62,7 +40,6 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
                 }
             }
             "--emit-json" => emit_json = true,
-            "--frontend" => frontend = it.next().cloned(),
             _ if crate_dir.is_none() => crate_dir = Some(a.clone()),
             _ => {}
         }
@@ -91,15 +68,12 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .map(|o| cwd.join(o))
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
 
-    if let Err(code) = check_frontend(frontend.as_deref()) {
-        return code;
-    }
     build_stable(
         &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
     )
 }
 
-/// `xark build` with the stable frontend: `cargo` (any toolchain) builds the circuit
+/// `xark build`: `cargo` (any toolchain) builds the circuit
 /// for wasm32, then `xark-frontend` runs it to lower the circuit.
 fn build_stable(
     crate_abs: &std::path::Path,
@@ -110,10 +84,7 @@ fn build_stable(
     profile: bool,
     emit_json: bool,
 ) -> i32 {
-    eprintln!(
-        "{} building circuit `{name}` (stable frontend)",
-        crate::style::tag()
-    );
+    eprintln!("{} building circuit `{name}`", crate::style::tag());
     // Every build carries DWARF line tables (free; see `BuildOptions`), so errors
     // and `--profile` attribution name source lines.
     let (target_dir, opts) = (
@@ -286,13 +257,10 @@ pub fn cmd_test(args: &[String]) -> i32 {
 pub fn cmd_check(args: &[String]) -> i32 {
     let mut crate_dir: Option<String> = None;
     let mut json = false;
-    let mut frontend: Option<String> = std::env::var("XARK_FRONTEND").ok();
-    let mut it = args.iter();
-    while let Some(a) = it.next() {
+    for a in args {
         match a.as_str() {
             // Emit machine-readable JSON diagnostics (for editors / rust-analyzer).
             "--message-format=json" | "--json" => json = true,
-            "--frontend" => frontend = it.next().cloned(),
             _ if crate_dir.is_none() => crate_dir = Some(a.clone()),
             _ => {}
         }
@@ -303,13 +271,10 @@ pub fn cmd_check(args: &[String]) -> i32 {
     };
     let crate_dir = PathBuf::from(crate_dir);
     let crate_abs = std::env::current_dir().expect("cwd").join(&crate_dir);
-    if let Err(code) = check_frontend(frontend.as_deref()) {
-        return code;
-    }
     check_stable(&crate_abs, json)
 }
 
-/// `xark check` with the stable frontend: build the circuit for wasm32 (with line
+/// `xark check`: build the circuit for wasm32 (with line
 /// tables, so a rejection points at its source line), then lower it. Cargo's own
 /// diagnostics pass through; a lowering rejection is reported like a rustc error —
 /// with `--message-format=json`, as a cargo `compiler-message` on stdout (what
