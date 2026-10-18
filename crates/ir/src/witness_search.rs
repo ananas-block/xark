@@ -14,6 +14,11 @@
 //!
 //! [`WitnessSearch::Inconclusive`] when propagation gets stuck on a variable with no
 //! finite domain to split, or the node budget runs out. Meant for test-sized circuits.
+//! Known blind spot: non-native modular relations (a limb-wise `λ·d ≡ n (mod q)` with a
+//! ~256-bit `q`, as in the EC and bignum inverse gadgets). Their uniqueness is a number-
+//! theoretic fact (`q` prime, `d ≠ 0`, `λ < q`) that propagation can't derive and
+//! splitting can't reach; it's proven in Lean instead
+//! (`mul_mod_via_limbwise_constraints`, `ec_add_incomplete_*_sound`).
 //! Variables no constraint references are ignored (they can't affect acceptance).
 
 use std::collections::BTreeMap;
@@ -572,7 +577,16 @@ impl Search<'_> {
         let show = |i: usize| match &self.dom[i] {
             Dom::Val(x) => format!("{}={}", name(i), x.to_decimal()),
             Dom::Range(lo, hi) => format!("{}∈[{lo},{hi}]", name(i)),
-            Dom::Free => format!("{}=?", name(i)),
+            Dom::Free => match &self.alias[i] {
+                Some((u, a, b)) => format!(
+                    "{}={}·{}+{}",
+                    name(i),
+                    self.small(a).map_or("<big>".to_string(), |z| z.to_string()),
+                    name(*u),
+                    self.small(b).map_or("<big>".to_string(), |z| z.to_string())
+                ),
+                None => format!("{}=?", name(i)),
+            },
         };
         let mut rows = std::collections::BTreeSet::new();
         for (i, d) in self.dom.iter().enumerate() {

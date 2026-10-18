@@ -125,7 +125,10 @@ Rust's result, none for result + 1, and none for any output where Rust panics; t
 honest solver must find that witness too. Over 3,000 programs / 48,000 searches have
 run clean with none undecided (`XARK_FUZZ_CASES`, `XARK_FUZZ_SEED`; CI runs 200 per
 push and 5,000 nightly on a fresh seed). `scripts/difftest-examples.sh` runs the same
-search on every example under 200k rows, on its own test inputs and mutations.
+search on every example under 200k rows, on its own test inputs and mutations; all
+are decided except the non-native EC examples (`ec_incomplete*`), whose modular-inverse
+relations the search can't reason about — those rest on the Lean proofs the snapshot
+suite's gate-count bridges pin.
 
 Mutation testing (each guard, pin and gated range check removed in turn; see the
 plan) is caught by these tests, except a handful that only a specific shape reaches —
