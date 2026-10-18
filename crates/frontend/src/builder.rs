@@ -542,6 +542,8 @@ impl Builder {
             }));
             return out;
         }
+        // The product of two pinned booleans (an AND) is boolean: its row pins it.
+        let both_bool = self.is_boolean_lc(&lhs) && self.is_boolean_lc(&rhs);
         let id = self.fresh_constraint_id();
         let note = note!(
             self,
@@ -555,6 +557,9 @@ impl Builder {
             R1csConstraint::mul(id, lhs, rhs, out, &note),
         );
         let c_idx = self.constraints.len() - 1;
+        if both_bool {
+            self.boolean_vars.insert(out);
+        }
         // Witness-gen: the mul output is computed as `eval(lhs) * eval(rhs)` — filled
         // in from the row's operands at the end (`fill_products`).
         self.witness_gen.push(None);

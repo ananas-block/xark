@@ -2216,9 +2216,10 @@ fn aes_gcm_matches_lean_model() {
     assert!(c.status_success, "aes_gcm gadget compiles: {}", c.stderr);
     // Mult-gate count, streamed from `circuit.xbc` (no r1cs.json materialization).
     let mul = c.mul_gate_count();
-    // 715240 for the mode + 776 booleanity rows range-checking the example's 97
-    // `u8` inputs (flat, no templates).
-    let want = 715984;
+    // Flat (no templates). 160 fewer than before AND outputs (products of pinned
+    // bits) were known boolean: a `to_bits` of a sum of them now reuses those bits
+    // (the bit-sum shortcut) instead of re-decomposing.
+    let want = 715824;
     assert_eq!(mul, want, "AES-128-GCM mult-gate count; got {mul}");
 }
 
@@ -3423,6 +3424,62 @@ fn lazy_field_gadgets_are_sound() {
             }
         }
     }
+}
+
+/// Two shapes the frontend used to refuse, decided by witness search against Rust:
+/// a table index LLVM narrowed using an earlier overflow check (`1 − x` can't
+/// underflow, so `x ≤ 1`, so `x & 7` is `x` — the bound is learned from that check,
+/// and the 64-bit pointer needs no truncation), and a store through a select of two
+/// witness pointers.
+#[test]
+fn narrowed_index_and_nested_pointer_store() {
+    let run = |name: &str, body: &str, ty: &str, cases: &[(u64, Option<u64>)]| {
+        let src = format!(
+            "#![no_std]\n#![allow(arithmetic_overflow)]\nuse xark::prelude::*;\n\
+             pub fn circuit(x0: Private<{ty}>, out: Public<Field>) {{\n{body}\n}}\n"
+        );
+        let c = compile_with_field(&write_case(name, &src), name, "bn254");
+        assert!(c.status_success, "{name}: {}", c.stderr);
+        for &(x, want) in cases {
+            let w = want.unwrap_or(0);
+            for out in [w, w + 1] {
+                let accepted =
+                    accepts_exactly(&c, &[("x0", &x.to_string()), ("out", &out.to_string())]);
+                assert_eq!(accepted, want == Some(out), "{name} x0={x} out={out}");
+            }
+        }
+    };
+    run(
+        "narrowed_index",
+        "let y = 1u64 - x0;\nlet v = [10u64, 20, 30, 40, 50, 60, 70, 80][(x0 & 7) as usize];\n\
+         require_eq(Field::from(v + y), out);",
+        "u64",
+        &[
+            (0, Some(11)),
+            (1, Some(20)),
+            (2, None),
+            (7, None),
+            (u64::MAX, None),
+        ],
+    );
+    let native = |x: u64| {
+        let i = if x < 100 { x & 3 } else { (x >> 2) & 3 };
+        let mut t = [143u64, 120, 170, 31];
+        t[i as usize] = x;
+        Some(t[0] + 2 * t[1] + 3 * t[2] + 5 * t[3])
+    };
+    let cases: Vec<_> = [0u64, 1, 2, 3, 99, 100, 101, 200, 255]
+        .iter()
+        .map(|&x| (x, native(x)))
+        .collect();
+    run(
+        "nested_store",
+        "let i = if x0 < 100 { x0 & 3 } else { (x0 >> 2) & 3 };\n\
+         let mut t = [143u8, 120u8, 170u8, 31u8];\nt[i as usize] = x0;\n\
+         require_eq(Field::from(t[0] as u64 + 2 * t[1] as u64 + 3 * t[2] as u64 + 5 * t[3] as u64), out);",
+        "u8",
+        &cases,
+    );
 }
 
 /// **The small-field checks are about the real circuit.** The EC add + double circuit

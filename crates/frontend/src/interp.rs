@@ -1405,21 +1405,84 @@ impl Machine {
             }
             return Ok(());
         }
-        self.store_select(a, off, size, v)
+        self.store_select(a, off, size, v, host)
+    }
+
+    /// Every address a witness pointer can hold (concrete, a narrow `base + index`,
+    /// or a select of those), deduplicated; `None` if one isn't bounded that way.
+    fn pointer_candidates(&mut self, host: &mut dyn Host, p: V) -> Option<Vec<u64>> {
+        if !p.is_sym() {
+            return Some(vec![p.b & 0xffff_ffff]);
+        }
+        match self.syms[p.s as usize].clone() {
+            Sym::Ite { t, e, .. } => {
+                let mut c = self.pointer_candidates(host, t)?;
+                c.extend(self.pointer_candidates(host, e)?);
+                c.sort_unstable();
+                c.dedup();
+                Some(c)
+            }
+            Sym::Wire { .. } => {
+                let (base, offsets, _) = host.index_form(self, p)?;
+                Some(offsets.iter().map(|o| (base + o) & 0xffff_ffff).collect())
+            }
+            _ => None,
+        }
     }
 
     /// A store through `cond ? p : q`: each target keeps its old contents unless
     /// it is the selected one (`*p = cond ? v : *p`, `*q = cond ? *q : v`).
-    fn store_select(&mut self, a: V, off: u32, size: u32, v: V) -> CompileResult<()> {
+    fn store_select(
+        &mut self,
+        a: V,
+        off: u32,
+        size: u32,
+        v: V,
+        host: &mut dyn Host,
+    ) -> CompileResult<()> {
         let Sym::Ite { cond, t, e } = self.syms[a.s as usize].clone() else {
             return Err(CompileError::new(
                 "a store through a witness-dependent pointer is not supported",
             ));
         };
         if t.is_sym() || e.is_sym() {
-            return Err(CompileError::new(
-                "a store through a nested witness-dependent pointer is not supported",
-            ));
+            // A select of witness pointers: every address it can hold becomes
+            // `a == addr ? v : old`; an out-of-bounds one (a trap) is ruled out.
+            if self.probing {
+                return Err(probe_end());
+            }
+            let Some(addrs) = self.pointer_candidates(host, a) else {
+                return Err(CompileError::new(
+                    "a store through a nested witness-dependent pointer is not supported",
+                ));
+            };
+            let mut any = false;
+            for addr in addrs {
+                let eq = host.int_cmp(self, Cmp::Eq, false, a, V::c(addr))?;
+                if addr + off as u64 + size as u64 > self.mem.len() as u64 {
+                    if eq.is_sym() {
+                        host.require_cond(self, eq.s, false)?;
+                    }
+                    continue;
+                }
+                any = true;
+                let p = addr as u32 + off;
+                if !eq.is_sym() {
+                    if eq.b != 0 {
+                        self.store(p, size, v)?;
+                    }
+                    continue;
+                }
+                let old = self.load(p, size)?;
+                let new = self.ite(eq.s, v, old);
+                self.store(p, size, new)?;
+            }
+            if !any {
+                return Err(
+                    CompileError::new("circuit execution trapped: out-of-bounds store").diverging(),
+                );
+            }
+            return Ok(());
         }
         let pt = self.check(t.b as u32 as u64 + off as u64, size)?;
         let pe = self.check(e.b as u32 as u64 + off as u64, size)?;

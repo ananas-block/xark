@@ -116,6 +116,13 @@ pub struct Host {
     guards: Vec<(LinearCombination, Option<LinearCombination>)>,
     /// Bit widths known for variables (from the wires that are just that variable).
     var_width: HashMap<xark_ir::VarId, u32>,
+    /// Unsigned comparisons by result wire: `(op, lhs, rhs)` — so a comparison later
+    /// required outright (an overflow or bounds check) yields a variable bound.
+    cmp_facts: HashMap<u32, (Cmp, LinearCombination, LinearCombination)>,
+    /// Upper bounds on variables proven by such unconditional requirements (for
+    /// `index_form`: an index LLVM narrowed using an earlier check, e.g. `1 − x`
+    /// not underflowing, so `x ≤ 1`).
+    var_max: HashMap<xark_ir::VarId, u64>,
     /// The high half of the last `u128` input bound (see `Intr::InputUintHi`).
     pending_hi: Option<LinearCombination>,
     /// Native-`uN` inputs awaiting their entry range check.
@@ -160,6 +167,8 @@ impl Host {
             gc_at: 1 << 20,
             wires: Vec::new(),
             var_width: HashMap::new(),
+            cmp_facts: HashMap::new(),
+            var_max: HashMap::new(),
             partial: 0,
             guards: Vec::new(),
             uint_inputs: Vec::new(),
@@ -697,6 +706,73 @@ impl Host {
         }
     }
 
+    /// `cond == value` was just required outside any witness branch: if `cond` is an
+    /// unsigned comparison of a bare variable with a constant, record the bound it
+    /// proves (every satisfying witness obeys it).
+    fn learn_bound(&mut self, cond: u32, value: bool) {
+        let Some((o, x, y)) = self.cmp_facts.get(&cond).cloned() else {
+            return;
+        };
+        let var_of = |l: &LinearCombination| {
+            (l.constant.is_zero() && l.terms.len() == 1 && l.terms[0].coeff.is_one())
+                .then(|| l.terms[0].var)
+        };
+        let konst = |l: &LinearCombination| {
+            l.is_constant()
+                .then(|| l.constant.as_i64())
+                .flatten()
+                .filter(|c| *c >= 0)
+        };
+        // Normalize to `v ≤ max` for a variable `v`.
+        let (v, max) = match (var_of(&x), konst(&y), var_of(&y), konst(&x)) {
+            // v OP c
+            (Some(v), Some(c), _, _) => match (o, value) {
+                (Cmp::LtU, true) | (Cmp::GeU, false) => (v, c - 1),
+                (Cmp::LeU, true) | (Cmp::GtU, false) => (v, c),
+                _ => return,
+            },
+            // c OP v
+            (_, _, Some(v), Some(c)) => match (o, value) {
+                (Cmp::GtU, true) | (Cmp::LeU, false) => (v, c - 1),
+                (Cmp::GeU, true) | (Cmp::LtU, false) => (v, c),
+                _ => return,
+            },
+            _ => return,
+        };
+        if max < 0 {
+            return;
+        }
+        let e = self.var_max.entry(v).or_insert(max as u64);
+        *e = (*e).min(max as u64);
+    }
+
+    /// Bits needed for the largest value `lc` can take, when every coefficient and the
+    /// constant are non-negative and every variable is bounded (known width,
+    /// booleanity, or a proven bound); `None` otherwise.
+    fn lc_bits(&self, lc: &LinearCombination) -> Option<u32> {
+        let mut max = u128::try_from(lc.constant.as_i64()?).ok()?;
+        for t in &lc.terms {
+            let c = u128::try_from(t.coeff.as_i64()?).ok()?;
+            let width_max = self
+                .var_width
+                .get(&t.var)
+                .filter(|&&w| w < 64)
+                .map(|&w| (1u128 << w) - 1);
+            let vmax = if self.b.boolean_vars.contains(&t.var) {
+                1
+            } else {
+                match (width_max, self.var_max.get(&t.var)) {
+                    (Some(a), Some(&b)) => a.min(b as u128),
+                    (Some(a), None) => a,
+                    (None, Some(&b)) => b as u128,
+                    (None, None) => return None,
+                }
+            };
+            max = max.checked_add(c.checked_mul(vmax)?)?;
+        }
+        Some(128 - max.leading_zeros())
+    }
+
     /// A gadget hint's limbs inside an arm: `g · limb`, plus `low · (1 − g)` on limb
     /// 0 — the value the hint sees where the arm isn't taken (`1` for a divisor or
     /// modulus, so it never fails there). Unchanged outside arms.
@@ -821,6 +897,10 @@ impl Host {
             let v = v as u64;
             return V::c(if reg == 32 { v as u32 as u64 } else { v });
         }
+        // A value whose bound (from its variables' widths, booleanity and the bounds
+        // unconditional checks proved) already fits needs no truncation — e.g. a
+        // pointer `8·x + base` computed in 64 bits after `x ≤ 1` was checked.
+        let width = width.min(self.lc_bits(&lc).unwrap_or(width));
         if width <= reg {
             return self.new_wire(m, lc, width);
         }
@@ -1061,6 +1141,8 @@ impl crate::interp::Host for Host {
         let reg = if wide { 64 } else { 32 };
         let (la, wa) = self.int_parts(m, a)?;
         let (lb, wb) = self.int_parts(m, b)?;
+        let fact = matches!(o, Cmp::LtU | Cmp::LeU | Cmp::GtU | Cmp::GeU)
+            .then(|| (o, la.clone(), lb.clone()));
         let mut n = wa.max(wb).max(1) as usize;
         let signed = matches!(o, Cmp::LtS | Cmp::GtS | Cmp::LeS | Cmp::GeS);
         let (mut la, mut lb) = (la, lb);
@@ -1089,7 +1171,11 @@ impl crate::interp::Host for Host {
             Cmp::LeU | Cmp::LeS => LinearCombination::one() - lt(self, lb, la)?,
             Cmp::GeU | Cmp::GeS => LinearCombination::one() - lt(self, la, lb)?,
         };
-        Ok(self.new_wire(m, lc, 1))
+        let out = self.new_wire(m, lc, 1);
+        if let Some(f) = fact {
+            self.cmp_facts.insert(out.s, f);
+        }
+        Ok(out)
     }
 
     fn index_form(&mut self, m: &mut Machine, p: V) -> Option<(u64, Vec<u64>, V)> {
@@ -1111,9 +1197,20 @@ impl crate::interp::Host for Host {
                 1
             } else {
                 all_bool = false;
-                match self.var_width.get(&t.var) {
-                    Some(&w) if w <= 20 => (1i128 << w) - 1,
-                    _ => return None,
+                let by_width = self
+                    .var_width
+                    .get(&t.var)
+                    .filter(|&&w| w <= 20)
+                    .map(|&w| (1i128 << w) - 1);
+                let by_bound = self
+                    .var_max
+                    .get(&t.var)
+                    .filter(|&&b| b < 1 << 20)
+                    .map(|&b| b as i128);
+                match (by_width, by_bound) {
+                    (Some(a), Some(b)) => a.min(b),
+                    (Some(a), None) | (None, Some(a)) => a,
+                    (None, None) => return None,
                 }
             };
             if c > 0 {
@@ -1180,6 +1277,9 @@ impl crate::interp::Host for Host {
             LinearCombination::zero()
         };
         self.require_gated(c, want);
+        if self.guards.is_empty() {
+            self.learn_bound(cond, value);
+        }
         Ok(())
     }
 
