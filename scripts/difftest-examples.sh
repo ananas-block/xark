@@ -2,7 +2,9 @@
 # Adversarial test of every example on its own test inputs.
 #
 #   scripts/difftest-examples.sh [example …]     # default: every example under
-#                                                # XARK_MAX_ROWS (200000) rows
+#                                                # XARK_MAX_ROWS (1100000) rows —
+#   all but the three signature circuits, which are searched block by block
+#   instead (`signature_blocks_are_sound` in crates/lang/tests/snapshot.rs)
 #
 # Builds each example, records its `xark test` inputs (`XARK_DUMP_INPUTS`), then runs
 # `difftest --search`: every input, and single-leaf mutations of it, must get the
@@ -23,7 +25,7 @@ mkdir -p "$work"
 xark="$root/target/release/xark"
 difftest="$root/target/release/examples/difftest"
 stat="$root/target/release/examples/xbcstat"
-max_rows="${XARK_MAX_ROWS:-200000}"
+max_rows="${XARK_MAX_ROWS:-1100000}"
 names=("$@")
 if [ ${#names[@]} -eq 0 ]; then
   for d in "$root"/examples/*/; do
@@ -32,6 +34,11 @@ if [ ${#names[@]} -eq 0 ]; then
 fi
 # Intentionally unsound examples: the search must find their second witness.
 unsound=" underconstrained_bit "
+# Examples whose searches can't decide by design: non-native modular inverses over
+# a ~256-bit prime (the witness_search.rs blind spot). The same gadget code is
+# searched exhaustively over small fields (`small_field_curve_gadgets_are_sound`,
+# both curve shapes) and proven in Lean (`ec_add_incomplete_*_sound`).
+blindspot=" ec_incomplete ec_incomplete_r1 "
 fails=0
 skipped=0
 undecided=""
@@ -70,7 +77,11 @@ for n in "${names[@]}"; do
   "$difftest" "${base:-$out/circuit.xbc}" "$out/circuit.xbc" "$dump" --search > "$work/$n.diff.log" 2>&1 || status=$?
   case $status in
     0) echo "$n: $(tail -2 "$work/$n.diff.log" | tr '\n' ' ')";;
-    2) undecided="$undecided $n"; echo "$n: undecided — every search inconclusive";;
+    2) if [[ "$blindspot" == *" $n "* ]]; then
+         echo "$n: verdicts agree; search inconclusive by design (256-bit inverse — covered by the small-field search and Lean)"
+       else
+         undecided="$undecided $n"; echo "$n: undecided — every search inconclusive"
+       fi;;
     *) fails=$((fails + 1)); echo "$n: FAILED — $(grep -m3 FAIL "$work/$n.diff.log" | tr '\n' ' ')";;
   esac
 done

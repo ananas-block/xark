@@ -90,7 +90,7 @@ fn ipa_fold_verifies() {
     let mut inputs = honest(&program);
 
     // (1) the in-circuit Poseidon2 challenges + fold + final IPA relation hold.
-    let assign = solver::solve_and_check(&program, &inputs)
+    let assign = solver::solve_and_check_recorded("grumpkin_ipa_fold", &program, &inputs)
         .expect("grumpkin_ipa_fold must verify the honest IPA transcript");
 
     // (2) analyzer-clean.
@@ -101,7 +101,7 @@ fn ipa_fold_verifies() {
     let r0x = program.vars.iter().find(|v| v.name == "r0.x").unwrap().id;
     inputs.insert(r0x, "123".to_string());
     assert!(
-        solver::solve_and_check(&program, &inputs).is_err(),
+        solver::solve_and_check_recorded("grumpkin_ipa_fold", &program, &inputs).is_err(),
         "a tampered transcript must be rejected"
     );
 }

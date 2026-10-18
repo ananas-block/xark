@@ -20,7 +20,6 @@ mod tests {
     use super::poseidon_sponge;
 
     #[test]
-    #[ignore = "heavy: original-Poseidon solve (big-coefficient MDS-fold LCs)"]
     fn accepts_valid() {
         // poseidon sponge hash([1..5])
         poseidon_sponge(
@@ -35,7 +34,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "heavy: original-Poseidon solve (big-coefficient MDS-fold LCs)"]
     fn rejects_wrong() {
         assert!(poseidon_sponge(
             "1".into(),

@@ -879,6 +879,49 @@ pub fn solve_and_check(
     Ok(assign)
 }
 
+/// [`solve_and_check`], recording the inputs and outcome when
+/// `XARK_DUMP_INPUTS=<dir>` is set: one JSON file per call, `{"circuit",
+/// "inputs": [[leaf, decimal]…], "ok"}` — a corpus of real test inputs for
+/// differential testing and witness search over two builds of the same circuit
+/// (`crates/frontend/examples/difftest.rs`, `scripts/difftest-examples.sh`).
+/// Every circuit test should solve through this (directly, or via
+/// `xark_prover::Circuit`) so its inputs are checked too.
+pub fn solve_and_check_recorded(
+    circuit: &str,
+    program: &PrimitiveProgram,
+    inputs: &BTreeMap<VarId, String>,
+) -> Result<BTreeMap<VarId, Fp>, SolveError> {
+    let r = solve_and_check(program, inputs);
+    if let Some(dir) = std::env::var_os("XARK_DUMP_INPUTS") {
+        let names: BTreeMap<VarId, &str> = program
+            .vars
+            .iter()
+            .map(|v| (v.id, v.name.as_str()))
+            .collect();
+        // Leaf names are paths like `a[0].x` and values decimals: `{:?}` quotes
+        // them as JSON strings.
+        let leaves: Vec<String> = inputs
+            .iter()
+            .map(|(id, val)| format!("[{:?},{val:?}]", names.get(id).copied().unwrap_or("")))
+            .collect();
+        let text = format!(
+            "{{\"circuit\":{circuit:?},\"inputs\":[{}],\"ok\":{}}}",
+            leaves.join(","),
+            r.is_ok()
+        );
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&text, &mut h);
+        let dir = std::path::Path::new(&dir);
+        let _ = std::fs::create_dir_all(dir);
+        let file = dir.join(format!(
+            "{circuit}-{:016x}.json",
+            std::hash::Hasher::finish(&h)
+        ));
+        let _ = std::fs::write(file, text);
+    }
+    r
+}
+
 /// `a·b == c` for one R1CS row against a solved assignment — the streaming
 /// check's per-row test (reuses [`eval_lc`]). Never holds more than one row.
 pub(crate) fn row_satisfied(

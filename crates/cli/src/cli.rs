@@ -310,7 +310,8 @@ pub fn cmd_test(args: &[String]) -> i32 {
 
     // Run in `--release`: circuit tests drive a full Groth16 setup+prove+verify,
     // 10–50× slower in debug (minutes vs seconds on a large hash/EC circuit), so
-    // release is the sensible default. Anything after `--` forwards to the harness.
+    // release is the sensible default. Anything after `--` goes to `cargo test`
+    // (so `xark test . -- -- --include-ignored` reaches the test binary).
     eprintln!("xark: running `cargo test --release` in {crate_dir}");
     let status = Command::new("cargo")
         .arg("test")

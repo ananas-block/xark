@@ -93,7 +93,16 @@ impl Build {
             WitnessSearch::Multiple { name, .. } => {
                 Err(format!("two witnesses (differ at `{name}`)"))
             }
-            WitnessSearch::Inconclusive(_) => Ok(None),
+            WitnessSearch::Inconclusive(why) => {
+                // Say why once per distinct reason, so the log shows what blocks it.
+                static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+                let mut seen = SEEN.lock().unwrap();
+                if !seen.contains(&why) {
+                    println!("note: search inconclusive: {why}");
+                    seen.push(why);
+                }
+                Ok(None)
+            }
         }
     }
 }

@@ -66,7 +66,7 @@ fn nova_fold_verifies() {
     let program = load();
     let mut inputs = honest(&program);
 
-    let assign = solver::solve_and_check(&program, &inputs)
+    let assign = solver::solve_and_check_recorded("grumpkin_nova_fold", &program, &inputs)
         .expect("grumpkin_nova_fold must verify the honest fold");
     let holes = solver::analyze_underconstrained(&program, &assign);
     assert!(holes.is_empty(), "under-constrained: {holes:?}");
@@ -75,7 +75,7 @@ fn nova_fold_verifies() {
     let cwx = program.vars.iter().find(|v| v.name == "cw.x").unwrap().id;
     inputs.insert(cwx, "123".to_string());
     assert!(
-        solver::solve_and_check(&program, &inputs).is_err(),
+        solver::solve_and_check_recorded("grumpkin_nova_fold", &program, &inputs).is_err(),
         "a wrong folded instance must be rejected"
     );
 }

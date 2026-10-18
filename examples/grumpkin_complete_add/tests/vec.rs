@@ -54,7 +54,7 @@ fn complete_add_all_cases() {
     ];
     for (name, p, q, r) in cases {
         let m = inputs(&program, p, q, r);
-        let assign = solver::solve_and_check(&program, &m)
+        let assign = solver::solve_and_check_recorded("grumpkin_complete_add", &program, &m)
             .unwrap_or_else(|e| panic!("case `{name}` must verify: {e:?}"));
         let holes = solver::analyze_underconstrained(&program, &assign);
         assert!(holes.is_empty(), "case `{name}` under-constrained: {holes:?}");
@@ -65,7 +65,7 @@ fn complete_add_all_cases() {
     let mut bad = inputs(program2, P, Q, P_PLUS_P); // claim P+Q == 2P
     let _ = &mut bad;
     assert!(
-        solver::solve_and_check(program2, &bad).is_err(),
+        solver::solve_and_check_recorded("grumpkin_complete_add", program2, &bad).is_err(),
         "wrong sum must be rejected"
     );
 }

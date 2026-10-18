@@ -68,7 +68,7 @@ fn deferred_msm_accumulator_verifies() {
     let mut inputs = honest_inputs(&program);
 
     // (1) satisfiable on the honest vector.
-    let assign = solver::solve_and_check(&program, &inputs)
+    let assign = solver::solve_and_check_recorded("grumpkin_ipa", &program, &inputs)
         .expect("grumpkin_ipa must verify on the reference accumulator vector");
 
     // (2) analyzer-clean: no under-constrained (forgeable) derived variables.
@@ -79,7 +79,7 @@ fn deferred_msm_accumulator_verifies() {
     let qx_id = program.vars.iter().find(|v| v.name == "q.x").unwrap().id;
     inputs.insert(qx_id, "123".to_string());
     assert!(
-        solver::solve_and_check(&program, &inputs).is_err(),
+        solver::solve_and_check_recorded("grumpkin_ipa", &program, &inputs).is_err(),
         "a wrong claimed Q must be rejected"
     );
 }

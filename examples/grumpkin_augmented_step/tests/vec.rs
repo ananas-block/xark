@@ -56,7 +56,7 @@ fn honest(program: &primitive::PrimitiveProgram) -> BTreeMap<u32, String> {
 fn augmented_step_verifies() {
     let program = load();
     let mut inputs = honest(&program);
-    let assign = solver::solve_and_check(&program, &inputs)
+    let assign = solver::solve_and_check_recorded("grumpkin_augmented_step", &program, &inputs)
         .expect("augmented step must verify the honest reference");
     let holes = solver::analyze_underconstrained(&program, &assign);
     assert!(holes.is_empty(), "under-constrained: {holes:?}");
@@ -64,7 +64,7 @@ fn augmented_step_verifies() {
     // wrong output state hash → rejected.
     let io_out = program.vars.iter().find(|v| v.name == "io_out").unwrap().id;
     inputs.insert(io_out, "123".to_string());
-    assert!(solver::solve_and_check(&program, &inputs).is_err(), "wrong io_out must reject");
+    assert!(solver::solve_and_check_recorded("grumpkin_augmented_step", &program, &inputs).is_err(), "wrong io_out must reject");
 }
 
 #[test]

@@ -16,7 +16,6 @@ mod tests {
     use super::poseidon;
 
     #[test]
-    #[ignore = "heavy: original-Poseidon solve (big-coefficient MDS-fold LCs)"]
     fn accepts_valid() {
         // poseidon.hash2(3, 5)
         poseidon(
@@ -28,7 +27,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "heavy: original-Poseidon solve (big-coefficient MDS-fold LCs)"]
     fn rejects_wrong() {
         assert!(poseidon("3".into(), "5".into(), "1".into()).is_err());
     }

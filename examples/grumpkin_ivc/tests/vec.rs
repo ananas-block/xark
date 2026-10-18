@@ -81,7 +81,7 @@ fn ivc_2step_verifies() {
     let program = load();
     let base = honest(&program);
 
-    let assign = solver::solve_and_check(&program, &base)
+    let assign = solver::solve_and_check_recorded("grumpkin_ivc", &program, &base)
         .expect("grumpkin_ivc must verify the honest 2-step run");
     let holes = solver::analyze_underconstrained(&program, &assign);
     assert!(holes.is_empty(), "under-constrained: {holes:?}");
@@ -91,12 +91,12 @@ fn ivc_2step_verifies() {
     // tamper the computation output → rejected (z2 must equal F(F(z0))).
     let mut bad_z = base.clone();
     bad_z.insert(id("z2"), "202".to_string());
-    assert!(solver::solve_and_check(&program, &bad_z).is_err(), "wrong z2 must reject");
+    assert!(solver::solve_and_check_recorded("grumpkin_ivc", &program, &bad_z).is_err(), "wrong z2 must reject");
 
     // tamper the final accumulator → rejected (fold chain is FS-bound).
     let mut bad_u = base.clone();
     bad_u.insert(id("u2_u"), "123".to_string());
-    assert!(solver::solve_and_check(&program, &bad_u).is_err(), "wrong U2 must reject");
+    assert!(solver::solve_and_check_recorded("grumpkin_ivc", &program, &bad_u).is_err(), "wrong U2 must reject");
 }
 
 #[test]

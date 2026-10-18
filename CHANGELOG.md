@@ -55,3 +55,7 @@ keys. Beyond that, these gadgets now check more:
   witness-only code are no longer reused by real constraints; copies, overlapping
   stores and sign-extending loads through witness-selected pointers; indirect
   calls check the callee's signature.
+- Loading a circuit to solve it (`xark test`, `xark prove`) multiplied out every
+  `A·B = C` row, so a row with two 500-term sides became 250,000 terms: a
+  12k-constraint Grumpkin circuit took 27 GB and 80 s. Such rows are now factored
+  through a helper variable (0.7 GB, about 2 s).
