@@ -56,12 +56,12 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .to_string();
     let cwd = std::env::current_dir().expect("cwd");
     let crate_abs = cwd.join(&crate_dir);
-    // Everything xark produces lives under the crate's `target/xark/`, isolated
-    // from the crate's normal `target/` so the wasm32 / `--cfg xark` builds don't
-    // thrash the one `cargo` and rust-analyzer use. The build cache stays at the
-    // shared `target/xark/` (workspace circuits share deps); each circuit's
-    // artifacts land in a name-scoped `target/xark/<pkg-name>/`, the package name
-    // from `Cargo.toml` (`[package] name`) falling back to the directory name.
+    // xark's artifacts live under the crate's `target/xark/`, and the wasm32 /
+    // `--cfg xark` build cache under `target/xark-wasm/` — both apart from the
+    // crate's normal `target/` so they don't thrash the one `cargo` and
+    // rust-analyzer use. Each circuit's artifacts land in a name-scoped
+    // `target/xark/<pkg-name>/`, the package name from `Cargo.toml`
+    // (`[package] name`) falling back to the directory name.
     let xark_dir = crate_abs.join("target/xark");
     let pkg_name = crate::xark_project::read_pkg_name(&crate_abs).unwrap_or_else(|| name.clone());
     let out_abs = out
@@ -150,8 +150,8 @@ fn build_stable(
 }
 
 /// `xark clean` — remove **every** xark output tree under the current directory:
-/// each circuit crate's `target/xark/` (emitted artifacts, keys, proofs, and the
-/// isolated cargo target). Takes no arguments.
+/// each circuit crate's `target/xark/` (emitted artifacts, keys, proofs) and
+/// `target/xark-wasm/` (the wasm build cache). Takes no arguments.
 pub fn cmd_clean(_args: &[String]) -> i32 {
     fn walk(dir: &std::path::Path, removed: &mut u32, errors: &mut u32) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -163,10 +163,12 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
                 continue;
             }
             match path.file_name().and_then(|s| s.to_str()) {
-                // Remove `target/xark` here; don't descend into `target/` itself.
+                // Remove `target/xark{,-wasm}` here; don't descend into `target/`.
                 Some("target") => {
-                    let xark = path.join("xark");
-                    if xark.is_dir() {
+                    for xark in [path.join("xark"), path.join("xark-wasm")] {
+                        if !xark.is_dir() {
+                            continue;
+                        }
                         match std::fs::remove_dir_all(&xark) {
                             Ok(()) => {
                                 eprintln!("xark: removed {}", xark.display());
@@ -189,12 +191,12 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
     walk(&root, &mut removed, &mut errors);
     if removed == 0 && errors == 0 {
         eprintln!(
-            "xark: nothing to clean (no target/xark under {})",
+            "xark: nothing to clean (no target/xark or target/xark-wasm under {})",
             root.display()
         );
     } else {
         eprintln!(
-            "xark: cleaned {removed} target/xark director{}",
+            "xark: cleaned {removed} xark target director{}",
             if removed == 1 { "y" } else { "ies" }
         );
     }
