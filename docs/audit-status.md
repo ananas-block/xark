@@ -59,8 +59,8 @@ depending on `sorryAx`. Coverage (theorem names → modules):
   (`Formal.Curve / Secp256k1 / Secp256r1`).
 * **Concrete point groups** — `Secp256k1Point`, `Secp256r1Point`, `GrumpkinPoint`
   (`Formal.*Group`): all three are mathlib `WeierstrassCurve.Affine.Point` aliases
-  inheriting `AddCommGroup` via `inferInstance`. Three trusted primality axioms (one per
-  base field) — see "Trusted base additions".
+  inheriting `AddCommGroup` via `inferInstance`. The three base-field primes are proven
+  prime by kernel-checked Pratt certificates (`Formal.Pratt`, `Formal.CurvePrimes`).
 * **Poseidon2** — `poseidon_permutation_determined` (width-polymorphic) and
   `poseidon2_bn254_t3_determined` (the concrete `t = 3` instance the gadget implements)
   (`Formal.Poseidon` + `Formal.Poseidon2Bn254T3`).
@@ -118,14 +118,11 @@ depending on `sorryAx`. Coverage (theorem names → modules):
 
 Three axioms in `formal/`, each documented at its declaration site:
 
-| Axiom | Scope | Why |
-|---|---|---|
-| `secp256k1_p_prime : Fact (Nat.Prime secp256k1_p)` | 256-bit prime | Lean's kernel can't `decide` 256-bit primality; verifiable via `openssl prime`. |
-| `secp256r1_p_prime : Fact (Nat.Prime secp256r1_p)` | 256-bit prime | Same. |
-| `bn254_r_prime : Fact (Nat.Prime r)` | 254-bit prime | BN254 `Fr` modulus; used by `GrumpkinPoint` and field instances. |
-
-These are the only `axiom` declarations in `formal/`. No `sorry`/`sorryAx`. `lean.yml`
-prints `#print axioms` for every load-bearing theorem and fails CI on any `sorryAx`.
+There are no `axiom` declarations in `formal/`: the secp256k1, secp256r1 and BN254
+primes, once trusted axioms, are theorems proven by Pratt certificates
+(`Formal.CurvePrimes`, checked by the kernel with `decide`). No `sorry`/`sorryAx`.
+`lean.yml` prints `#print axioms` for every load-bearing theorem and fails CI on any
+`sorryAx`.
 
 ### `native_decide` axioms
 

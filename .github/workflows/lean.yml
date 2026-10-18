@@ -251,6 +251,10 @@ jobs:
           #print axioms Xark.R1cs.pin_dead
           #print axioms Xark.R1cs.select_taken
           #print axioms Xark.R1cs.select_untaken
+          #print axioms Pratt.prime_of_certificate
+          #print axioms bn254_r_prime
+          #print axioms secp256k1_p_prime
+          #print axioms secp256r1_p_prime
           EOF
           # Capture stdout+stderr separately from the exit code; under bash -e
           # `out=$(cmd)` exits the whole script if `cmd` returns non-zero,

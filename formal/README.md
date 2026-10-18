@@ -150,9 +150,11 @@ cap `n ≤ 253` is what keeps the field sum below the BN254 scalar modulus `r`
 (`two_pow_lt_r : 2^253 < r`) so it cannot wrap.
 
 The proofs use only the standard mathlib axioms (`propext`, `Classical.choice`,
-`Quot.sound`) plus three primality axioms for the secp256k1, secp256r1, and
-BN254 base-field moduli (Lean's kernel can't `decide` 254/256-bit primality;
-each is documented at its declaration site). No `sorry`. CI checks this with
+`Quot.sound`), plus `native_decide`'s compiled-evaluation axiom in the few places
+listed at their declaration sites (GF(2⁸) tables, the secp256k1 GLV constants). The
+secp256k1, secp256r1 and BN254 primes are proven prime by kernel-checked Pratt
+certificates ([`Formal/CurvePrimes.lean`](Formal/CurvePrimes.lean), machinery in
+[`Formal/Pratt.lean`](Formal/Pratt.lean)). No `sorry`. CI checks this with
 `#print axioms`.
 
 [`Formal/Rewrites.lean`](Formal/Rewrites.lean) — **the stable frontend's
