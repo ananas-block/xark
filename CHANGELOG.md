@@ -44,11 +44,13 @@ gadgets now check more:
   Verify in JavaScript with xark-wasm's `verify`. The proof bundle
   (`<name>-<hash>.proof.json`) now carries `proof_bin` / `public_inputs_bin` (the
   bytes `verify` takes) and `public_inputs` (decimals) instead of the snarkjs
-  proof and `public_signals`.
+  proof and `public_signals`. It no longer carries the packed on-chain bytes
+  (`calldata`), and `xark prove` no longer prints them; the Solana verifier from
+  `xark export` builds its own instruction data.
 - **`xark client` generates a typed TypeScript client** from `schema.json` (typed
   `prove` / `verify` through xark-wasm, no setup needed). It replaces the old
-  starter scaffold, and the `xark-client` npm package (verify + calldata over
-  snarkjs) is removed: prove and verify with xark-wasm or the generated client.
+  starter scaffold, and the `xark-client` npm package (snarkjs verify) is removed:
+  prove and verify with xark-wasm or the generated client.
 
 ### Added
 

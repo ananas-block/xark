@@ -17,7 +17,6 @@ use rand_chacha::ChaCha20Rng;
 
 use xark_backend::proof::ProofBundle;
 use xark_backend::serialization::write_public_inputs;
-use xark_backend::solana::{assemble_proof_bytes_le, assemble_public_inputs_bytes_le};
 use xark_backend::{keys::Groth16Keys, prove};
 use xark_groth16::{ConstraintSource, PkSource};
 use xark_ir::VarId;
@@ -608,8 +607,8 @@ fn prove_streaming(
     Ok((proof, public, fingerprint))
 }
 
-/// Write the proof, public inputs and the self-contained bundle,
-/// and print the proof / calldata summary.
+/// Write the proof, public inputs and the self-contained bundle, and print a
+/// summary.
 #[allow(clippy::too_many_arguments)]
 fn write_outputs(
     args: &ProveArgs,
@@ -633,28 +632,9 @@ fn write_outputs(
     let public_path = out_dir.join("public_inputs.bin");
     write_public_inputs(&public, &public_path)?;
 
-    // Verifier calldata: the packed `proof (256 B) || public_inputs (N * 32 B)`
-    // bytes, little-endian, that the xark on-chain verifier consumes (`A` is
-    // pre-negated; see `xark_backend::solana`).
-    let proof_bytes = assemble_proof_bytes_le(&bundle.proof);
-    let public_bytes = assemble_public_inputs_bytes_le(&public);
-    let mut calldata = Vec::with_capacity(proof_bytes.len() + public_bytes.len());
-    calldata.extend_from_slice(&proof_bytes);
-    calldata.extend_from_slice(&public_bytes);
-    let proof_hex = format!("0x{}", hex::encode(&proof_bytes));
-    let calldata_hex = format!("0x{}", hex::encode(&calldata));
-
-    // Fingerprint the proof itself (SHA-256 of its on-chain bytes). This is a
-    // stable id for *this* proof — copy it to reference/track it, and it names
-    // the bundle file so distinct proofs never clobber each other.
-    let proof_sha = super::sha256_hex(&proof_bytes);
-    let proof_short = &proof_sha[..proof_sha.len().min(8)];
-
     // Self-contained, shareable proof bundle: the proof and public inputs as the
     // canonical bytes `xark verify` / xark-wasm `verify` take (`proof.bin`,
-    // `public_inputs.bin`), the public inputs as decimals, and the verifier
-    // calldata, in one file. Named by the entry name so it lines up with the
-    // generated client.
+    // `public_inputs.bin`), and the public inputs as decimals, in one file.
     let proof_bin =
         fs::read(proof_out).with_context(|| format!("reading {}", proof_out.display()))?;
     let public_bin =
@@ -663,6 +643,12 @@ fn write_outputs(
         .iter()
         .map(|x| num_bigint::BigUint::from(*x).to_string())
         .collect();
+
+    // Fingerprint the proof itself (SHA-256 of `proof.bin`). This is a stable id
+    // for *this* proof — copy it to reference/track it, and it names the bundle
+    // file so distinct proofs never clobber each other.
+    let proof_sha = super::sha256_hex(&proof_bin);
+    let proof_short = &proof_sha[..proof_sha.len().min(8)];
     let name = project.entry_name();
     let bundle_json = serde_json::json!({
         "circuit": name,
@@ -673,12 +659,6 @@ fn write_outputs(
         "public_inputs": public_decimal,
         "proof_bin": format!("0x{}", hex::encode(&proof_bin)),
         "public_inputs_bin": format!("0x{}", hex::encode(&public_bin)),
-        "calldata": {
-            "endianness": "little",
-            "hex": calldata_hex,
-            "proof_hex": proof_hex,
-            "public_inputs_hex": format!("0x{}", hex::encode(&public_bytes)),
-        },
     });
     let bundle_path = out_dir.join(format!("{name}-{proof_short}.proof.json"));
     fs::write(&bundle_path, serde_json::to_string_pretty(&bundle_json)?)
@@ -689,7 +669,7 @@ fn write_outputs(
     println!(
         "Wrote {}  {}",
         bundle_path.display(),
-        crate::style::dim("# self-contained: proof + public inputs + on-chain calldata")
+        crate::style::dim("# self-contained: proof + public inputs")
     );
     println!(
         "\n{}",
@@ -699,32 +679,9 @@ fn write_outputs(
         ))
     );
 
-    // Show the proof and its fingerprint, both copy-pasteable from the terminal.
-    println!(
-        "\n{}",
-        crate::style::brand(&format!(
-            "── proof ── {} bytes, little-endian ──",
-            proof_bytes.len()
-        ))
-    );
-    println!("{proof_hex}");
     println!(
         "\nproof sha256:  0x{proof_sha}  {}",
         crate::style::dim("# fingerprint — copy to reference this exact proof")
-    );
-
-    // The packed verifier calldata (proof ‖ public), ready to hand to a verifier.
-    println!(
-        "\n{}",
-        crate::style::brand(&format!(
-            "── verifier calldata ── proof ‖ public inputs, little-endian, {} bytes ──",
-            calldata.len()
-        ))
-    );
-    println!("{calldata_hex}");
-    println!(
-        "{}",
-        crate::style::dim("   ↑ the packed bytes your on-chain verifier consumes")
     );
 
     let p = super::path_arg(&args.path);

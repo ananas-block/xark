@@ -38,7 +38,7 @@ fn print_roadmap() {
         ("xark setup .", "generate the proving/verifying keys"),
         (
             "xark prove . --inputs …",
-            "produce (and self-check) a proof + copy-paste calldata",
+            "produce (and self-check) a proof",
         ),
         ("xark verify .", "verify a proof locally"),
         (
