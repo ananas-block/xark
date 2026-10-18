@@ -120,7 +120,7 @@ pub(crate) fn fq_is_canonical(c: &[u8; FR_BYTES]) -> bool {
 /// the structural checks in [`verify_groth16`].
 pub(crate) fn coords_canonical(bytes: &[u8]) -> bool {
     let mut c = [0u8; FR_BYTES];
-    for chunk in bytes.chunks_exact(FR_BYTES) {
+    for chunk in bytes.as_chunks::<FR_BYTES>().0 {
         c.copy_from_slice(chunk);
         if !fq_is_canonical(&c) {
             return false;
@@ -316,7 +316,7 @@ pub fn verify_groth16(
     let delta = g2_at(vk_bytes, G1_BYTES + 2 * G2_BYTES);
 
     let ic_slice = &vk_bytes[VK_FIXED_PREFIX_BYTES..];
-    if ic_slice.len() % G1_BYTES != 0 {
+    if !ic_slice.len().is_multiple_of(G1_BYTES) {
         return Err(VerifierError::IcLengthMismatch {
             expected: (ic_slice.len() / G1_BYTES) * G1_BYTES,
             actual: ic_slice.len(),
@@ -337,7 +337,7 @@ pub fn verify_groth16(
     let proof_c = g1_at(proof_bytes, G1_BYTES + G2_BYTES);
 
     // ---- Parse public inputs ----------------------------------------------
-    if public_inputs.len() % FR_BYTES != 0 {
+    if !public_inputs.len().is_multiple_of(FR_BYTES) {
         return Err(VerifierError::PublicInputsLength {
             fr: FR_BYTES,
             expected: (public_inputs.len() / FR_BYTES) * FR_BYTES,

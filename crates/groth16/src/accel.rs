@@ -94,11 +94,13 @@ pub fn kernel_cols(dom: &Domain, block: &mut [Fr], c0: usize, op: ColOp) {
 /// returning the uncompressed affine encoding of the sum.
 pub fn kernel_msm(g2: bool, points: &[u8], compressed: bool, scalars: &[u8]) -> Vec<u8> {
     let sc: Vec<Scalar> = scalars
-        .chunks_exact(32)
+        .as_chunks::<32>()
+        .0
+        .iter()
         .map(|b| {
             let mut l = [0u64; 4];
-            for (i, w) in b.chunks_exact(8).enumerate() {
-                l[i] = u64::from_le_bytes(w.try_into().unwrap());
+            for (i, w) in b.as_chunks::<8>().0.iter().enumerate() {
+                l[i] = u64::from_le_bytes(*w);
             }
             BigInt(l)
         })

@@ -371,8 +371,7 @@ fn pippenger<G: SwCurve>(
             // Batch-affine pays off once a task has many points per bucket.
             if BATCH_AFFINE.load(std::sync::atomic::Ordering::Relaxed) && hi - lo >= 4 * nb {
                 let mut ab = AffineBuckets::<G>::new(nb);
-                for k in lo..hi {
-                    let d = row[k];
+                for (k, &d) in row.iter().enumerate().take(hi).skip(lo) {
                     if d == 0 {
                         continue;
                     }

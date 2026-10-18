@@ -165,10 +165,10 @@ fn assert_same_matrices<S: ConstraintSource>(src: &S, cs: &ConstraintSystemRef<F
         assert_eq!(chunk.first_row, w.rows.start);
         for i in 0..chunk.rows() {
             let row = w.rows.start + i;
-            for m in 0..3 {
+            for (m, mat) in mats.iter().enumerate() {
                 let (cols, ks) = chunk.terms(i, m);
                 let ours = canon(cols.iter().map(|&c| c as usize).zip(ks.iter().copied()));
-                let theirs = canon(mats[m][row].iter().map(|(k, c)| (*c, *k)));
+                let theirs = canon(mat[row].iter().map(|(k, c)| (*c, *k)));
                 assert_eq!(ours, theirs, "row {row} matrix {m}");
             }
             seen += 1;

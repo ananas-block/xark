@@ -93,7 +93,7 @@ impl Tables {
         let root_n1 = root.pow([n / n1 as u64]);
         let root_n2 = root.pow([n / n2 as u64]);
         Tables {
-            tw_n1: powers(root_n1, if n1 % 3 == 0 { n1 } else { n1 / 2 }),
+            tw_n1: powers(root_n1, if n1.is_multiple_of(3) { n1 } else { n1 / 2 }),
             tw_n2: powers(root_n2, n2 / 2),
             col_step: if n1 > 1 { powers(root, n2) } else { Vec::new() },
         }
@@ -156,12 +156,12 @@ fn radix2_fft_strided(a: &mut [Fr], tw: &[Fr], s: usize) {
 /// ω_L^{jk}·F_j[k]` — with 4 multiplications per 3 outputs.
 pub fn mixed_fft(a: &mut [Fr], tw: &[Fr], s: usize, scratch: &mut [Fr]) {
     let n = a.len();
-    if n % 3 != 0 {
+    if !n.is_multiple_of(3) {
         return radix2_fft_strided(a, tw, s);
     }
     let m = n / 3;
     let sc = &mut scratch[..n];
-    for (j2, x) in a.chunks_exact(3).enumerate() {
+    for (j2, x) in a.as_chunks::<3>().0.iter().enumerate() {
         sc[j2] = x[0];
         sc[m + j2] = x[1];
         sc[2 * m + j2] = x[2];
@@ -278,7 +278,7 @@ impl Domain {
 
     /// The domain of exactly `n` points, `n = q·2^k` with `q ∈ {1, 3, 9}`.
     pub fn with_size(n: usize, cfg: FftConfig) -> Option<Self> {
-        let q = [9, 3, 1].into_iter().find(|q| n % q == 0)?;
+        let q = [9, 3, 1].into_iter().find(|q| n.is_multiple_of(*q))?;
         let k = (n / q).trailing_zeros();
         if n != q << k {
             return None;
@@ -320,7 +320,7 @@ impl Domain {
 
     /// Length-`N1` column DFT (natural order in and out).
     fn col_fft(&self, col: &mut [Fr], t: &Tables, scratch: &mut Vec<Fr>) {
-        if self.n1 % 3 == 0 {
+        if self.n1.is_multiple_of(3) {
             scratch.resize(self.n1, Fr::zero());
             mixed_fft(col, &t.tw_n1, 1, scratch);
         } else {

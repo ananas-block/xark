@@ -28,23 +28,31 @@ fn main() {
     };
     let (a1, _) = time(&|| {
         b1.chunks(32)
-            .map(|b| G1Affine::deserialize_with_mode(b, Compress::Yes, Validate::No).unwrap())
-            .count()
+            .map(|b| {
+                std::hint::black_box(
+                    G1Affine::deserialize_with_mode(b, Compress::Yes, Validate::No).unwrap(),
+                )
+            })
+            .fold(0usize, |n, _| n + 1)
     });
     let (o1, _) = time(&|| {
         b1.chunks(32)
-            .map(|b| xark_groth16::decode::g1(b).unwrap())
-            .count()
+            .map(|b| std::hint::black_box(xark_groth16::decode::g1(b).unwrap()))
+            .fold(0usize, |n, _| n + 1)
     });
     let (a2, _) = time(&|| {
         b2.chunks(64)
-            .map(|b| G2Affine::deserialize_with_mode(b, Compress::Yes, Validate::No).unwrap())
-            .count()
+            .map(|b| {
+                std::hint::black_box(
+                    G2Affine::deserialize_with_mode(b, Compress::Yes, Validate::No).unwrap(),
+                )
+            })
+            .fold(0usize, |n, _| n + 1)
     });
     let (o2, _) = time(&|| {
         b2.chunks(64)
-            .map(|b| xark_groth16::decode::g2(b).unwrap())
-            .count()
+            .map(|b| std::hint::black_box(xark_groth16::decode::g2(b).unwrap()))
+            .fold(0usize, |n, _| n + 1)
     });
     println!(
         "G1 decompress: arkworks {a1:.0} ns, ours {o1:.0} ns ({:.2}x)",

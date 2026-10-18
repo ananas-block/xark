@@ -54,7 +54,7 @@ pub fn flatten_inputs(
 }
 
 fn decode_hex(h: &str) -> Option<Vec<u8>> {
-    if h.len() % 2 != 0 {
+    if !h.len().is_multiple_of(2) {
         return None;
     }
     (0..h.len())
@@ -90,11 +90,9 @@ fn limb_bits(n_limbs: usize) -> Result<u32, String> {
     match n_limbs {
         2 => Ok(128),
         3 => Ok(86),
-        n => {
-            return Err(format!(
-                "unsupported {n}-limb layout (expected 2×128 or 3×86)"
-            ));
-        }
+        n => Err(format!(
+            "unsupported {n}-limb layout (expected 2×128 or 3×86)"
+        )),
     }
 }
 
