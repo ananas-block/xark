@@ -253,6 +253,26 @@ fn dsm_l(bits1: [Field; 256], p1: Ext, bits2: [Field; 256], p2: Ext) -> Ext {
     acc
 }
 
+/// The building blocks of `eddsa_verify`, wrapped for the block-level soundness
+/// test (`signature_blocks_are_sound` in `crates/lang/tests/snapshot.rs`), which
+/// searches each one exhaustively at full size. Not API.
+#[doc(hidden)]
+pub mod blocks {
+    use super::{Ext, Field, L3};
+    pub fn on_curve(x: L3, y: L3) {
+        super::on_curve_l(x, y)
+    }
+    pub fn eq_mod_p(u: L3, v: L3) {
+        super::eq_mod_p(u, v)
+    }
+    pub fn select16(t: [Ext; 16], b3: Field, b2: Field, b1: Field, b0: Field) -> Ext {
+        super::select16_e(t, b3, b2, b1, b0)
+    }
+    pub fn scalar_below_order(bits: [Field; 256]) {
+        super::assert_scalar_below_order(bits)
+    }
+}
+
 /// Ed25519 signature verification `[S]·B == R + [k]·A` — the sound lazy
 /// extended-coordinate gadget (3×85 limbs, ~2.40M constraints), ed25519's single
 /// `eddsa_verify` (the affine variant was ~4.55M). Point coords are raw 3×85

@@ -2963,8 +2963,9 @@ fn conditional_requires() {
 }
 
 /// **Row-level soundness of the curve gadgets, at small scale.** The same
-/// `weierstrass!` gadget code as secp256k1 (`y² = x³ + 7`), instantiated over 3 × `bits`
-/// limbs and a prime `p` (`fp!` requires `3·p < 2^(3·bits)`), compiled by the same
+/// `weierstrass!` gadget code as secp256k1 (`y² = x³ + 7`, `ca = 0`) and secp256r1
+/// (`y² = x³ − 3x + b`, `ca = −3`: its own doubling numerator and on-curve term),
+/// instantiated over 3 × `bits` limbs and a prime `p` (`fp!` requires `3·p < 2^(3·bits)`), compiled by the same
 /// frontend. With the input points fixed and the output left free, exhaustive witness
 /// search proves every satisfying witness yields the same output, equal to the native
 /// affine sum or double — and that there is none where the formula is undefined
@@ -2973,7 +2974,7 @@ fn conditional_requires() {
 /// inputs first, over *every* limb encoding of each coordinate: an encoding `≥ p`
 /// must be rejected outright. `scaled_curve_gadget_rows_match_secp256k1` ties the rows
 /// to the 86-bit circuit.
-fn toy_curve_source(bits: u32, p: u64, op: &str) -> String {
+fn toy_curve_source(bits: u32, p: u64, ca: i128, op: &str) -> String {
     // `b = 7` and dummy generator tables (only the scalar-mul code reads them).
     let mask = (1u64 << bits) - 1;
     let limbs = |v: u64| [v & mask, (v >> bits) & mask, (v >> (2 * bits)) & mask];
@@ -2987,7 +2988,7 @@ fn toy_curve_source(bits: u32, p: u64, op: &str) -> String {
     };
     format!(
         "#![no_std]\nuse xark::prelude::*;\n\
-         mod toy {{ xark_curve::weierstrass! {{ bits = {bits}, base = \"{p}\", scalar = \"{p}\", a = 0, \
+         mod toy {{ xark_curve::weierstrass! {{ bits = {bits}, base = \"{p}\", scalar = \"{p}\", a = {ca}, \
          b = [{}, {}, {}], generators = [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]], \
          correction = [0,0,0,0,0,0] }} }}\n\
          use toy::{{ec_add_incomplete, ec_double_incomplete, enforce_on_curve, Point}};\n\
@@ -3001,14 +3002,21 @@ fn toy_curve_source(bits: u32, p: u64, op: &str) -> String {
     )
 }
 
-/// Affine `y² = x³ + 7` over `p`: `None` where the incomplete formula is undefined.
-fn toy_ec(p: i128, a: (i128, i128), b: (i128, i128), double: bool) -> Option<(i128, i128)> {
+/// Affine `y² = x³ + ca·x + 7` over `p`: `None` where the incomplete formula is
+/// undefined.
+fn toy_ec(
+    p: i128,
+    ca: i128,
+    a: (i128, i128),
+    b: (i128, i128),
+    double: bool,
+) -> Option<(i128, i128)> {
     let inv = |x: i128| -> Option<i128> {
         let x = x.rem_euclid(p);
         (x != 0).then(|| (1..p).find(|y| x * y % p == 1).expect("p prime"))
     };
     let lam = if double {
-        (3 * a.0 * a.0).rem_euclid(p) * inv(2 * a.1)? % p
+        (3 * a.0 * a.0 + ca).rem_euclid(p) * inv(2 * a.1)? % p
     } else {
         (b.1 - a.1).rem_euclid(p) * inv(b.0 - a.0)? % p
     };
@@ -3022,10 +3030,10 @@ fn toy_ec(p: i128, a: (i128, i128), b: (i128, i128), double: bool) -> Option<(i1
 /// A pair of toy-curve points `(P, Q)`, as `(x, y)` coordinates.
 type ToyPair = ((i128, i128), (i128, i128));
 
-fn check_toy_curve(bits: u32, p: i128, op: &str, pairs: &[ToyPair]) {
+fn check_toy_curve(bits: u32, p: i128, ca: i128, op: &str, pairs: &[ToyPair]) {
     use xark_ir::witness_search::{Projection, search_projection};
-    let name = format!("toy_ec_{op}_{p}");
-    let src = write_case(&name, &toy_curve_source(bits, p as u64, op));
+    let name = format!("toy_ec_{op}_{p}_a{}", ca.unsigned_abs());
+    let src = write_case(&name, &toy_curve_source(bits, p as u64, ca, op));
     let c = compile_with_field(&src, &name, "bn254");
     assert!(c.status_success, "{}", c.stderr);
     let prog = c.program();
@@ -3060,7 +3068,7 @@ fn check_toy_curve(bits: u32, p: i128, op: &str, pairs: &[ToyPair]) {
         let canonical = [a.0, a.1, b.0, b.1].iter().all(|&v| v < p);
         let reduce = |v: (i128, i128)| (v.0 % p, v.1 % p);
         let want = if canonical {
-            toy_ec(p, a, b, op == "double")
+            toy_ec(p, ca, a, b, op == "double")
         } else {
             None
         };
@@ -3085,15 +3093,15 @@ fn check_toy_curve(bits: u32, p: i128, op: &str, pairs: &[ToyPair]) {
         }
     }
     eprintln!(
-        "p = {p}, {op}: {defined} defined, {undefined} undefined, {noncanonical} non-canonical rejected"
+        "p = {p}, a = {ca}, {op}: {defined} defined, {undefined} undefined, {noncanonical} non-canonical rejected"
     );
     assert!(defined > 0);
 }
 
-fn toy_points(p: i128) -> Vec<(i128, i128)> {
+fn toy_points(p: i128, ca: i128) -> Vec<(i128, i128)> {
     (0..p)
         .flat_map(|x| (0..p).map(move |y| (x, y)))
-        .filter(|&(x, y)| (y * y - (x * x * x + 7)).rem_euclid(p) == 0)
+        .filter(|&(x, y)| (y * y - (x * x * x + ca * x + 7)).rem_euclid(p) == 0)
         .collect()
 }
 
@@ -3105,31 +3113,41 @@ fn all_pairs(pts: &[(i128, i128)]) -> Vec<ToyPair> {
 
 #[test]
 fn small_field_curve_gadgets_are_sound() {
-    // p = 13 (3 × 2-bit limbs): every pair, and for the checked entry every encoding.
-    let pts = toy_points(13);
-    check_toy_curve(2, 13, "add", &all_pairs(&pts));
-    let doubles: Vec<_> = pts.iter().map(|&a| (a, (0, 0))).collect();
-    check_toy_curve(2, 13, "double", &doubles);
-    let encs = |v: i128| (0..).map(move |k| v + 13 * k).take_while(|&e| e < 64);
-    let mut every: Vec<_> = Vec::new();
-    for (a, b) in all_pairs(&pts) {
-        for ax in encs(a.0) {
-            for ay in encs(a.1) {
-                for bx in encs(b.0) {
-                    for by in encs(b.1) {
-                        every.push(((ax, ay), (bx, by)));
+    // Both curve shapes the gadgets support: `a = 0` (secp256k1) and `a = −3`
+    // (secp256r1). `y² = x³ − 3x + 7` is non-singular mod 13 and 127.
+    for ca in [0, -3] {
+        // p = 13 (3 × 2-bit limbs): every pair, and for the checked entry every encoding.
+        let pts = toy_points(13, ca);
+        check_toy_curve(2, 13, ca, "add", &all_pairs(&pts));
+        let doubles: Vec<_> = pts.iter().map(|&a| (a, (0, 0))).collect();
+        check_toy_curve(2, 13, ca, "double", &doubles);
+        let encs = |v: i128| (0..).map(move |k| v + 13 * k).take_while(|&e| e < 64);
+        let mut every: Vec<_> = Vec::new();
+        // Every pair for `a = 0`; for `a = −3` (169 pairs) every 5th, still with
+        // every encoding of each, to keep the per-push suite quick.
+        let step = if ca == 0 { 1 } else { 5 };
+        for (a, b) in all_pairs(&pts).into_iter().step_by(step) {
+            for ax in encs(a.0) {
+                for ay in encs(a.1) {
+                    for bx in encs(b.0) {
+                        for by in encs(b.1) {
+                            every.push(((ax, ay), (bx, by)));
+                        }
                     }
                 }
             }
         }
+        check_toy_curve(2, 13, ca, "checked_add", &every);
+        // p = 127 (3 × 3-bit limbs): every double, and a fixed sample of the adds
+        // (for `a = −3`, every 3rd double and a sparser sample: p = 13 above is
+        // the exhaustive case).
+        let pts = toy_points(127, ca);
+        let (dstep, astep) = if ca == 0 { (1, 53) } else { (3, 159) };
+        let doubles: Vec<_> = pts.iter().step_by(dstep).map(|&a| (a, (0, 0))).collect();
+        check_toy_curve(3, 127, ca, "double", &doubles);
+        let sample: Vec<_> = all_pairs(&pts).into_iter().step_by(astep).collect();
+        check_toy_curve(3, 127, ca, "add", &sample);
     }
-    check_toy_curve(2, 13, "checked_add", &every);
-    // p = 127 (3 × 3-bit limbs): every double, and a fixed sample of the adds.
-    let pts = toy_points(127);
-    let doubles: Vec<_> = pts.iter().map(|&a| (a, (0, 0))).collect();
-    check_toy_curve(3, 127, "double", &doubles);
-    let sample: Vec<_> = all_pairs(&pts).into_iter().step_by(53).collect();
-    check_toy_curve(3, 127, "add", &sample);
 }
 
 /// One generic `xark_bignum` gadget for [`small_field_bignum_gadgets_are_sound`]: its
@@ -5244,4 +5262,480 @@ fn witness_bounded_loops() {
     );
     assert!(!c.status_success);
     assert!(c.stderr.contains("nest too deeply"), "{}", c.stderr);
+}
+
+/// **The signature circuits' building blocks, searched at full size.** The ECDSA and
+/// EdDSA circuits (1.6M–3.4M rows) are too big to search whole, so each block they
+/// are built from is searched exhaustively on its own, at the real field sizes,
+/// against a native reference: the ed25519 extended add and double (the output is
+/// determined by the inputs), `on_curve` (accepts exactly the canonical points on
+/// the curve), `eq_mod_p`, the 16-way point muxes, the scalar range checks
+/// (ed25519 `S < L`, secp `assert_canonical`), `scalar_to_bits` and `Fq::reduce`
+/// with the real secp256k1 / secp256r1 orders. The blocks left out need a
+/// non-native inverse or modular product (the incomplete-affine add and double,
+/// `enforce_on_curve`, `mod_mul`), which search can't decide at 256 bits; those are
+/// checked over small fields (`small_field_curve_gadgets_are_sound`,
+/// `small_field_bignum_gadgets_are_sound`) and proven in Lean.
+#[test]
+fn signature_blocks_are_sound() {
+    use num_bigint::BigInt;
+    use xark_ir::witness_search::{
+        Projection, WitnessSearch, search_projection, search_witnesses_within,
+    };
+    let big = |s: &str| BigInt::parse_bytes(s.as_bytes(), 10).unwrap();
+    let hex = |s: &str| BigInt::parse_bytes(s.as_bytes(), 16).unwrap();
+    let one = BigInt::from(1);
+    let limbs = |v: &BigInt, n: usize, w: u32| -> Vec<BigInt> {
+        let mask = (BigInt::from(1) << w) - 1;
+        (0..n).map(|i| (v >> (w * i as u32)) & &mask).collect()
+    };
+    let value = |ls: &[BigInt], w: u32| {
+        ls.iter()
+            .enumerate()
+            .fold(BigInt::from(0), |a, (i, l)| a + (l << (w * i as u32)))
+    };
+    let mut seed = 0x51f1_5eed_0bad_cafeu64;
+    let mut rand_bits = move |bits: u32| -> BigInt {
+        let mut x = BigInt::from(0);
+        for _ in 0..bits.div_ceil(64) {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            x = (x << 64) | BigInt::from(seed);
+        }
+        x & ((BigInt::from(1) << bits) - 1)
+    };
+    // One circuit per block: `params` and `body` in a `#[circuit]`.
+    let build = |name: &str, params: &str, body: &str| {
+        let src = format!(
+            "#![no_std]\nuse xark::prelude::*;\nuse xark_bignum::*;\n#[circuit]\n\
+             pub fn circuit({params}) {{\n{body}\n}}\n"
+        );
+        let name = format!("blocks_{name}");
+        let c = compile_with_field(&write_case(&name, &src), &name, "bn254");
+        assert!(c.status_success, "{name}: {}", c.stderr);
+        c.program()
+    };
+    let ids = |prog: &xark_ir::primitive::PrimitiveProgram, arr: &str, n: usize| -> Vec<u32> {
+        (0..n)
+            .map(|i| {
+                let nm = format!("{arr}[{i}]");
+                prog.vars
+                    .iter()
+                    .find(|v| v.name == nm)
+                    .unwrap_or_else(|| panic!("no leaf `{nm}`"))
+                    .id
+            })
+            .collect()
+    };
+    let fix = |m: &mut std::collections::BTreeMap<u32, String>, ids: &[u32], vals: &[BigInt]| {
+        for (id, v) in ids.iter().zip(vals) {
+            m.insert(*id, v.to_string());
+        }
+    };
+    let limit = Some(std::time::Duration::from_secs(120));
+    // A function block: the output must be determined, and equal `want` when given.
+    let project = |prog: &xark_ir::primitive::PrimitiveProgram,
+                   fixed: &std::collections::BTreeMap<u32, String>,
+                   out: &[u32]|
+     -> Option<Vec<BigInt>> {
+        match search_projection(prog, fixed, out, 1 << 12, limit).unwrap() {
+            Projection::One(v) => Some(v.iter().map(|x| big(&x.to_decimal())).collect()),
+            Projection::None => None,
+            other => panic!("not determined: {other:?}"),
+        }
+    };
+    // A check block: accepted (exactly one witness) or rejected (none).
+    let accepts = |prog: &xark_ir::primitive::PrimitiveProgram,
+                   fixed: &std::collections::BTreeMap<u32, String>|
+     -> bool {
+        match search_witnesses_within(prog, fixed, 1 << 12, limit).unwrap() {
+            WitnessSearch::Unique(_) => true,
+            WitnessSearch::None => false,
+            other => panic!("not decided: {other:?}"),
+        }
+    };
+
+    // ---- ed25519: 3 × 85-bit limbs mod p = 2²⁵⁵ − 19 ----
+    let p = (BigInt::from(1) << 255) - 19;
+    let md = |x: BigInt| ((x % &p) + &p) % &p;
+    let inv = |x: &BigInt| x.modpow(&(&p - 2), &p);
+    let d = md(big("-121665") * inv(&big("121666")));
+    let ed_add = |a: &(BigInt, BigInt), b: &(BigInt, BigInt)| {
+        let t = md(&d * &a.0 * &b.0 * &a.1 * &b.1);
+        (
+            md((&a.0 * &b.1 + &a.1 * &b.0) * inv(&md(&one + &t))),
+            md((&a.1 * &b.1 + &a.0 * &b.0) * inv(&md(&one - &t))),
+        )
+    };
+    let base = (
+        big("15112221349535400772501151409588531511454012693041857206046113283949847762202"),
+        big("46316835694926478169428394003475163141307993866256225615783033603165251855960"),
+    );
+    let mut pts = vec![(BigInt::from(0), one.clone()), base.clone()];
+    for _ in 0..3 {
+        let next = ed_add(pts.last().unwrap(), &base);
+        pts.push(next);
+    }
+    let on_curve = |x: &BigInt, y: &BigInt| {
+        x < &p && y < &p && md(y * y - x * x) == md(&one + &d * x * x * y * y)
+    };
+
+    // Extended add and double: the 12 output limbs are determined by the inputs.
+    let ext = |pt: &(BigInt, BigInt)| -> Vec<BigInt> {
+        let t = md(&pt.0 * &pt.1);
+        [&pt.0, &pt.1, &one, &t]
+            .iter()
+            .flat_map(|v| limbs(v, 3, 85))
+            .collect()
+    };
+    for (k, call) in [
+        "ext_add_25519(a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3])",
+        "ext_double_25519(a[0], a[1], a[2])",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let prog = build(
+            &format!("ext_{k}"),
+            "pf: Private<[Field; 12]>, qf: Private<[Field; 12]>, s: Public<[Field; 12]>",
+            &format!(
+                "    let a = [[pf[0], pf[1], pf[2]], [pf[3], pf[4], pf[5]], [pf[6], pf[7], pf[8]], [pf[9], pf[10], pf[11]]];\n\
+                 \x20   let b = [[qf[0], qf[1], qf[2]], [qf[3], qf[4], qf[5]], [qf[6], qf[7], qf[8]], [qf[9], qf[10], qf[11]]];\n\
+                 \x20   let _ = b;\n\
+                 \x20   let (r0, r1, r2, r3) = {call};\n\
+                 \x20   let r = [r0, r1, r2, r3];\n\
+                 \x20   let mut i = 0;\n\
+                 \x20   while i < 12 {{ require_eq(r[i / 3][i % 3], s[i]); i += 1; }}"
+            ),
+        );
+        let (pa, qa, out) = (
+            ids(&prog, "pf", 12),
+            ids(&prog, "qf", 12),
+            ids(&prog, "s", 12),
+        );
+        for t in 0..6 {
+            let (a, b): (Vec<BigInt>, Vec<BigInt>) = if t < 3 {
+                (ext(&pts[t + 1]), ext(&pts[t + 2]))
+            } else {
+                (
+                    (0..12).map(|_| rand_bits(85)).collect(),
+                    (0..12).map(|_| rand_bits(85)).collect(),
+                )
+            };
+            let mut m = Default::default();
+            fix(&mut m, &pa, &a);
+            fix(&mut m, &qa, &b);
+            assert!(
+                project(&prog, &m, &out).is_some(),
+                "{call}: no output for {a:?} {b:?}"
+            );
+        }
+    }
+
+    // on_curve: accepts exactly the canonical points on the curve.
+    let prog = build(
+        "ed_on_curve",
+        "x: Private<[Field; 3]>, y: Private<[Field; 3]>",
+        "    xark_ed25519::blocks::on_curve(x, y);",
+    );
+    let (xs, ys) = (ids(&prog, "x", 3), ids(&prog, "y", 3));
+    let mut samples: Vec<(BigInt, BigInt)> = pts.clone();
+    samples.push((p.clone(), one.clone())); // (0, 1) with x encoded as p
+    samples.push((BigInt::from(0), &one + &p)); // … and y as 1 + p
+    samples.push((base.0.clone(), &base.1 + 1)); // off the curve
+    samples.push((rand_bits(255), rand_bits(255)));
+    for (x, y) in &samples {
+        let mut m = Default::default();
+        fix(&mut m, &xs, &limbs(x, 3, 85));
+        fix(&mut m, &ys, &limbs(y, 3, 85));
+        assert_eq!(accepts(&prog, &m), on_curve(x, y), "on_curve({x}, {y})");
+    }
+
+    // eq_mod_p: accepts exactly u ≡ v (mod p).
+    let prog = build(
+        "ed_eq_mod_p",
+        "u: Private<[Field; 3]>, v: Private<[Field; 3]>",
+        "    xark_ed25519::blocks::eq_mod_p(u, v);",
+    );
+    let (us, vs) = (ids(&prog, "u", 3), ids(&prog, "v", 3));
+    let r = rand_bits(254);
+    for (u, v) in [
+        (r.clone(), r.clone()),
+        (BigInt::from(5), BigInt::from(5) + &p),
+        (r.clone(), &r + 1),
+        (BigInt::from(0), p.clone()),
+        (rand_bits(255), rand_bits(255)),
+    ] {
+        let mut m = Default::default();
+        fix(&mut m, &us, &limbs(&u, 3, 85));
+        fix(&mut m, &vs, &limbs(&v, 3, 85));
+        assert_eq!(
+            accepts(&prog, &m),
+            md(&u - &v) == BigInt::from(0),
+            "eq_mod_p({u}, {v})"
+        );
+    }
+
+    // The 16-way extended-point mux picks entry `b3 b2 b1 b0`.
+    let prog = build(
+        "ed_select16",
+        "t: Private<[Field; 192]>, b: Private<[Field; 4]>, s: Public<[Field; 12]>",
+        "    let mut tab = [[[Field::from(0u8); 3]; 4]; 16];\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 192 { tab[i / 12][(i % 12) / 3][i % 3] = t[i]; i += 1; }\n\
+         \x20   let r = xark_ed25519::blocks::select16(tab, b[3], b[2], b[1], b[0]);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 12 { require_eq(r[i / 3][i % 3], s[i]); i += 1; }",
+    );
+    let (ts, bs, out) = (
+        ids(&prog, "t", 192),
+        ids(&prog, "b", 4),
+        ids(&prog, "s", 12),
+    );
+    let table: Vec<BigInt> = (0..192).map(|_| rand_bits(85)).collect();
+    for idx in [0usize, 5, 10, 15] {
+        let mut m = Default::default();
+        fix(&mut m, &ts, &table);
+        let bits: Vec<BigInt> = (0..4).map(|k| BigInt::from((idx >> k) & 1)).collect();
+        fix(&mut m, &bs, &bits);
+        let got = project(&prog, &m, &out).expect("select16 has an output");
+        assert_eq!(
+            got,
+            table[12 * idx..12 * idx + 12].to_vec(),
+            "select16 entry {idx}"
+        );
+    }
+
+    // The EdDSA scalar check: accepts exactly S < L.
+    let l: BigInt = (BigInt::from(1) << 252) + big("27742317777372353535851937790883648493");
+    let prog = build(
+        "ed_scalar",
+        "bits: Private<[Field; 256]>",
+        "    xark_ed25519::blocks::scalar_below_order(bits);",
+    );
+    let bs = ids(&prog, "bits", 256);
+    for sv in [
+        BigInt::from(0),
+        &l - 1,
+        l.clone(),
+        &l + 1,
+        BigInt::from(1) << 252,
+        (BigInt::from(1) << 256) - 1,
+        rand_bits(252),
+    ] {
+        let mut m = Default::default();
+        let bits: Vec<BigInt> = (0..256).map(|i| (&sv >> i) & &one).collect();
+        fix(&mut m, &bs, &bits);
+        assert_eq!(accepts(&prog, &m), sv < l, "scalar_below_order({sv})");
+    }
+
+    // ---- secp256k1 / secp256r1 scalars: 3 × 86-bit limbs ----
+    let orders = [
+        (
+            "k1",
+            hex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"),
+        ),
+        (
+            "r1",
+            hex("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"),
+        ),
+    ];
+
+    // scalar_to_bits: the 256 bits are determined and are the value's binary
+    // expansion; a limb past its width has no witness.
+    let prog = build(
+        "scalar_to_bits",
+        "u: Private<[Field; 3]>, s: Public<[Field; 256]>",
+        "    let r = scalar_to_bits(u);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 256 { require_eq(r[i], s[i]); i += 1; }",
+    );
+    let (us, out) = (ids(&prog, "u", 3), ids(&prog, "s", 256));
+    for v in [
+        BigInt::from(0),
+        (BigInt::from(1) << 256) - 1,
+        rand_bits(256),
+        rand_bits(256),
+    ] {
+        let mut m = Default::default();
+        fix(&mut m, &us, &limbs(&v, 3, 86));
+        let got = project(&prog, &m, &out).expect("scalar_to_bits has an output");
+        let want: Vec<BigInt> = (0..256).map(|i| (&v >> i) & &one).collect();
+        assert_eq!(got, want, "scalar_to_bits({v})");
+    }
+    for bad in [
+        vec![BigInt::from(1) << 86, BigInt::from(0), BigInt::from(0)],
+        vec![BigInt::from(0), BigInt::from(0), BigInt::from(1) << 84],
+    ] {
+        let mut m = Default::default();
+        fix(&mut m, &us, &bad);
+        assert!(
+            project(&prog, &m, &out).is_none(),
+            "scalar_to_bits({bad:?}) out of range"
+        );
+    }
+
+    // The 16-way affine mux.
+    let prog = build(
+        "select16_affine",
+        "t: Private<[Field; 96]>, b: Private<[Field; 4]>, s: Public<[Field; 6]>",
+        "    let mut tab = [[[Field::from(0u8); 3]; 2]; 16];\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 96 { tab[i / 6][(i % 6) / 3][i % 3] = t[i]; i += 1; }\n\
+         \x20   let r = select16_affine(tab, b[3], b[2], b[1], b[0]);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 6 { require_eq(r[i / 3][i % 3], s[i]); i += 1; }",
+    );
+    let (ts, bs, out) = (ids(&prog, "t", 96), ids(&prog, "b", 4), ids(&prog, "s", 6));
+    let table: Vec<BigInt> = (0..96).map(|_| rand_bits(86)).collect();
+    for idx in [0usize, 6, 9, 15] {
+        let mut m = Default::default();
+        fix(&mut m, &ts, &table);
+        let bits: Vec<BigInt> = (0..4).map(|k| BigInt::from((idx >> k) & 1)).collect();
+        fix(&mut m, &bs, &bits);
+        let got = project(&prog, &m, &out).expect("select16_affine has an output");
+        assert_eq!(
+            got,
+            table[6 * idx..6 * idx + 6].to_vec(),
+            "select16_affine entry {idx}"
+        );
+    }
+
+    for (curve, n) in &orders {
+        let ty = format!("xark_secp256{curve}::affine::Fq");
+        // assert_canonical: accepts exactly limbs in range and a value < n.
+        let prog = build(
+            &format!("canonical_{curve}"),
+            "u: Private<[Field; 3]>",
+            &format!("    {ty}::new(u).assert_canonical();"),
+        );
+        let us = ids(&prog, "u", 3);
+        for v in [
+            BigInt::from(0),
+            n - 1,
+            n.clone(),
+            n + 1,
+            (BigInt::from(1) << 256) - 1,
+            rand_bits(255),
+        ] {
+            let mut m = Default::default();
+            fix(&mut m, &us, &limbs(&v, 3, 86));
+            assert_eq!(accepts(&prog, &m), &v < n, "{curve} assert_canonical({v})");
+        }
+        // reduce: a value < 2n maps to the canonical value mod n.
+        let prog = build(
+            &format!("reduce_{curve}"),
+            "u: Private<[Field; 3]>, s: Public<[Field; 3]>",
+            &format!(
+                "    let r = {ty}::new(u).reduce();\n\
+                 \x20   let mut i = 0;\n\
+                 \x20   while i < 3 {{ require_eq(r.limbs[i], s[i]); i += 1; }}"
+            ),
+        );
+        let (us, out) = (ids(&prog, "u", 3), ids(&prog, "s", 3));
+        for v in [BigInt::from(0), n - 1, n.clone(), 2 * n - 1, rand_bits(255)] {
+            let mut m = Default::default();
+            fix(&mut m, &us, &limbs(&v, 3, 86));
+            let got = project(&prog, &m, &out).expect("reduce has an output");
+            assert_eq!(value(&got, 86), &v % n, "{curve} reduce({v})");
+        }
+    }
+}
+
+/// **The AES circuits' building blocks, searched whole.** The CTR / GCM / AES-256
+/// examples (300k–1M rows) are too big to search, but they are built from the AES
+/// block (searched through the `aes` example) plus these two: the AES-256 block
+/// (the FIPS-197 C.3 vector: the ciphertext is determined and correct) and the GHASH
+/// multiply `gf128_mul` (the product is determined by its inputs; its values are
+/// checked by the GCM known-answer tests).
+#[test]
+fn aes_blocks_are_sound() {
+    use xark_ir::witness_search::{Projection, search_projection};
+    let limit = Some(std::time::Duration::from_secs(300));
+    let leaf = |prog: &xark_ir::primitive::PrimitiveProgram, nm: String| {
+        prog.vars
+            .iter()
+            .find(|v| v.name == nm)
+            .unwrap_or_else(|| panic!("no leaf `{nm}`"))
+            .id
+    };
+    let unhex = |s: &str| -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    };
+
+    // AES-256, FIPS-197 C.3.
+    let src = write_case(
+        "aes_block_256",
+        "#![no_std]\nuse xark::prelude::*;\n#[circuit]\n\
+         pub fn circuit(pt: Private<[Field; 16]>, key: Private<[Field; 32]>, ct: Public<[Field; 16]>) {\n\
+         \x20   let r = xark_aes::aes256_encrypt_bytes(pt, key);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 16 { require_eq(r[i], ct[i]); i += 1; }\n}\n",
+    );
+    let c = compile_with_field(&src, "aes_block_256", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let prog = c.program();
+    eprintln!("aes256 block: {} constraints", prog.constraints.len());
+    let mut fixed = std::collections::BTreeMap::new();
+    for (i, b) in unhex("00112233445566778899aabbccddeeff").iter().enumerate() {
+        fixed.insert(leaf(&prog, format!("pt[{i}]")), b.to_string());
+    }
+    for (i, b) in unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+        .iter()
+        .enumerate()
+    {
+        fixed.insert(leaf(&prog, format!("key[{i}]")), b.to_string());
+    }
+    let out: Vec<_> = (0..16).map(|i| leaf(&prog, format!("ct[{i}]"))).collect();
+    let t = std::time::Instant::now();
+    match search_projection(&prog, &fixed, &out, 1 << 12, limit).unwrap() {
+        Projection::One(v) => {
+            let got: Vec<u8> = v.iter().map(|x| x.to_decimal().parse().unwrap()).collect();
+            assert_eq!(
+                got,
+                unhex("8ea2b7ca516745bfeafc49904b496089"),
+                "aes256 ciphertext"
+            );
+        }
+        other => panic!("aes256: {other:?}"),
+    }
+    eprintln!("  decided in {:.1?}", t.elapsed());
+
+    // GHASH multiply: the 128 product bits are determined by the inputs.
+    let src = write_case(
+        "aes_gf128_mul",
+        "#![no_std]\nuse xark::prelude::*;\n#[circuit]\n\
+         pub fn circuit(x: Private<[Field; 128]>, y: Private<[Field; 128]>, s: Public<[Field; 128]>) {\n\
+         \x20   let r = xark_aes::gf128_mul(x, y);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 128 { require_eq(r[i], s[i]); i += 1; }\n}\n",
+    );
+    let c = compile_with_field(&src, "aes_gf128_mul", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let prog = c.program();
+    eprintln!("gf128_mul: {} constraints", prog.constraints.len());
+    let out: Vec<_> = (0..128).map(|i| leaf(&prog, format!("s[{i}]"))).collect();
+    let mut seed = 0x6a09_e667_f3bc_c908u64;
+    for _ in 0..4 {
+        let mut fixed = std::collections::BTreeMap::new();
+        for arr in ["x", "y"] {
+            for i in 0..128 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                fixed.insert(leaf(&prog, format!("{arr}[{i}]")), (seed & 1).to_string());
+            }
+        }
+        match search_projection(&prog, &fixed, &out, 1 << 12, limit).unwrap() {
+            Projection::One(v) => assert!(
+                v.iter()
+                    .all(|b| b.to_decimal() == "0" || b.to_decimal() == "1")
+            ),
+            other => panic!("gf128_mul: {other:?}"),
+        }
+    }
 }

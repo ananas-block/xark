@@ -357,9 +357,18 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
   Rust→xark-IR→R1CS *pipeline itself* is not proof-assistant-verified (its
   constraint-reducing rewrites and branch guards are, in `formal/Formal/Rewrites.lean`);
   it rests on unit tests, KAT cross-checks (`sha2`, `keccak`, `blake2`, `blake3`,
-  `aes`, arkworks Grumpkin), adversarial forged-witness tests, and a native-semantics
+  `aes`, arkworks Grumpkin), adversarial forged-witness tests, a native-semantics
   fuzzer whose every verdict is an exhaustive witness search
-  (`crates/lang/tests/semantics_fuzz.rs`, `xark_ir::witness_search`).
+  (`crates/lang/tests/semantics_fuzz.rs`, `xark_ir::witness_search`), and the same
+  search over every example's own test inputs and mutations of them
+  (`scripts/difftest-examples.sh`; the AES-CTR/GCM circuits are searched whole). The
+  ECDSA and EdDSA circuits are too big to search whole, so their building blocks
+  are searched one by one at full size against native references
+  (`signature_blocks_are_sound`, `aes_blocks_are_sound` in `snapshot.rs`); the
+  blocks that need a 256-bit non-native inverse, which search can't decide, are
+  searched over small fields for both curve shapes and proven in Lean. What is not
+  searched is how the blocks are wired together inside the scalar-multiplication
+  loops; the known-answer and tamper tests cover that.
 * **Solana on-chain verifier.** `crates/verifier/` is tested in Mollusk on the real
   `alt_bn128` syscalls (`gadgets/tests/tests/sbpf.rs` — positive across every committed
   circuit plus on-chain negatives) and fuzzed (`fuzz.rs`). **Never deployed to mainnet**;
