@@ -44,12 +44,6 @@ that `xark build` prints and writes to `target/xark/<name>/digest`.
 - **Minimum Rust.** Raised only in a minor release, and noted in the changelog.
   Nightly works but isn't supported; it's checked only as an early warning.
 
-**Pin your circuit.** Run `xark build --pin` once the circuit is final and commit
-the `xark.digest` file it writes in the crate. From then on, every `xark build`
-— any machine, any toolchain, CI — refuses a circuit whose digest differs, before
-it overwrites anything. After an intended change (your code, an xark upgrade
-listed in the changelog), run `xark build --pin` again and make new keys.
-
 ## When a circuit digest changes
 
 `scripts/stable-digests.sh --check` failing means one of two things:

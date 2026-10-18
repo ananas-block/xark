@@ -9,8 +9,8 @@ again. See the toolchain policy in [docs/toolchain.md](docs/toolchain.md#toolcha
 ### Circuits that changed
 
 **Every circuit.** 0.3 compiles circuits with a new frontend (below), so every
-circuit built with 0.2 changes. Rebuild, run `xark build --pin`, and make new
-keys. Beyond that, these gadgets now check more:
+circuit built with 0.2 changes: rebuild and make new keys. Beyond that, these
+gadgets now check more:
 
 - `xark-ed25519` and `xark-secp256k1`: points must have canonical coordinates
   (each `< p`), so a point can't be given in two forms. About +1,000 constraints
@@ -51,9 +51,8 @@ keys. Beyond that, these gadgets now check more:
 
 ### Added
 
-- `xark build` prints the circuit digest and writes it to
-  `target/xark/<name>/digest`; `xark build --pin` records it in `xark.digest`, and
-  every later build refuses a circuit that doesn't match.
+- `xark build` prints the circuit digest (a fingerprint of the R1CS) and writes it
+  to `target/xark/<name>/digest`.
 - `xark codegen ts`: a typed TypeScript client from `schema.json`.
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).

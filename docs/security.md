@@ -398,11 +398,10 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
 
 Walk through before tagging a production release of a circuit deployed via xark:
 
-* [ ] **Circuit pinned.** `xark.digest` (written by `xark build --pin`) is committed
-  in the circuit crate, `xark build` passes against it, and the keys were made from
-  that circuit. The digest doesn't depend on the rustc version; see the toolchain
-  policy in [toolchain.md](toolchain.md#toolchain-policy). `Cargo.lock` is committed
-  so the xark version can't drift.
+* [ ] **Keys match the circuit.** The digest `xark build` prints for the deployed
+  circuit is the one the keys were made from. It doesn't depend on the rustc
+  version (see the toolchain policy in [toolchain.md](toolchain.md#toolchain-policy));
+  `Cargo.lock` is committed so the xark version can't drift.
 * [ ] **All gadgets used have a KAT test.** Enumerate the gadget crates and
   cross-reference [§2](#2-per-gadget-soundness-sketches).
 * [ ] **`circuit_hash` recorded in deployed metadata** and matches what the verifier

@@ -49,8 +49,7 @@ xark init my-circuit
 # cargo target) lives under the crate's target/xark/.
 xark build examples/cube
 # → writes examples/cube/target/xark/cube/ (circuit.xbc + schema.json) and
-#   prints the circuit digest. `xark build --pin` writes it to xark.digest: commit
-#   that, and later builds refuse a circuit that no longer matches your keys.
+#   prints the circuit digest (a fingerprint of the R1CS the keys are made for).
 
 # Generate a typed TypeScript client from schema.json: no setup or proof needed.
 xark codegen ts examples/cube
