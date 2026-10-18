@@ -205,6 +205,24 @@ pub const fn modulus_limbs<const N: usize, const BITS: usize>(s: &str) -> [Field
     to_field_limbs(parse_limbs::<N, BITS>(s))
 }
 
+/// The headroom an [`fp!`] field needs: `3·m < 2^(N·BITS)`. `mod_add` drops the carry
+/// out of the top limb, and `triple` / `sub2` build `3·v` / `a + 2m`, so a modulus
+/// closer to the limb capacity would let a sum wrap and the circuit accept the wrong
+/// value. Checked on the top limb (`(top + 1)·3 ≤ 2^BITS` implies it); every curve
+/// field here (≤ 256 bits in 3 × 86) has two bits to spare. A compile error otherwise.
+pub const fn assert_fp_headroom<const N: usize, const BITS: usize>(s: &str) {
+    let v = parse_limbs::<N, BITS>(s);
+    let mask = if BITS == 128 {
+        u128::MAX
+    } else {
+        (1u128 << BITS) - 1
+    };
+    assert!(
+        N > 0 && v[N - 1] < mask / 3,
+        "fp!: modulus too close to the limb capacity — need 3·m < 2^(LIMBS·BITS)"
+    );
+}
+
 /// `modulus − 1` as limbs (the canonical remainder range bound).
 pub const fn modulus_minus_1<const N: usize, const BITS: usize>(s: &str) -> [Field; N] {
     let mut v = parse_limbs::<N, BITS>(s);
@@ -271,6 +289,38 @@ macro_rules! fp {
     (no_host $vis:vis $name:ident, $modulus:literal) => {
         $crate::fp!(@build $vis $name, $modulus, 3, 86);
     };
+    // Storage only: `LIMBS` × `BITS`-bit limbs with no modulus and no arithmetic — an
+    // input wrapper for code that does its own limb arithmetic (e.g. a lazy-reduction
+    // path whose modulus has no headroom for `fp!`'s operators).
+    (storage $vis:vis $name:ident, $limbs:literal, $bits:literal) => {
+        #[derive(Clone, Copy)]
+        $vis struct $name {
+            pub limbs: [$crate::Field; $limbs],
+        }
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        impl $crate::__wasm::Input for $name {
+            fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
+                $crate::__wasm::input_struct(n, stringify!($name));
+                Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
+            }
+        }
+        #[allow(dead_code)]
+        impl $name {
+            /// Wrap `LIMBS` little-endian `BITS`-bit limbs.
+            pub fn new(limbs: [$crate::Field; $limbs]) -> Self {
+                Self { limbs }
+            }
+            /// Range-check every limb to `[0, 2^BITS)`.
+            pub fn range_check(self) {
+                $crate::range_check_limbs::<{ $limbs }, { $bits }>(self.limbs)
+            }
+        }
+        $crate::fp!(@host $name, $limbs, $bits);
+    };
+    // `no_host` with an explicit limb layout.
+    (no_host $vis:vis $name:ident, $modulus:literal, $limbs:literal, $bits:literal) => {
+        $crate::fp!(@build $vis $name, $modulus, $limbs, $bits);
+    };
     // Geometry from a `Bignum<LIMBS, BITS>` type — `fp!(Fp, "0x…", Scalar)`.
     ($vis:vis $name:ident, $modulus:literal, $geom:ty) => {
         $crate::fp!(@build $vis $name, $modulus, { <$geom>::LIMBS }, { <$geom>::BITS });
@@ -311,7 +361,10 @@ macro_rules! fp {
         }
         #[allow(dead_code)]
         impl $name {
-            const M: [$crate::Field; $limbs] = $crate::modulus_limbs::<{ $limbs }, { $bits }>($modulus);
+            const M: [$crate::Field; $limbs] = {
+                $crate::assert_fp_headroom::<{ $limbs }, { $bits }>($modulus);
+                $crate::modulus_limbs::<{ $limbs }, { $bits }>($modulus)
+            };
             const M1: [$crate::Field; $limbs] = $crate::modulus_minus_1::<{ $limbs }, { $bits }>($modulus);
             const C: [$crate::Field; $limbs] = $crate::complement::<{ $limbs }, { $bits }>($modulus);
             /// Wrap `LIMBS` little-endian `BITS`-bit limbs.
