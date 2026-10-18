@@ -107,7 +107,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             ),
             (
                 format!("xark client {p}"),
-                "scaffold a TypeScript client (verify + calldata)",
+                "generate a typed TypeScript client (prove + verify in JS)",
             ),
         ])
     );

@@ -45,20 +45,20 @@ gadgets now check more:
   (`<name>-<hash>.proof.json`) now carries `proof_bin` / `public_inputs_bin` (the
   bytes `verify` takes) and `public_inputs` (decimals) instead of the snarkjs
   proof and `public_signals`.
-- **xark-client 0.2.0** verifies through xark-wasm: `new XarkClient(wasm, vkBytes)`,
-  and `verify` returns a `boolean` (it was a `Promise`). `xark client` scaffolds
-  against `vk.bin`.
+- **`xark client` generates a typed TypeScript client** from `schema.json` (typed
+  `prove` / `verify` through xark-wasm, no setup needed). It replaces the old
+  starter scaffold, and the `xark-client` npm package (verify + calldata over
+  snarkjs) is removed: prove and verify with xark-wasm or the generated client.
 
 ### Added
 
 - `xark build` prints the circuit digest (a fingerprint of the R1CS) and writes it
   to `target/xark/<name>/digest`.
-- `xark codegen ts`: a typed TypeScript client from `schema.json`.
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).
 - Generated clients for `cube`, `zk_kyc`, `sha256` and `merkle` are committed in
   `examples/<name>/client/` with tests that prove and verify through xark-wasm;
-  `scripts/codegen-check.sh` (in CI) keeps them current.
+  `scripts/client-check.sh` (in CI) keeps them current.
 - Exhaustive witness search (`xark_ir::witness_search`) and
   `scripts/difftest-examples.sh`, which check that each example accepts exactly
   the inputs it should, with exactly one witness.

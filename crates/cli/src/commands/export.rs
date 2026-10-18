@@ -153,7 +153,7 @@ pub fn run(args: ExportArgs) -> Result<()> {
         crate::style::next_steps(&[
             (
                 format!("xark client {p}"),
-                "scaffold a TypeScript client (verify + calldata)",
+                "generate a typed TypeScript client (prove + verify in JS)",
             ),
             (
                 "cargo test".to_string(),

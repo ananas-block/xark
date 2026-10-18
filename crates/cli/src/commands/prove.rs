@@ -734,7 +734,7 @@ fn write_outputs(
             (format!("xark verify {p}"), "check this proof locally"),
             (
                 format!("xark client {p}"),
-                "scaffold a TypeScript client (verify + calldata)",
+                "generate a typed TypeScript client (prove + verify in JS)",
             ),
             (
                 format!("xark export {p}"),

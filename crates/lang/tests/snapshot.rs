@@ -4988,7 +4988,7 @@ fn circuit_input_with_uints_and_nesting() {
 
 /// `xark build` writes `schema.json` beside `circuit.xbc`: the inputs as the compiler
 /// binds them (struct definitions, `uN` widths, byte arrays), plus the public leaves in
-/// proof order. `xark codegen` generates clients from it with no setup or proof.
+/// proof order. `xark client` generates clients from it with no setup or proof.
 #[test]
 fn build_writes_input_schema() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\

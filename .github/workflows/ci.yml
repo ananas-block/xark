@@ -157,10 +157,9 @@ jobs:
         run: CIRCUIT_ARTIFACTS_DIR=target/test-out/cube node --test crates/wasm/tests/wasm-smoke.test.cjs
 
   clients:
-    # The TypeScript side: `xark codegen ts` for the representative examples must
-    # match the committed clients, typecheck, and prove + verify through xark-wasm
-    # (scripts/codegen-check.sh); and the xark-client package must typecheck and
-    # verify a real proof bundle.
+    # `xark client` for the representative examples must match the committed
+    # clients, typecheck, and prove + verify through xark-wasm
+    # (scripts/client-check.sh).
     name: generated clients
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -176,6 +175,4 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
       - name: Generated clients (cube, zk_kyc, sha256, merkle)
-        run: scripts/codegen-check.sh
-      - name: xark-client
-        run: cd clients/typescript && npm ci && npm run typecheck && npm test
+        run: scripts/client-check.sh

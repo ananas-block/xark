@@ -36,7 +36,6 @@ pub(crate) fn dbg_flag(name: &str) -> bool {
 pub mod ceremony;
 pub mod check;
 pub mod client;
-pub mod codegen;
 pub mod completions;
 pub mod doctor;
 pub mod export;
@@ -93,10 +92,9 @@ pub enum Command {
     Verify(verify::VerifyArgs),
     /// Export a self-contained Solana verifier crate.
     Export(export::ExportArgs),
-    /// Scaffold a TypeScript client (verify with xark-wasm + on-chain calldata).
+    /// Generate a typed TypeScript client from the build's `schema.json` (prove +
+    /// verify through xark-wasm; no setup or proof needed).
     Client(client::ClientArgs),
-    /// Generate a typed client from the build's `schema.json` (no setup or proof needed).
-    Codegen(codegen::CodegenArgs),
     /// Phase-2 MPC ceremony for trusted setup.
     Ceremony(ceremony::CeremonyArgs),
     /// Print circuit statistics (variables, constraints, public inputs).
@@ -150,7 +148,6 @@ fn run(cli: Cli) -> Result<()> {
         Command::Verify(a) => verify::run(a),
         Command::Export(a) => export::run(a),
         Command::Client(a) => client::run(a),
-        Command::Codegen(a) => codegen::run(a),
         Command::Ceremony(a) => ceremony::run(a),
         Command::Inspect(a) => inspect::run(a),
         Command::Profile(a) => profile::run(a),

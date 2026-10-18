@@ -52,7 +52,9 @@ xark build examples/cube
 #   prints the circuit digest (a fingerprint of the R1CS the keys are made for).
 
 # Generate a typed TypeScript client from schema.json: no setup or proof needed.
-xark codegen ts examples/cube
+# Like every command, it defaults to the current directory: inside the crate,
+# plain `xark client` is enough.
+xark client examples/cube
 # → examples/cube/target/xark/cube/cube.ts
 
 # Generate Groth16 keys. With no .ptau this produces an INSECURE dev key
@@ -72,7 +74,7 @@ xark check examples/cube
 
 `xark build` also writes `schema.json`: every input's name, visibility, and type
 (`Field`, `uN` widths, arrays, tuples, and `#[derive(CircuitInput)]` structs), plus the
-public inputs in proof order. `xark codegen ts` turns it into one dependency-free `.ts`
+public inputs in proof order. `xark client` turns it into one dependency-free `.ts`
 file with an interface per struct and typed `prove` / `verify` over the `xark-wasm`
 module you pass in:
 
@@ -90,7 +92,7 @@ kyc.verify(proof, publicInputs); // true
 ```
 
 `examples/zk_kyc/client/` holds this generated client and a test that runs it, as
-do `cube`, `sha256` and `merkle`; `scripts/codegen-check.sh` (run in CI)
+do `cube`, `sha256` and `merkle`; `scripts/client-check.sh` (run in CI)
 regenerates them, fails if a committed client is stale, and proves and verifies
 each through xark-wasm.
 
@@ -145,15 +147,13 @@ rustc (CI checks every example on 1.88, stable and beta), and constraint-reducin
 rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 [`crates/frontend/README.md`](crates/frontend/README.md).
 
-## Verifying in JavaScript
+## Proving and verifying in JavaScript
 
-`xark prove` writes a self-contained `<name>-<hash>.proof.json` bundle: the proof
-and public inputs as the bytes `xark verify` takes, the public inputs as
-decimals, and the on-chain verifier calldata. Verify it anywhere JavaScript runs
-with [`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`verify(vk, proof,
-publicInputs)`), or with the small [`xark-client`](clients/typescript/README.md)
-wrapper that `xark client` scaffolds. xark-wasm also proves; `xark codegen ts`
-generates a typed client over it.
+Prove and verify anywhere JavaScript runs with
+[`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`prove(circuit, pk, inputs)`,
+`verify(vk, proof, publicInputs)`), or through the typed client `xark client`
+generates over it (above). `xark prove`'s `<name>-<hash>.proof.json` bundle carries
+the proof and public inputs as the bytes `verify` takes.
 
 ## Crates and gadgets
 

@@ -1,6 +1,6 @@
-// Node test for the generated `zk_kyc` client (`xark codegen ts`): prove with typed
+// Node test for the generated `zk_kyc` client (`xark client`): prove with typed
 // inputs through xark-wasm, verify, and check rejections. Run by
-// scripts/codegen-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
+// scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";

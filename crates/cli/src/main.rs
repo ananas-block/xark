@@ -32,8 +32,8 @@ fn print_roadmap() {
         ),
         ("xark build .", "compile the circuit → R1CS (+ schema.json)"),
         (
-            "xark codegen ts .",
-            "generate a typed TypeScript client from the schema",
+            "xark client .",
+            "generate a typed TypeScript client (prove + verify in JS)",
         ),
         ("xark setup .", "generate the proving/verifying keys"),
         (
@@ -41,10 +41,6 @@ fn print_roadmap() {
             "produce (and self-check) a proof + copy-paste calldata",
         ),
         ("xark verify .", "verify a proof locally"),
-        (
-            "xark client .",
-            "scaffold a TypeScript client (verify + calldata)",
-        ),
         (
             "xark export .",
             "generate the on-chain Solana verifier crate",

@@ -85,11 +85,6 @@ impl XarkProject {
         self.xark_dir.join("verifier")
     }
 
-    /// Default output directory for `xark client`'s generated TypeScript client.
-    pub fn client_dir(&self) -> PathBuf {
-        self.xark_dir.join("client")
-    }
-
     /// Auto-detect a Powers-of-Tau (`.ptau`) transcript for production setup.
     ///
     /// Searches `target/xark/`, `target/xark/ptau/`, the crate root, and
