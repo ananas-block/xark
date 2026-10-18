@@ -80,12 +80,6 @@ impl XarkProject {
             .unwrap_or_else(|| self.circuit_name())
     }
 
-    /// snarkjs verifying key (`snarkjs-verification_key.json`) written by setup —
-    /// the file a JS/snarkjs client (or `xark-client`) verifies against.
-    pub fn snarkjs_vk(&self) -> PathBuf {
-        self.xark_dir.join("snarkjs-verification_key.json")
-    }
-
     /// Default output directory for `xark export`'s generated verifier crate.
     pub fn export_dir(&self) -> PathBuf {
         self.xark_dir.join("verifier")

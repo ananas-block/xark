@@ -1,35 +1,32 @@
-// Smoke test: verify a real cube proof through the library and confirm a
-// tampered proof is rejected.
+// Smoke test: verify a real cube proof through the library (with xark-wasm) and
+// confirm tampered proofs are rejected.
 //
+//   wasm-pack build ../../crates/wasm --target nodejs --out-dir dist/node
 //   npm install && npm test
 //
-// Fixtures (`cube.vk.json`, `cube.proof.json`) are produced by the xark CLI:
-//   xark setup examples/cube && xark prove examples/cube --input secret=3 --input result=27
+// Fixtures (`cube.vk.bin`, `cube.proof.json`) are produced by the xark CLI:
+//   xark setup examples/cube && xark prove examples/cube --inputs '{"secret": "3", "result": "27"}'
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import * as wasm from "@blueshift-gg/xark-wasm";
 import { XarkClient, type ProofBundle } from "../src/index";
-import vk from "./cube.vk.json";
 import bundle from "./cube.proof.json";
 
-async function main() {
-  const client = new XarkClient(vk);
+const vk = readFileSync(join(__dirname, "cube.vk.bin"));
+const client = new XarkClient(wasm, vk);
 
-  const ok = await client.verify(bundle as ProofBundle);
-  console.log(`verify(valid) = ${ok}`);
+const ok = client.verify(bundle as ProofBundle);
+console.log(`verify(valid) = ${ok}`);
 
-  const tampered = { ...bundle, public_signals: ["999"] } as ProofBundle;
-  const bad = await client.verify(tampered);
-  console.log(`verify(tampered) = ${bad}`);
+// A different public input (27 → 28) under the same proof.
+const pi = bundle.public_inputs_bin;
+const tampered = { ...bundle, public_inputs_bin: pi.slice(0, 18) + "1c" + pi.slice(20) };
+const bad = client.verify(tampered as ProofBundle);
+console.log(`verify(tampered) = ${bad}`);
 
-  if (!ok || bad) {
-    console.error("❌ SMOKE FAILED");
-    process.exit(1);
-  }
-  console.log("✅ xark-client smoke passed");
-  // snarkjs keeps worker threads alive; exit explicitly so the process ends.
-  process.exit(0);
-}
-
-main().catch((e) => {
-  console.error(e);
+if (!ok || bad || client.calldata(bundle as ProofBundle).length !== 256 + 32) {
+  console.error("❌ SMOKE FAILED");
   process.exit(1);
-});
+}
+console.log("✅ xark-client smoke passed");

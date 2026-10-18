@@ -1,28 +1,23 @@
 // xark-client — verify xark zero-knowledge proofs and build on-chain calldata.
 //
-// Construct a client from a circuit's snarkjs verifying key (written by
-// `xark setup` as `snarkjs-verification_key.json`), then verify the proof
-// bundles `xark prove` produces:
+// Construct a client from the xark-wasm module and a circuit's verifying key
+// (`vk.bin`, written by `xark setup`), then verify the proof bundles
+// `xark prove` produces:
 //
+//   import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
 //   import { XarkClient } from "xark-client";
-//   import vk from "./verification_key.json";
 //
-//   const client = new XarkClient(vk);
-//   await client.verify(bundle);          // snarkjs verify
+//   const client = new XarkClient(wasm, vkBytes);
+//   client.verify(bundle);                // true / false
 //   const data = client.calldata(bundle); // packed proof ‖ public bytes
 //
-// Proving happens in the `xark` CLI (`xark prove …`): snarkjs can verify an
-// xark proof but cannot generate one, so there is no `prove` here by design.
+// The wasm module is passed in rather than imported, so the same code works with
+// any of xark-wasm's builds. To prove in JS too, use xark-wasm's `prove`, or the
+// typed client `xark codegen ts` generates.
 
-import * as snarkjs from "snarkjs";
-
-/** A snarkjs Groth16 proof. */
-export interface SnarkjsProof {
-  pi_a: string[];
-  pi_b: string[][];
-  pi_c: string[];
-  protocol: string;
-  curve: string;
+/** The part of the xark-wasm module this client uses. */
+export interface XarkWasm {
+  verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
 }
 
 /** A proof bundle as written by `xark prove` (`<name>-<hash>.proof.json`). */
@@ -30,8 +25,12 @@ export interface ProofBundle {
   circuit: string;
   circuit_hash: string;
   proof_sha256: string;
-  public_signals: string[];
-  proof: SnarkjsProof;
+  /** The public inputs as decimal strings, in proof order. */
+  public_inputs: string[];
+  /** `proof.bin`: the canonical proof bytes `verify` takes, as hex. */
+  proof_bin: string;
+  /** `public_inputs.bin`: the canonical public-input bytes `verify` takes, as hex. */
+  public_inputs_bin: string;
   calldata: {
     endianness: string;
     hex: string;
@@ -54,21 +53,29 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
-/**
- * A verifier for one circuit, built from its snarkjs verifying key (the
- * `snarkjs-verification_key.json` `xark setup` writes).
- */
+/** A verifier for one circuit, built from its verifying key (`vk.bin`). */
 export class XarkClient {
-  constructor(readonly verifyingKey: unknown) {}
+  readonly verifyingKey: Uint8Array;
 
-  /** Verify a proof bundle (as written by `xark prove`) with snarkjs. */
-  verify(bundle: ProofBundle): Promise<boolean> {
-    return this.verifyRaw(bundle.proof, bundle.public_signals);
+  constructor(
+    private readonly wasm: XarkWasm,
+    verifyingKey: Uint8Array | ArrayBuffer,
+  ) {
+    this.verifyingKey =
+      verifyingKey instanceof Uint8Array ? verifyingKey : new Uint8Array(verifyingKey);
   }
 
-  /** Verify a raw snarkjs proof against ordered public signals. */
-  verifyRaw(proof: SnarkjsProof, publicSignals: string[]): Promise<boolean> {
-    return snarkjs.groth16.verify(this.verifyingKey, publicSignals, proof);
+  /**
+   * Verify a proof bundle (as written by `xark prove`). `false` for a proof that
+   * doesn't verify; throws on malformed bytes.
+   */
+  verify(bundle: ProofBundle): boolean {
+    return this.verifyRaw(hexToBytes(bundle.proof_bin), hexToBytes(bundle.public_inputs_bin));
+  }
+
+  /** Verify raw `proof.bin` / `public_inputs.bin` bytes. */
+  verifyRaw(proof: Uint8Array, publicInputs: Uint8Array): boolean {
+    return this.wasm.verify(this.verifyingKey, proof, publicInputs);
   }
 
   /**

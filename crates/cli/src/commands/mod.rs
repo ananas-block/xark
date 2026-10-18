@@ -93,7 +93,7 @@ pub enum Command {
     Verify(verify::VerifyArgs),
     /// Export a self-contained Solana verifier crate.
     Export(export::ExportArgs),
-    /// Scaffold a TypeScript client (verify with snarkjs + on-chain calldata).
+    /// Scaffold a TypeScript client (verify with xark-wasm + on-chain calldata).
     Client(client::ClientArgs),
     /// Generate a typed client from the build's `schema.json` (no setup or proof needed).
     Codegen(codegen::CodegenArgs),
