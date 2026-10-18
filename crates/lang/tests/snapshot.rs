@@ -3118,6 +3118,313 @@ fn small_field_curve_gadgets_are_sound() {
     check_toy_curve(3, 127, "add", &sample);
 }
 
+/// One generic `xark_bignum` gadget for [`small_field_bignum_gadgets_are_sound`]: its
+/// call (on limb arrays `a`, `b`, `c`, yielding `(r, q)`), arity, reference result
+/// (`None` = no witness expected) and documented precondition.
+struct BignumCase {
+    name: &'static str,
+    call: &'static str,
+    arity: usize,
+    two_out: bool,
+    spec: fn(&[i128]) -> Option<[i128; 2]>,
+    pre: fn(&[i128]) -> bool,
+}
+
+/// **Every generic bignum gadget, on every limb encoding.** `mod_add`, `mod_sub`,
+/// `mod_neg`, `triple_mod`, `reduce_once`, `require_lt`, `is_lt`,
+/// `assert_nonzero_limbs`, `mod_mul`, `mul_divmod`, `mod_inverse`, `sub2` over 3 × 2-bit
+/// limbs mod 13, each input any value `< 2⁶` (so non-canonical ones too), outputs left
+/// free and decided by projection search. Within a gadget's precondition the output is
+/// exactly the reference (canonical); outside it the output must still be `≡` the
+/// reference or there must be no witness — never a wrong value, never two values.
+/// (This is what caught `mod_add` wrapping an overflowing sum and `mod_neg(0) = m`.)
+#[test]
+fn small_field_bignum_gadgets_are_sound() {
+    use xark_ir::witness_search::{Projection, search_projection};
+    const M: i128 = 13;
+    let cases = [
+        BignumCase {
+            name: "mod_add",
+            call: "(mod_add::<3, 2>(a, b, MM), Z)",
+            arity: 2,
+            two_out: false,
+            spec: |v| Some([(v[0] + v[1]) % M, 0]),
+            pre: |v| v[0] < M && v[1] < M,
+        },
+        BignumCase {
+            name: "mod_sub",
+            call: "(mod_sub::<3, 2>(a, b, CC), Z)",
+            arity: 2,
+            two_out: false,
+            spec: |v| Some([(v[0] - v[1]).rem_euclid(M), 0]),
+            pre: |v| v[0] < M && v[1] < M,
+        },
+        BignumCase {
+            name: "mod_neg",
+            call: "(mod_neg::<3, 2>(a, MM), Z)",
+            arity: 1,
+            two_out: false,
+            spec: |v| (v[0] <= M).then(|| [(M - v[0]) % M, 0]),
+            pre: |v| v[0] < M,
+        },
+        BignumCase {
+            name: "triple_mod",
+            call: "(triple_mod::<3, 2>(a, MM), Z)",
+            arity: 1,
+            two_out: false,
+            spec: |v| Some([(3 * v[0]) % M, 0]),
+            pre: |v| v[0] < M,
+        },
+        BignumCase {
+            name: "reduce_once",
+            call: "(reduce_once::<3, 2>(a, MM), Z)",
+            arity: 1,
+            two_out: false,
+            spec: |v| Some([v[0] % M, 0]),
+            pre: |v| v[0] < 2 * M,
+        },
+        BignumCase {
+            name: "require_lt",
+            call: "{ xark_bignum::require_lt::<3, 2>(a, M1); (Z, Z) }",
+            arity: 1,
+            two_out: false,
+            spec: |v| (v[0] < M).then_some([0, 0]),
+            pre: |_| true,
+        },
+        BignumCase {
+            name: "is_lt",
+            call: "([is_lt::<3, 2>(a, b), Field::from(0u8), Field::from(0u8)], Z)",
+            arity: 2,
+            two_out: false,
+            spec: |v| Some([(v[0] < v[1]) as i128, 0]),
+            pre: |_| true,
+        },
+        BignumCase {
+            name: "assert_nonzero_limbs",
+            call: "{ assert_nonzero_limbs::<3>(a); (Z, Z) }",
+            arity: 1,
+            two_out: false,
+            spec: |v| (v[0] != 0).then_some([0, 0]),
+            pre: |_| true,
+        },
+        BignumCase {
+            name: "mod_mul",
+            call: "(mod_mul::<3, 2>(a, b, MM, M1), Z)",
+            arity: 2,
+            two_out: false,
+            spec: |v| Some([(v[0] * v[1]) % M, 0]),
+            pre: |v| v[0] < M && v[1] < M,
+        },
+        BignumCase {
+            name: "mul_divmod",
+            call: "{ let (q, r) = mul_divmod::<3, 2>(a, b, MM, M1); (r, q) }",
+            arity: 2,
+            two_out: true,
+            spec: |v| Some([v[0] * v[1] % M, v[0] * v[1] / M]),
+            pre: |v| v[0] < M && v[1] < M,
+        },
+        BignumCase {
+            name: "mod_inverse",
+            call: "(mod_mul::<3, 2>(mod_inverse::<3, 2>(a, MM), [Field::from(1u8), Field::from(0u8), Field::from(0u8)], MM, M1), Z)",
+            arity: 1,
+            two_out: false,
+            spec: |v| (v[0] % M != 0).then(|| [(1..M).find(|y| v[0] % M * y % M == 1).unwrap(), 0]),
+            pre: |_| true,
+        },
+        BignumCase {
+            name: "sub2",
+            call: "(sub2::<3, 2>(a, b, c, MM, M1), Z)",
+            arity: 3,
+            two_out: false,
+            spec: |v| Some([(v[0] - v[1] - v[2]).rem_euclid(M), 0]),
+            pre: |v| v[0] < M && v[1] < M && v[2] < M,
+        },
+    ];
+    for g in &cases {
+        let src = format!(
+            "#![no_std]\nuse xark::prelude::*;\nuse xark_bignum::*;\n\
+             const MM: [Field; 3] = modulus_limbs::<3, 2>(\"13\");\n\
+             const M1: [Field; 3] = modulus_minus_1::<3, 2>(\"13\");\n\
+             const CC: [Field; 3] = complement::<3, 2>(\"13\");\n\
+             const Z: [Field; 3] = [Field::zero(), Field::zero(), Field::zero()];\n\
+             #[circuit]\n\
+             pub fn circuit(a: Private<Bignum<3, 2>>, b: Private<Bignum<3, 2>>, c: Private<Bignum<3, 2>>, \
+             s: Public<Bignum<3, 2>>, t: Public<Bignum<3, 2>>) {{\n\
+             \x20   let (a, b, c) = (a.limbs, b.limbs, c.limbs);\n\
+             \x20   let _ = (b, c, MM, M1, CC);\n\
+             \x20   let (r, q): ([Field; 3], [Field; 3]) = {};\n\
+             \x20   let mut i = 0;\n\
+             \x20   while i < 3 {{ require_eq(r[i], s.limbs[i]); require_eq(q[i], t.limbs[i]); i += 1; }}\n\
+             }}\n",
+            g.call
+        );
+        let name = format!("bignum_small_{}", g.name);
+        let c = compile_with_field(&write_case(&name, &src), &name, "bn254");
+        assert!(c.status_success, "{}: {}", g.name, c.stderr);
+        let prog = c.program();
+        let id = |n: &str| prog.vars.iter().find(|v| v.name == n).map(|v| v.id);
+        let proj: Vec<_> = ["s", "t"]
+            .iter()
+            .flat_map(|o| (0..3).map(move |i| format!("{o}.limbs[{i}]")))
+            .filter_map(|n| id(&n))
+            .collect();
+        let mut inputs: Vec<Vec<i128>> = vec![vec![]];
+        for k in 0..g.arity {
+            // the third operand (`sub2`'s `c`) over a sample, to keep the run short
+            let dom: Vec<i128> = if k == 2 {
+                vec![0, 1, 12, 13, 40, 63]
+            } else {
+                (0..64).collect()
+            };
+            inputs = inputs
+                .into_iter()
+                .flat_map(|v| dom.iter().map(move |&x| [v.clone(), vec![x]].concat()))
+                .collect();
+        }
+        let (mut exact, mut outside) = (0usize, 0usize);
+        for v in inputs {
+            let mut fixed = std::collections::BTreeMap::new();
+            for (k, nm) in ["a", "b", "c"].iter().enumerate() {
+                for i in 0..3 {
+                    if let Some(var) = id(&format!("{nm}.limbs[{i}]")) {
+                        let x = v.get(k).copied().unwrap_or(0);
+                        fixed.insert(var, ((x >> (2 * i)) & 3).to_string());
+                    }
+                }
+            }
+            let got = search_projection(&prog, &fixed, &proj, 1 << 14, None).unwrap();
+            let val = |vals: &[xark_ir::solver::Fp], o: usize| {
+                (0..3)
+                    .map(|i| vals[o + i].to_decimal().parse::<i128>().unwrap() << (2 * i))
+                    .sum::<i128>()
+            };
+            let want = (g.spec)(&v);
+            if (g.pre)(&v) {
+                match (want, &got) {
+                    (Some(w), Projection::One(vals)) => assert!(
+                        val(vals, 0) == w[0] && (!g.two_out || val(vals, 3) == w[1]),
+                        "{} {v:?}: want {w:?}, got {got:?}",
+                        g.name
+                    ),
+                    (None, Projection::None) => {}
+                    _ => panic!("{} {v:?}: want {want:?}, got {got:?}", g.name),
+                }
+                exact += 1;
+            } else {
+                match (want, &got) {
+                    (_, Projection::None) => {}
+                    (Some(w), Projection::One(vals)) => assert!(
+                        val(vals, 0) % M == w[0] && (!g.two_out || val(vals, 3) == w[1]),
+                        "{} {v:?} (outside its precondition): wrong value {got:?}, want ≡ {w:?}",
+                        g.name
+                    ),
+                    _ => panic!("{} {v:?} (outside its precondition): {got:?}", g.name),
+                }
+                outside += 1;
+            }
+        }
+        eprintln!(
+            "{}: {exact} within the precondition exact, {outside} outside safe",
+            g.name
+        );
+    }
+}
+
+/// **The fixed-width lazy gadgets, at full size.** `mul_lazy_k1`, `weak_reduce_k1`,
+/// `finalize_k1` and their ed25519 counterparts hint no quotient (every carry is
+/// determined), so exhaustive witness search decides them directly. On random,
+/// all-zero and all-max limbs at their documented input bound — and one bit past
+/// it — every output is `≡` the reference mod `p` and unique, or there is no
+/// witness; within the bound the multiply and weak reduce always succeed.
+#[test]
+fn lazy_field_gadgets_are_sound() {
+    use num_bigint::BigInt;
+    use xark_ir::witness_search::{Projection, search_projection};
+    let pk1 = BigInt::parse_bytes(
+        b"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+        16,
+    )
+    .unwrap();
+    let p25: BigInt = (BigInt::from(1) << 255) - 19;
+    // (gadget call, limbs, limb width, documented input bound in bits, modulus, binary,
+    //  always succeeds within the bound)
+    let cases: [(&str, usize, u32, u32, &BigInt, bool, bool); 6] = [
+        ("mul_lazy_k1(a, b)", 4, 64, 70, &pk1, true, true),
+        ("weak_reduce_k1(a)", 4, 64, 72, &pk1, false, true),
+        ("finalize_k1(a)", 4, 64, 64, &pk1, false, false),
+        ("mul_lazy_25519(a, b)", 3, 85, 88, &p25, true, true),
+        ("weak_reduce_25519(a)", 3, 85, 88, &p25, false, true),
+        ("finalize_25519(a)", 3, 85, 85, &p25, false, false),
+    ];
+    let value = |ls: &[BigInt], w: u32| {
+        ls.iter().enumerate().fold(BigInt::from(0), |acc, (i, l)| {
+            acc + (l.clone() << (w * i as u32))
+        })
+    };
+    for (k, &(call, n, w, bound, p, binary, total)) in cases.iter().enumerate() {
+        let src = format!(
+            "#![no_std]\nuse xark::prelude::*;\nuse xark_bignum::*;\n#[circuit]\n\
+             pub fn circuit(a: Private<[Field; {n}]>, b: Private<[Field; {n}]>, s: Public<[Field; {n}]>) {{\n\
+             \x20   let _ = b;\n\x20   let r = {call};\n\
+             \x20   let mut i = 0;\n\x20   while i < {n} {{ require_eq(r[i], s[i]); i += 1; }}\n}}\n"
+        );
+        let name = format!("lazy_gadget_{k}");
+        let c = compile_with_field(&write_case(&name, &src), &name, "bn254");
+        assert!(c.status_success, "{call}: {}", c.stderr);
+        let prog = c.program();
+        let id = |nm: &str| prog.vars.iter().find(|v| v.name == nm).map(|v| v.id);
+        let out: Vec<_> = (0..n).filter_map(|i| id(&format!("s[{i}]"))).collect();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64 ^ k as u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for t in 0..48usize {
+            let mut limb = |j: usize| -> BigInt {
+                let bits = if (t + j) % 6 == 5 { bound + 1 } else { bound };
+                let max: BigInt = (BigInt::from(1) << bits) - 1;
+                match (t + j) % 6 {
+                    0 => BigInt::from(0),
+                    1 => max,
+                    _ => (BigInt::from(next()) | (BigInt::from(next()) << 64)) & max,
+                }
+            };
+            let a: Vec<BigInt> = (0..n).map(&mut limb).collect();
+            let b: Vec<BigInt> = (0..n).map(|j| limb(j + 3)).collect();
+            let within = a
+                .iter()
+                .chain(if binary { &b[..] } else { &[] })
+                .all(|l| l.bits() <= bound as u64);
+            let mut fixed = std::collections::BTreeMap::new();
+            for i in 0..n {
+                fixed.insert(id(&format!("a[{i}]")).unwrap(), a[i].to_string());
+                if let Some(v) = id(&format!("b[{i}]")) {
+                    fixed.insert(v, b[i].to_string());
+                }
+            }
+            let want = if binary {
+                value(&a, w) * value(&b, w)
+            } else {
+                value(&a, w)
+            } % p;
+            match search_projection(&prog, &fixed, &out, 1 << 12, None).unwrap() {
+                Projection::One(v) => {
+                    let ls: Vec<BigInt> =
+                        v.iter().map(|x| x.to_decimal().parse().unwrap()).collect();
+                    assert_eq!(value(&ls, w) % p, want, "{call} {a:?} {b:?}: wrong value");
+                }
+                Projection::None => assert!(
+                    !(within && total),
+                    "{call} {a:?} {b:?}: rejected within its bound"
+                ),
+                other => panic!("{call} {a:?} {b:?}: {other:?}"),
+            }
+        }
+    }
+}
+
 /// **The small-field checks are about the real circuit.** The EC add + double circuit
 /// from [`small_field_curve_gadgets_are_sound`], compiled at limb widths 2–6 and 86:
 /// its multiplication-gate count is exactly affine in the width (`396 + 174·bits`), so

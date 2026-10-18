@@ -1456,6 +1456,7 @@ version = "0.2.1"
 dependencies = [
  "ark-bn254",
  "ark-ff",
+ "num-bigint",
  "serde_json",
  "xark-ir",
  "xark-macros",

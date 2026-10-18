@@ -520,7 +520,8 @@ pub fn range_check_limbs<const LIMBS: usize, const BITS: usize>(x: [Field; LIMBS
     }
 }
 
-/// Modular negation `(m - b) mod m` (enforces `b <= m`).
+/// Modular negation `(m - b) mod m`, canonical (enforces `b <= m`; `b = 0` and
+/// `b = m` give `0`).
 pub fn mod_neg<const LIMBS: usize, const BITS: usize>(
     b: [Field; LIMBS],
     m: [Field; LIMBS],
@@ -537,11 +538,31 @@ pub fn mod_neg<const LIMBS: usize, const BITS: usize>(
         i += 1;
     }
     require_eq(borrow, Field::from(0u8));
+    // `b = 0` gives `out = m`: map it to the canonical `0`. `out`'s limbs are
+    // range-checked, so its recomposition equals `m`'s exactly when `out = m`.
+    let two_b = two_pow::<BITS>();
+    let (mut ov, mut mv, mut pow) = (Field::from(0u8), Field::from(0u8), Field::from(1u8));
+    let mut i = 0usize;
+    while i < LIMBS {
+        ov = ov + out[i] * pow;
+        mv = mv + m[i] * pow;
+        pow = pow * two_b;
+        i += 1;
+    }
+    let is_m = Field::from(ov == mv);
+    let mut i = 0usize;
+    while i < LIMBS {
+        out[i] = out[i] - is_m * m[i];
+        i += 1;
+    }
     out
 }
 
 /// Modular addition `(a + b) mod m`. Precondition `a, b < m`, so `a+b < 2m` fits
-/// in `LIMBS` limbs and one conditional subtraction of `m` suffices.
+/// in `LIMBS` limbs and one conditional subtraction of `m` suffices; the output is
+/// then canonical. Outside it (a non-canonical operand, e.g. a `mod_inverse`
+/// output), a sum that overflows the limbs is rejected (its top carry is pinned to
+/// 0) rather than wrapped, so the result is always `≡ a + b (mod m)`.
 pub fn mod_add<const LIMBS: usize, const BITS: usize>(
     a: [Field; LIMBS],
     b: [Field; LIMBS],
@@ -558,6 +579,7 @@ pub fn mod_add<const LIMBS: usize, const BITS: usize>(
         carry = bits[BITS];
         i += 1;
     }
+    require_eq(carry, Field::from(0u8));
     let mut diff = [Field::from(0u8); LIMBS];
     let mut borrow = Field::from(0u8);
     let mut k = Field::from(0u8);
@@ -938,7 +960,10 @@ pub fn weak_reduce_k1(v: [Field; 4]) -> [Field; 4] {
     [s0, s1, r2, r3]
 }
 
-/// Canonical (< p) reduction of a loosely-reduced secp256k1 value.
+/// Canonical (< p) reduction of a loosely-reduced secp256k1 value. Exact when every
+/// limb is `< 2^64` and the value `< 2p` (what `mul_lazy_k1` and `weak_reduce_k1`
+/// produce, bar a `2^-24`-rare carry into limb 1); otherwise the input is rejected or
+/// passed through un-normalized — `≡` the input, never a different value.
 pub fn finalize_k1(v: [Field; 4]) -> [Field; 4] {
     reduce_once::<4, 64>(v, M_K1)
 }
@@ -1113,7 +1138,10 @@ pub fn weak_reduce_25519(v: [Field; 3]) -> [Field; 3] {
     [s0, s1, r2]
 }
 
-/// Canonical (< p) reduction of a loosely-reduced value — the BOUNDARY reduce.
+/// Canonical (< p) reduction of a loosely-reduced value — the BOUNDARY reduce. Exact
+/// when every limb is `< 2^85` and the value `< 2p` (what `mul_lazy_25519` and
+/// `weak_reduce_25519` produce in practice); otherwise rejected or passed through
+/// un-normalized — `≡` the input, never a different value.
 pub fn finalize_25519(v: [Field; 3]) -> [Field; 3] {
     reduce_once::<3, 85>(v, P_25519_L)
 }
