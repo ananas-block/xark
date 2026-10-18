@@ -2948,6 +2948,229 @@ fn conditional_requires() {
     assert!(case("4", "1", "3", "4", "1"));
 }
 
+/// **Row-level soundness of the curve gadgets, at small scale.** The same
+/// `weierstrass!` gadget code as secp256k1 (`y² = x³ + 7`), instantiated over 3 × `bits`
+/// limbs and a prime `p` (`fp!` requires `3·p < 2^(3·bits)`), compiled by the same
+/// frontend. With the input points fixed and the output left free, exhaustive witness
+/// search proves every satisfying witness yields the same output, equal to the native
+/// affine sum or double — and that there is none where the formula is undefined
+/// (`x₁ = x₂`, `y = 0`). Internal freedom is allowed (the inverse isn't canonical by
+/// design); the output is what's pinned. `checked_add` runs `enforce_on_curve` on both
+/// inputs first, over *every* limb encoding of each coordinate: an encoding `≥ p`
+/// must be rejected outright. `scaled_curve_gadget_rows_match_secp256k1` ties the rows
+/// to the 86-bit circuit.
+fn toy_curve_source(bits: u32, p: u64, op: &str) -> String {
+    // `b = 7` and dummy generator tables (only the scalar-mul code reads them).
+    let mask = (1u64 << bits) - 1;
+    let limbs = |v: u64| [v & mask, (v >> bits) & mask, (v >> (2 * bits)) & mask];
+    let b = limbs(7 % p);
+    let body = match op {
+        "add" => "let r = ec_add_incomplete(p, q);",
+        "checked_add" => {
+            "enforce_on_curve(p); enforce_on_curve(q); let r = ec_add_incomplete(p, q);"
+        }
+        _ => "let _ = q; let r = ec_double_incomplete(p);",
+    };
+    format!(
+        "#![no_std]\nuse xark::prelude::*;\n\
+         mod toy {{ xark_curve::weierstrass! {{ bits = {bits}, base = \"{p}\", scalar = \"{p}\", a = 0, \
+         b = [{}, {}, {}], generators = [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]], \
+         correction = [0,0,0,0,0,0] }} }}\n\
+         use toy::{{ec_add_incomplete, ec_double_incomplete, enforce_on_curve, Point}};\n\
+         #[circuit]\n\
+         pub fn circuit(p: Private<Point>, q: Private<Point>, s: Public<Point>) {{\n\
+         \x20   {body}\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 3 {{ require_eq(r.x.limbs[i], s.x.limbs[i]); require_eq(r.y.limbs[i], s.y.limbs[i]); i += 1; }}\n\
+         }}\n",
+        b[0], b[1], b[2]
+    )
+}
+
+/// Affine `y² = x³ + 7` over `p`: `None` where the incomplete formula is undefined.
+fn toy_ec(p: i128, a: (i128, i128), b: (i128, i128), double: bool) -> Option<(i128, i128)> {
+    let inv = |x: i128| -> Option<i128> {
+        let x = x.rem_euclid(p);
+        (x != 0).then(|| (1..p).find(|y| x * y % p == 1).expect("p prime"))
+    };
+    let lam = if double {
+        (3 * a.0 * a.0).rem_euclid(p) * inv(2 * a.1)? % p
+    } else {
+        (b.1 - a.1).rem_euclid(p) * inv(b.0 - a.0)? % p
+    };
+    let x3 = (lam * lam - a.0 - if double { a.0 } else { b.0 }).rem_euclid(p);
+    let y3 = (lam * (a.0 - x3) - a.1).rem_euclid(p);
+    Some((x3, y3))
+}
+
+/// `op` on the toy curve over `p` for each `(P, Q)` in `pairs` (encodings included),
+/// each decided by projection search against [`toy_ec`].
+/// A pair of toy-curve points `(P, Q)`, as `(x, y)` coordinates.
+type ToyPair = ((i128, i128), (i128, i128));
+
+fn check_toy_curve(bits: u32, p: i128, op: &str, pairs: &[ToyPair]) {
+    use xark_ir::witness_search::{Projection, search_projection};
+    let name = format!("toy_ec_{op}_{p}");
+    let src = write_case(&name, &toy_curve_source(bits, p as u64, op));
+    let c = compile_with_field(&src, &name, "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let prog = c.program();
+    let id = |n: &str| {
+        prog.vars
+            .iter()
+            .find(|v| v.name == n)
+            .unwrap_or_else(|| panic!("no leaf `{n}`"))
+            .id
+    };
+    let leaf = |pt: &str, co: &str, i: usize| id(&format!("{pt}.{co}.limbs[{i}]"));
+    let out: Vec<_> = ["x", "y"]
+        .iter()
+        .flat_map(|co| (0..3).map(move |i| (co, i)))
+        .map(|(co, i)| leaf("s", co, i))
+        .collect();
+    let mask = (1i128 << bits) - 1;
+    let (mut defined, mut undefined, mut noncanonical) = (0, 0, 0);
+    for &(a, b) in pairs {
+        let mut fixed = std::collections::BTreeMap::new();
+        for (pt, v) in [("p", a), ("q", b)] {
+            for (co, val) in [("x", v.0), ("y", v.1)] {
+                for i in 0..3 {
+                    fixed.insert(
+                        leaf(pt, co, i),
+                        ((val >> (bits * i as u32)) & mask).to_string(),
+                    );
+                }
+            }
+        }
+        let got = search_projection(&prog, &fixed, &out, 1 << 14, None).unwrap();
+        let canonical = [a.0, a.1, b.0, b.1].iter().all(|&v| v < p);
+        let reduce = |v: (i128, i128)| (v.0 % p, v.1 % p);
+        let want = if canonical {
+            toy_ec(p, a, b, op == "double")
+        } else {
+            None
+        };
+        match (want, got) {
+            (Some((x3, y3)), Projection::One(v)) => {
+                let limb = |k: usize| v[k].to_decimal().parse::<i128>().unwrap();
+                let val = |o: usize| {
+                    (0..3)
+                        .map(|i| limb(o + i) << (bits * i as u32))
+                        .sum::<i128>()
+                };
+                assert_eq!((val(0), val(3)), (x3, y3), "{op} {a:?} {b:?}");
+                defined += 1;
+            }
+            (None, Projection::None) if canonical => undefined += 1,
+            (None, Projection::None) => noncanonical += 1,
+            (want, other) => panic!(
+                "{op} p={p} {a:?} {b:?} (≡ {:?} {:?}): expected {want:?}, circuit {other:?}",
+                reduce(a),
+                reduce(b)
+            ),
+        }
+    }
+    eprintln!(
+        "p = {p}, {op}: {defined} defined, {undefined} undefined, {noncanonical} non-canonical rejected"
+    );
+    assert!(defined > 0);
+}
+
+fn toy_points(p: i128) -> Vec<(i128, i128)> {
+    (0..p)
+        .flat_map(|x| (0..p).map(move |y| (x, y)))
+        .filter(|&(x, y)| (y * y - (x * x * x + 7)).rem_euclid(p) == 0)
+        .collect()
+}
+
+fn all_pairs(pts: &[(i128, i128)]) -> Vec<ToyPair> {
+    pts.iter()
+        .flat_map(|&a| pts.iter().map(move |&b| (a, b)))
+        .collect()
+}
+
+#[test]
+fn small_field_curve_gadgets_are_sound() {
+    // p = 13 (3 × 2-bit limbs): every pair, and for the checked entry every encoding.
+    let pts = toy_points(13);
+    check_toy_curve(2, 13, "add", &all_pairs(&pts));
+    let doubles: Vec<_> = pts.iter().map(|&a| (a, (0, 0))).collect();
+    check_toy_curve(2, 13, "double", &doubles);
+    let encs = |v: i128| (0..).map(move |k| v + 13 * k).take_while(|&e| e < 64);
+    let mut every: Vec<_> = Vec::new();
+    for (a, b) in all_pairs(&pts) {
+        for ax in encs(a.0) {
+            for ay in encs(a.1) {
+                for bx in encs(b.0) {
+                    for by in encs(b.1) {
+                        every.push(((ax, ay), (bx, by)));
+                    }
+                }
+            }
+        }
+    }
+    check_toy_curve(2, 13, "checked_add", &every);
+    // p = 127 (3 × 3-bit limbs): every double, and a fixed sample of the adds.
+    let pts = toy_points(127);
+    let doubles: Vec<_> = pts.iter().map(|&a| (a, (0, 0))).collect();
+    check_toy_curve(3, 127, "double", &doubles);
+    let sample: Vec<_> = all_pairs(&pts).into_iter().step_by(53).collect();
+    check_toy_curve(3, 127, "add", &sample);
+}
+
+/// **The small-field checks are about the real circuit.** The EC add + double circuit
+/// from [`small_field_curve_gadgets_are_sound`], compiled at limb widths 2–6 and 86:
+/// its multiplication-gate count is exactly affine in the width (`396 + 174·bits`), so
+/// no lowering path depends on the width, and the 86-bit instance (secp256k1's
+/// modulus) is the shipped `xark_secp256k1::affine` gadget — the same circuit digest.
+#[test]
+fn scaled_curve_gadget_rows_match_secp256k1() {
+    let secp = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F";
+    let body = "let r = ec_add_incomplete(p, q); let d = ec_double_incomplete(p);\n\
+                let mut i = 0;\n\
+                while i < 3 { require_eq(r.x.limbs[i] + d.x.limbs[i], s.x.limbs[i]); \
+                require_eq(r.y.limbs[i] + d.y.limbs[i], s.y.limbs[i]); i += 1; }";
+    let circuit = |prelude: &str| {
+        format!(
+            "#![no_std]\nuse xark::prelude::*;\n{prelude}\n#[circuit]\n\
+             pub fn circuit(p: Private<Point>, q: Private<Point>, s: Public<Point>) {{\n{body}\n}}\n"
+        )
+    };
+    let toy = |bits: u32, p: &str| {
+        circuit(&format!(
+            "mod toy {{ xark_curve::weierstrass! {{ bits = {bits}, base = \"{p}\", scalar = \"{p}\", \
+             a = 0, b = [7, 0, 0], generators = [[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]], \
+             correction = [0,0,0,0,0,0] }} }}\nuse toy::{{ec_add_incomplete, ec_double_incomplete, Point}};"
+        ))
+    };
+    let build = |name: &str, src: String| {
+        let c = compile_with_field(&write_case(name, &src), name, "bn254");
+        assert!(c.status_success, "{name}: {}", c.stderr);
+        c
+    };
+    for (bits, p) in [
+        (2u32, "13"),
+        (3, "127"),
+        (4, "1279"),
+        (5, "10007"),
+        (6, "65519"),
+        (86, secp),
+    ] {
+        let mul = build(&format!("scaled_ec_{bits}"), toy(bits, p)).mul_gate_count();
+        assert_eq!(mul, 396 + 174 * bits as usize, "{bits}-bit limbs");
+    }
+    let toy86 = build("scaled_ec_86", toy(86, secp)).circuit_digest();
+    let real = build(
+        "scaled_ec_real",
+        circuit("use xark_secp256k1::affine::{ec_add_incomplete, ec_double_incomplete, Point};"),
+    )
+    .circuit_digest();
+    assert_eq!(
+        toy86, real,
+        "the 86-bit toy instance is the shipped secp256k1 gadget"
+    );
+}
+
 /// gadget hints (`hint_div_rem`, the bignum mul/inverse/sub hints)
 /// and `advice` inside a witness branch — inputs gated by the arm's guard, outputs
 /// pinned where it isn't taken, every pin of theirs guarded.

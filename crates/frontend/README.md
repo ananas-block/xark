@@ -126,9 +126,14 @@ honest solver must find that witness too. Over 3,000 programs / 48,000 searches 
 run clean with none undecided (`XARK_FUZZ_CASES`, `XARK_FUZZ_SEED`; CI runs 200 per
 push and 5,000 nightly on a fresh seed). `scripts/difftest-examples.sh` runs the same
 search on every example under 200k rows, on its own test inputs and mutations; all
-are decided except the non-native EC examples (`ec_incomplete*`), whose modular-inverse
-relations the search can't reason about — those rest on the Lean proofs the snapshot
-suite's gate-count bridges pin.
+are decided except the non-native EC examples (`ec_incomplete*`), whose 256-bit
+modular-inverse relations the search can't reason about. Those gadgets are checked at
+small scale instead: the same `weierstrass!` code over 3 × 2- and 3-bit limbs (p = 13,
+127) has every input decided — the right output, no witness where the formula is
+undefined, every non-canonical encoding rejected at `enforce_on_curve` — and its gate
+count is exactly affine in the limb width up to 86 bits, where it is the shipped
+secp256k1 circuit digest-for-digest (`small_field_curve_gadgets_are_sound`,
+`scaled_curve_gadget_rows_match_secp256k1`).
 
 Mutation testing (each guard, pin and gated range check removed in turn; see the
 plan) is caught by these tests, except a handful that only a specific shape reaches —

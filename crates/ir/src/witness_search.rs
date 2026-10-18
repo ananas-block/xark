@@ -17,8 +17,10 @@
 //! Known blind spot: non-native modular relations (a limb-wise `λ·d ≡ n (mod q)` with a
 //! ~256-bit `q`, as in the EC and bignum inverse gadgets). Their uniqueness is a number-
 //! theoretic fact (`q` prime, `d ≠ 0`, `λ < q`) that propagation can't derive and
-//! splitting can't reach; it's proven in Lean instead
-//! (`mul_mod_via_limbwise_constraints`, `ec_add_incomplete_*_sound`).
+//! splitting can't reach at that size. It's proven in Lean
+//! (`mul_mod_via_limbwise_constraints`, `ec_add_incomplete_*_sound`), and the same
+//! gadget code over narrow limbs is searched exhaustively (`snapshot.rs`,
+//! `small_field_curve_gadgets_are_sound`).
 //! Variables no constraint references are ignored (they can't affect acceptance).
 
 use std::collections::BTreeMap;
@@ -88,6 +90,9 @@ struct Search<'a> {
     /// Rows processed, to check the deadline every so often.
     steps: usize,
     found: Vec<Vec<Fp>>,
+    /// [`search_projection`]: the projected variables, and their distinct values seen.
+    project: Option<Vec<usize>>,
+    proj_found: Vec<Vec<Fp>>,
     stuck: Option<String>,
     /// Set when some branch tried only sample values: `None`/`Unique` unproven.
     incomplete: Option<String>,
@@ -111,73 +116,9 @@ pub fn search_witnesses_within(
     budget: usize,
     limit: Option<std::time::Duration>,
 ) -> Result<WitnessSearch, SolveError> {
-    let p = crate::solver::modulus_of(program)?;
-    let mut index = BTreeMap::new();
-    let mut ids = Vec::new();
-    let mut cons_vars = Vec::with_capacity(program.constraints.len());
-    for expr in &program.constraints {
-        let mut vs: Vec<usize> = Vec::new();
-        let mut add = |v: VarId| {
-            let i = *index.entry(v).or_insert_with(|| {
-                ids.push(v);
-                ids.len() - 1
-            });
-            if !vs.contains(&i) {
-                vs.push(i);
-            }
-        };
-        for mt in &expr.mul_terms {
-            add(mt.left);
-            add(mt.right);
-        }
-        for lt in &expr.linear_terms {
-            add(lt.var);
-        }
-        cons_vars.push(vs);
-    }
-    let mut var_cons = vec![Vec::new(); ids.len()];
-    for (ci, vs) in cons_vars.iter().enumerate() {
-        for &v in vs {
-            var_cons[v].push(ci);
-        }
-    }
-    let mut dom = vec![Dom::Free; ids.len()];
-    for var in &program.vars {
-        if matches!(var.role, VarRole::Derived) {
-            continue;
-        }
-        let Some(value) = inputs.get(&var.id) else {
-            return Ok(WitnessSearch::Inconclusive(format!(
-                "input `{}` not given",
-                var.name
-            )));
-        };
-        if let Some(&i) = index.get(&var.id) {
-            dom[i] = Dom::Val(Fp::from_decimal(value, &p));
-        }
-    }
-    let n_cons = program.constraints.len();
-    let n_vars = dom.len();
-    let mut s = Search {
-        program,
-        pi: BigInt::from_biguint(Sign::Plus, p.clone()),
-        p,
-        index,
-        ids,
-        alias: vec![None; n_vars],
-        deps: vec![Vec::new(); n_vars],
-        var_cons,
-        dom,
-        trail: Vec::new(),
-        queue: (0..n_cons).rev().collect(),
-        queued: vec![true; n_cons],
-        nodes: 0,
-        budget,
-        deadline: limit.map(|l| std::time::Instant::now() + l),
-        steps: 0,
-        found: Vec::new(),
-        stuck: None,
-        incomplete: None,
+    let mut s = match Search::new(program, inputs, budget, limit, false)? {
+        Ok(s) => s,
+        Err(why) => return Ok(WitnessSearch::Inconclusive(why)),
     };
     s.dfs();
     if s.found.len() >= 2 {
@@ -199,6 +140,146 @@ pub fn search_witnesses_within(
         None => WitnessSearch::None,
         Some(vals) => WitnessSearch::Unique(s.ids.iter().copied().zip(vals).collect()),
     })
+}
+
+/// The outcome of [`search_projection`].
+#[derive(Debug)]
+pub enum Projection {
+    /// No assignment satisfies the constraints.
+    None,
+    /// Every satisfying assignment gives `project` these values (there may be several
+    /// assignments, differing elsewhere).
+    One(Vec<Fp>),
+    /// Two satisfying assignments that differ on `project`.
+    Many(Vec<Fp>, Vec<Fp>),
+    /// Neither proven: why the search stopped.
+    Inconclusive(String),
+}
+
+/// Whether the constraints **determine** `project`: search every satisfying assignment
+/// with `fixed` set (inputs not in `fixed` are left free, like derived variables) and
+/// compare their values on `project`. Freedom elsewhere (a non-canonical internal
+/// value) is allowed; what's proven is that no two witnesses disagree on `project`.
+pub fn search_projection(
+    program: &PrimitiveProgram,
+    fixed: &BTreeMap<VarId, String>,
+    project: &[VarId],
+    budget: usize,
+    limit: Option<std::time::Duration>,
+) -> Result<Projection, SolveError> {
+    let mut s = match Search::new(program, fixed, budget, limit, true)? {
+        Ok(s) => s,
+        Err(why) => return Ok(Projection::Inconclusive(why)),
+    };
+    let mut proj = Vec::new();
+    for v in project {
+        match s.index.get(v) {
+            Some(&i) => proj.push(i),
+            None => {
+                return Ok(Projection::Inconclusive(format!(
+                    "projected var {v} is in no constraint"
+                )));
+            }
+        }
+    }
+    s.project = Some(proj);
+    s.dfs();
+    if s.proj_found.len() >= 2 {
+        let b = s.proj_found.pop().unwrap();
+        let a = s.proj_found.pop().unwrap();
+        return Ok(Projection::Many(a, b));
+    }
+    if let Some(why) = s.stuck.or(s.incomplete) {
+        return Ok(Projection::Inconclusive(why));
+    }
+    Ok(match s.proj_found.pop() {
+        None => Projection::None,
+        Some(v) => Projection::One(v),
+    })
+}
+
+impl<'a> Search<'a> {
+    /// Index the program and fix the inputs. `Err(reason)` (inconclusive) for a
+    /// missing input, unless `allow_free`.
+    fn new(
+        program: &'a PrimitiveProgram,
+        inputs: &BTreeMap<VarId, String>,
+        budget: usize,
+        limit: Option<std::time::Duration>,
+        allow_free: bool,
+    ) -> Result<Result<Self, String>, SolveError> {
+        let p = crate::solver::modulus_of(program)?;
+        let mut index = BTreeMap::new();
+        let mut ids = Vec::new();
+        let mut cons_vars = Vec::with_capacity(program.constraints.len());
+        for expr in &program.constraints {
+            let mut vs: Vec<usize> = Vec::new();
+            let mut add = |v: VarId| {
+                let i = *index.entry(v).or_insert_with(|| {
+                    ids.push(v);
+                    ids.len() - 1
+                });
+                if !vs.contains(&i) {
+                    vs.push(i);
+                }
+            };
+            for mt in &expr.mul_terms {
+                add(mt.left);
+                add(mt.right);
+            }
+            for lt in &expr.linear_terms {
+                add(lt.var);
+            }
+            cons_vars.push(vs);
+        }
+        let mut var_cons = vec![Vec::new(); ids.len()];
+        for (ci, vs) in cons_vars.iter().enumerate() {
+            for &v in vs {
+                var_cons[v].push(ci);
+            }
+        }
+        let mut dom = vec![Dom::Free; ids.len()];
+        for var in &program.vars {
+            if matches!(var.role, VarRole::Derived) {
+                continue;
+            }
+            let Some(value) = inputs.get(&var.id) else {
+                if allow_free {
+                    continue;
+                }
+                return Ok(Err(format!("input `{}` not given", var.name)));
+            };
+            if let Some(&i) = index.get(&var.id) {
+                dom[i] = Dom::Val(Fp::from_decimal(value, &p));
+            }
+        }
+        let n_cons = program.constraints.len();
+        let n_vars = dom.len();
+        let s = Search {
+            program,
+            pi: BigInt::from_biguint(Sign::Plus, p.clone()),
+            p,
+            index,
+            ids,
+            alias: vec![None; n_vars],
+            deps: vec![Vec::new(); n_vars],
+            var_cons,
+            dom,
+            trail: Vec::new(),
+            queue: (0..n_cons).rev().collect(),
+            queued: vec![true; n_cons],
+            nodes: 0,
+            budget,
+            deadline: limit.map(|l| std::time::Instant::now() + l),
+            steps: 0,
+            found: Vec::new(),
+            project: None,
+            proj_found: Vec::new(),
+            stuck: None,
+            incomplete: None,
+        };
+        Ok(Ok(s))
+    }
 }
 
 fn floor_div(a: &BigInt, b: &BigInt) -> BigInt {
@@ -621,6 +702,11 @@ impl Search<'_> {
         }
     }
 
+    /// Stop: two witnesses (or two projections) found, or the search gave up.
+    fn done(&self) -> bool {
+        self.found.len() >= 2 || self.proj_found.len() >= 2 || self.stuck.is_some()
+    }
+
     fn propagate(&mut self) -> Result<(), Conflict> {
         while let Some(ci) = self.queue.pop() {
             self.queued[ci] = false;
@@ -653,7 +739,7 @@ impl Search<'_> {
     }
 
     fn dfs(&mut self) {
-        if self.found.len() >= 2 || self.stuck.is_some() {
+        if self.done() {
             return;
         }
         self.nodes += 1;
@@ -700,20 +786,28 @@ impl Search<'_> {
                         self.dfs();
                     }
                     self.undo(mark);
-                    if self.found.len() >= 2 || self.stuck.is_some() {
+                    if self.done() {
                         return;
                     }
                 }
                 return;
             }
             // Every variable fixed and every row re-checked by propagation.
-            let vals = (0..self.dom.len())
+            let vals: Vec<Fp> = (0..self.dom.len())
                 .map(|v| match self.resolve(v) {
                     Resolved::Known(x) => x,
                     Resolved::Lin(..) => unreachable!("every representative is fixed"),
                 })
                 .collect();
-            self.found.push(vals);
+            match &self.project {
+                Some(proj) => {
+                    let pv: Vec<Fp> = proj.iter().map(|&i| vals[i].clone()).collect();
+                    if self.proj_found.first() != Some(&pv) {
+                        self.proj_found.push(pv);
+                    }
+                }
+                None => self.found.push(vals),
+            }
             return;
         };
         if self.nodes == 1 && std::env::var_os("XARK_WS_DEBUG").is_some() {
@@ -729,7 +823,7 @@ impl Search<'_> {
                 self.dfs();
             }
             self.undo(mark);
-            if self.found.len() >= 2 || self.stuck.is_some() {
+            if self.done() {
                 return;
             }
         }
