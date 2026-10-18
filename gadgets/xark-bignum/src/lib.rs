@@ -13,8 +13,8 @@
 //! schoolbook column products could overflow BN254 `Fr`.
 
 #![no_std]
-// Circuit-lowered gadget code: the xark compiler rejects compound assignment on
-// `Field` (`+=`/`-=`/`*=`), so `x = x + y` is required — not a clippy oversight.
+// Gadget code keeps the `x = x + y` style it was written in (the old compiler
+// rejected `+=` on `Field`; the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
 /// Re-exported so the [`fp!`] macro can name `$crate::Field`.
@@ -205,20 +205,16 @@ pub const fn modulus_limbs<const N: usize, const BITS: usize>(s: &str) -> [Field
     to_field_limbs(parse_limbs::<N, BITS>(s))
 }
 
-/// The headroom an [`fp!`] field needs: `3·m < 2^(N·BITS)`. `mod_add` drops the carry
-/// out of the top limb, and `triple` / `sub2` build `3·v` / `a + 2m`, so a modulus
-/// closer to the limb capacity would let a sum wrap and the circuit accept the wrong
-/// value. Checked on the top limb (`(top + 1)·3 ≤ 2^BITS` implies it); every curve
-/// field here (≤ 256 bits in 3 × 86) has two bits to spare. A compile error otherwise.
+/// The headroom an [`fp!`] field needs: `3·m < 2^(N·BITS)`. `mod_add` sums two
+/// canonical values and `triple` / `sub2` build `3·v` / `a + 2m` in `N` limbs, each
+/// with its top carry required to be zero, so a modulus closer to the limb capacity
+/// would make honest operations fail (a completeness bug, not a soundness one).
+/// Checked on the top limb (`(top + 1)·3 ≤ 2^BITS` implies it); every curve field
+/// here (≤ 256 bits in 3 × 86) has two bits to spare. A compile error otherwise.
 pub const fn assert_fp_headroom<const N: usize, const BITS: usize>(s: &str) {
     let v = parse_limbs::<N, BITS>(s);
-    let mask = if BITS == 128 {
-        u128::MAX
-    } else {
-        (1u128 << BITS) - 1
-    };
     assert!(
-        N > 0 && v[N - 1] < mask / 3,
+        N > 0 && v[N - 1] < ((1u128 << BITS) - 1) / 3,
         "fp!: modulus too close to the limb capacity — need 3·m < 2^(LIMBS·BITS)"
     );
 }
@@ -521,7 +517,8 @@ pub fn range_check_limbs<const LIMBS: usize, const BITS: usize>(x: [Field; LIMBS
 }
 
 /// Modular negation `(m - b) mod m`, canonical (enforces `b <= m`; `b = 0` and
-/// `b = m` give `0`).
+/// `b = m` give `0`). `b`'s limbs must be range-checked (`< 2^BITS`): `b ≤ m` is
+/// read off the borrow chain, which assumes them.
 pub fn mod_neg<const LIMBS: usize, const BITS: usize>(
     b: [Field; LIMBS],
     m: [Field; LIMBS],
@@ -538,18 +535,25 @@ pub fn mod_neg<const LIMBS: usize, const BITS: usize>(
         i += 1;
     }
     require_eq(borrow, Field::from(0u8));
-    // `b = 0` gives `out = m`: map it to the canonical `0`. `out`'s limbs are
-    // range-checked, so its recomposition equals `m`'s exactly when `out = m`.
-    let two_b = two_pow::<BITS>();
-    let (mut ov, mut mv, mut pow) = (Field::from(0u8), Field::from(0u8), Field::from(1u8));
+    // `b = 0` gives `out = m`: map it to the canonical `0`. `out = m` is tested
+    // limb-wise — `Σ (out[i] − m[i])²` is an integer below Fr (every `out[i]` is
+    // range-checked, so each square is `< 2^(2·BITS)`), hence zero exactly when every
+    // limb matches. (Comparing the two recompositions in Fr is not exact: 256-bit
+    // values wrap, so `b = k·Fr` would also match.)
+    const {
+        assert!(
+            2 * BITS + ((usize::BITS - LIMBS.leading_zeros()) as usize) < 253,
+            "mod_neg: the limb-difference sum must stay below Fr"
+        )
+    };
+    let mut sq = Field::from(0u8);
     let mut i = 0usize;
     while i < LIMBS {
-        ov = ov + out[i] * pow;
-        mv = mv + m[i] * pow;
-        pow = pow * two_b;
+        let d = out[i] - m[i];
+        sq = sq + d * d;
         i += 1;
     }
-    let is_m = Field::from(ov == mv);
+    let is_m = Field::from(sq == Field::from(0u8));
     let mut i = 0usize;
     while i < LIMBS {
         out[i] = out[i] - is_m * m[i];
@@ -636,7 +640,7 @@ pub fn mod_sub<const LIMBS: usize, const BITS: usize>(
 }
 
 /// `(3·v) mod m` for `v < m`. Forms the exact triple `3v < 3m` (per-limb
-/// `3·v[i] + carry < 2^(BITS+2)`, carry ∈ [0,3]) in one scaling pass, then reduces
+/// `3·v[i] + carry < 2^(BITS+2)`, `carry ∈ [0,3]`) in one scaling pass, then reduces
 /// `[0,3m) → [0,m)` with two conditional subtractions.
 pub fn triple_mod<const LIMBS: usize, const BITS: usize>(
     v: [Field; LIMBS],
@@ -804,6 +808,10 @@ fn mulmod_columns<const LIMBS: usize, const BITS: usize>(
 pub const P_25519_L: [Field; 3] = modulus_limbs::<3, 85>(
     "57896044618658097711785492504343953926634992332820282019728792003956564819949",
 );
+/// `2^255 − 19 − 1` in 3 × 85 bits (the canonical-coordinate bound).
+pub const P1_25519_L: [Field; 3] = modulus_minus_1::<3, 85>(
+    "57896044618658097711785492504343953926634992332820282019728792003956564819949",
+);
 
 /// SOUND lazy multiply mod (2^255-19), 3x85. Pseudo-Mersenne fold with carries
 /// range-checked (deterministic — NO free choice), NO quotient, NO canonical
@@ -860,6 +868,9 @@ pub fn mul_lazy_25519(a: [Field; 3], b: [Field; 3]) -> [Field; 3] {
 /// (deterministic). NO canonical reduce. Used after biased subtractions.
 pub const M_K1: [Field; 4] =
     modulus_limbs::<4, 64>("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
+/// secp256k1 `p − 1` (the canonical-coordinate bound).
+pub const M1_K1: [Field; 4] =
+    modulus_minus_1::<4, 64>("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F");
 
 /// Sound 4×64 lazy multiply mod secp256k1 p (fold ×c, c=2^32+977). Inputs <2^70;
 /// carries range-checked (sound); output ≡ a·b (mod p), limbs <2^65.
@@ -1069,10 +1080,14 @@ pub fn ec_add_k1(
     (x3, y3)
 }
 
-/// Sound on-curve check for secp256k1 (y² = x³ + 7), loosely-reduced coords.
+/// Sound on-curve check for secp256k1 (y² = x³ + 7). The coordinates must be
+/// canonical (`< p`), so each point has exactly one accepted encoding — as for
+/// secp256r1 and the Edwards curves.
 pub fn on_curve_k1(x: [Field; 4], y: [Field; 4]) {
     range_check_limbs::<4, 64>(x);
     range_check_limbs::<4, 64>(y);
+    require_lt::<4, 64>(x, M1_K1);
+    require_lt::<4, 64>(y, M1_K1);
     let y2 = mul_lazy_k1(y, y);
     let x2 = mul_lazy_k1(x, x);
     let x3 = mul_lazy_k1(x2, x);

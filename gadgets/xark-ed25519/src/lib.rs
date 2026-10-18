@@ -14,8 +14,8 @@
 //! challenge hash `k = H(R‖A‖M)` is out of scope — `k` is supplied as a witness).
 
 #![no_std]
-// Circuit-lowered gadget code: the xark compiler rejects compound assignment on
-// `Field` (`+=`/`-=`/`*=`), so `x = x + y` is required — not a clippy oversight.
+// Gadget code keeps the `x = x + y` style it was written in (the old compiler
+// rejected `+=` on `Field`; the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
 use xark::{Field, Transparent, require_eq};
@@ -179,11 +179,14 @@ fn select16_e(t: [Ext; 16], b3: Field, b2: Field, b1: Field, b0: Field) -> Ext {
     mux_e(b3, l3[1], l3[0])
 }
 
-/// Sound on-curve check for an affine (x,y): range-check limbs, then
-/// −x²+y² == 1 + d·x²·y² (mod p), compared canonically.
+/// Sound on-curve check for an affine (x,y): canonical coordinates (`< p`, so each
+/// point has one accepted encoding), then −x²+y² == 1 + d·x²·y² (mod p), compared
+/// canonically.
 fn on_curve_l(x: L3, y: L3) {
     range_check_limbs::<3, 85>(x);
     range_check_limbs::<3, 85>(y);
+    xark_bignum::require_lt::<3, 85>(x, xark_bignum::P1_25519_L);
+    xark_bignum::require_lt::<3, 85>(y, xark_bignum::P1_25519_L);
     let x2 = mul(x, x);
     let y2 = mul(y, y);
     let b8 = [
@@ -298,10 +301,10 @@ impl PointL {
 }
 
 /// Ed25519 signature verification core: the EdDSA equation `[S]·B == R + [k]·A`
-/// (sound lazy extended-coordinate path, 3×85 limbs). Wrapped by [`PointL::verify`]
-/// — callers use that (it takes the transparent [`Signature`] and decomposes the
-/// scalars to bits).
-pub fn eddsa_verify(ax: L3, ay: L3, rx: L3, ry: L3, s_bits: [Field; 256], k_bits: [Field; 256]) {
+/// (sound lazy extended-coordinate path, 3×85 limbs). Wrapped by [`PointL::verify`],
+/// the public entry: it takes the transparent [`Signature`] and decomposes the
+/// scalars to pinned bits — `s_bits`/`k_bits` here are assumed boolean.
+fn eddsa_verify(ax: L3, ay: L3, rx: L3, ry: L3, s_bits: [Field; 256], k_bits: [Field; 256]) {
     // canonical scalar S < L (else S, S+L, … all verify — EdDSA malleability)
     assert_scalar_below_order(s_bits);
     on_curve_l(ax, ay);

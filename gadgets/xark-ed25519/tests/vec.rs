@@ -102,7 +102,7 @@ fn eddsa_verify_matches_dalek() {
     // (also pinned, per toolchain, in `tests/stable-digests.txt`).
     assert_eq!(
         c.circuit_digest(),
-        0x76a8153ee2fdd89d02deb7bd2c394fe3,
+        0x4551766810cba28f6f9f5cd6158fb82c,
         "ed25519 eddsa_verify circuit changed (re-derive the digest if intentional)"
     );
 
