@@ -3,7 +3,7 @@
 //! running the circuit crate's `cargo test`).
 //!
 //! `cargo run -p xark-frontend --release --example difftest -- <a.xbc> <b.xbc> <dump-dir>
-//!     [--circuit NAME] [--mutations N] [--analyze]`
+//!     [--circuit NAME] [--mutations N] [--analyze] [--search]`
 //!
 //! For every recorded input: both builds must reach the same verdict, and it must be
 //! the verdict the test saw. Then up to `N` mutations per input (each one leaf + 1):
@@ -12,8 +12,9 @@
 //! `--analyze` also runs the under-constraint analyzer on build `b` for accepted inputs.
 //! `--search` decides every input and mutation on build `b` by exhaustive witness
 //! search (the adversary): exactly one witness where the honest solver accepts, none
-//! where it rejects. Inconclusive searches are counted, not failed.
-//! Exit status 1 on any disagreement.
+//! where it rejects. Inconclusive searches are counted, not failed (limits:
+//! `XARK_SEARCH_SECS`, `XARK_SEARCH_BUDGET`).
+//! Exit status 1 on any disagreement, 2 when every search was inconclusive.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -74,8 +75,17 @@ impl Build {
     /// duplicate witness.
     fn search(&self, inputs: &[(String, String)]) -> Result<Option<bool>, String> {
         use xark_ir::witness_search::{WitnessSearch, search_witnesses_within};
-        let limit = Some(std::time::Duration::from_secs(20));
-        match search_witnesses_within(&self.prog, &self.ids(inputs)?, 1 << 12, limit)
+        // Per-search time limit and node budget (`XARK_SEARCH_SECS`, default 20;
+        // `XARK_SEARCH_BUDGET`, default 4096), for slower machines.
+        let env = |k: &str, d: u64| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
+        };
+        let limit = Some(std::time::Duration::from_secs(env("XARK_SEARCH_SECS", 20)));
+        let budget = env("XARK_SEARCH_BUDGET", 1 << 12) as usize;
+        match search_witnesses_within(&self.prog, &self.ids(inputs)?, budget, limit)
             .map_err(|e| e.to_string())?
         {
             WitnessSearch::Unique(_) => Ok(Some(true)),
@@ -229,5 +239,10 @@ fn main() {
     }
     if fails > 0 || cases == 0 {
         std::process::exit(1);
+    }
+    // Every search inconclusive: the adversarial half checked nothing. Exit 2 so a
+    // caller can tell it apart from a pass (and from a failure).
+    if search && searched > 0 && undecided == searched {
+        std::process::exit(2);
     }
 }

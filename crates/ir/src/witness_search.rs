@@ -37,7 +37,8 @@ use crate::solver::{Fp, SolveError};
 pub enum WitnessSearch {
     /// No assignment satisfies the constraints: the inputs are rejected.
     None,
-    /// Exactly one assignment satisfies them.
+    /// Exactly one assignment satisfies them (of every variable some constraint
+    /// mentions; a variable in no constraint is unconstrained by definition).
     Unique(BTreeMap<VarId, Fp>),
     /// Two satisfying assignments that differ at `var`.
     Multiple { var: VarId, name: String },
@@ -238,6 +239,17 @@ impl<'a> Search<'a> {
                 var_cons[v].push(ci);
             }
         }
+        // Every given value must name an input: fixing a derived variable (or an
+        // unknown id) would silently search a different question.
+        for id in inputs.keys() {
+            match program.vars.iter().find(|v| v.id == *id) {
+                None => return Ok(Err(format!("no variable with id {id}"))),
+                Some(v) if matches!(v.role, VarRole::Derived) => {
+                    return Ok(Err(format!("`{}` is not an input", v.name)));
+                }
+                Some(_) => {}
+            }
+        }
         let mut dom = vec![Dom::Free; ids.len()];
         for var in &program.vars {
             if matches!(var.role, VarRole::Derived) {
@@ -305,7 +317,7 @@ impl Search<'_> {
         Fp::new(r.to_biguint().unwrap(), &self.p)
     }
 
-    /// A field coefficient as a signed integer, when it is small (`|c| < 2^250`).
+    /// A field coefficient as a signed integer, when it is small (`|c| < 2^249`).
     fn small(&self, c: &Fp) -> Option<BigInt> {
         let z = self.int(c);
         let z = if z > &self.pi / 2 { z - &self.pi } else { z };
@@ -488,7 +500,10 @@ impl Search<'_> {
             let a = quad.iter().fold(zero.clone(), |s, q| s.add(&q.2));
             let b = lin.first().map(|e| e.1.clone()).unwrap_or(zero.clone());
             if a.is_zero() {
-                return self.linear(vec![(v, b)], konst);
+                // (Not reached: `quad` keeps only nonzero terms.) `linear` needs
+                // nonzero coefficients.
+                let lin = if b.is_zero() { vec![] } else { vec![(v, b)] };
+                return self.linear(lin, konst);
             }
             // Roots `{0, 1}` exactly when `b = −a` and `c = 0` (booleanity).
             if konst.is_zero() && b == a.neg() {
@@ -623,11 +638,10 @@ impl Search<'_> {
             } else {
                 (ceil_div(&hi, c), floor_div(&lo, c))
             };
-            if !matches!(self.dom[*v], Dom::Range(..)) {
-                continue; // fixed by an earlier narrowing in this loop
-            }
+            // Each variable appears once in `terms`, so its domain is the range
+            // `bounds` was read from.
             let Dom::Range(a, b) = &self.dom[*v] else {
-                unreachable!()
+                unreachable!("a range variable narrowed twice in one pass")
             };
             let (lo, hi) = (lo.max(a.clone()), hi.min(b.clone()));
             if lo > hi {
@@ -729,7 +743,9 @@ impl Search<'_> {
                 Trail::Dom(v, d) => self.dom[v] = d,
                 Trail::Alias(v, u) => {
                     self.alias[v] = None;
-                    self.deps[u].pop();
+                    // LIFO: `v` was the last dependent pushed onto `u`.
+                    let popped = self.deps[u].pop();
+                    debug_assert_eq!(popped, Some(v));
                 }
             }
         }
@@ -738,6 +754,8 @@ impl Search<'_> {
         }
     }
 
+    /// Depth-first search. The recursion depth is about the sum, over split
+    /// variables, of `log2` of their range widths (≈ 86 frames per 86-bit limb).
     fn dfs(&mut self) {
         if self.done() {
             return;
