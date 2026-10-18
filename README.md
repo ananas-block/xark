@@ -78,20 +78,25 @@ file with an interface per struct and typed `prove` / `verify` over the `xark-wa
 module you pass in:
 
 ```ts
-import * as wasm from "xark-wasm";
-import { TypedKyc } from "./typed_kyc.ts";
+import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
+import { ZkKyc } from "./zk_kyc";
 
-const kyc = new TypedKyc(wasm, { circuit, provingKey, verifyingKey });
+const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey });
 const { proof, publicInputs } = kyc.prove({
-  id: { document: bytes, born: 19940312, netWorth: 2_400_000n, salt },
-  policy: { bornBefore: 20081015, minNetWorth: 1_000_000 },
+  user: { id: "3762531230650282305", dob: 19900101, country: 21333, nonce },
+  maxDob: 20200101,
   commitment,
 });
 kyc.verify(proof, publicInputs); // true
 ```
 
+`examples/zk_kyc/client/` holds this generated client and a test that runs it, as
+do `cube`, `sha256` and `merkle`; `scripts/codegen-check.sh` (run in CI)
+regenerates them, fails if a committed client is stale, and proves and verifies
+each through xark-wasm.
+
 Fields are camelCased; values are range- and length-checked against their Rust types
-before proving, with errors that name the field (`id.born: 4294967296 is outside u32`).
+before proving, with errors that name the field (`msg[2]: 300 is outside u8`).
 
 ## Editor diagnostics (rust-analyzer)
 

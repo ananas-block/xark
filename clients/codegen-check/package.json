@@ -1,0 +1,13 @@
+{
+  "name": "xark-codegen-check",
+  "private": true,
+  "description": "Typechecks and runs the generated TypeScript clients of the representative examples (scripts/codegen-check.sh).",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
