@@ -5,7 +5,6 @@ edition = "2021"
 license.workspace = true
 repository.workspace = true
 description = "snarkjs-compatible JSON encodings of Groth16 (BN254) proofs, verifying keys, and public inputs."
-publish = false
 
 [dependencies]
 ark-bn254 = { version = "0.6", default-features = false, features = ["curve"] }

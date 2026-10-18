@@ -38,6 +38,11 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
+      - name: Publish order up to date
+        # Every publishable crate is in Makefile.publish, dependencies first, and
+        # none depends on an unpublished one.
+        run: scripts/gen-publish-makefile.py --check
+
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
