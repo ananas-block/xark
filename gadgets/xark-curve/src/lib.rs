@@ -26,8 +26,16 @@
 /// ```
 #[macro_export]
 macro_rules! weierstrass {
+    // optional limb width (default 86): `weierstrass! { bits = 4, base = …, … }` — the
+    // same gadget code over narrow limbs, for exhaustive small-field checks.
+    (bits = $bits:literal, $($rest:tt)*) => {
+        $crate::weierstrass! { @width $bits, $($rest)* }
+    };
+    (base = $($rest:tt)*) => {
+        $crate::weierstrass! { @width 86, base = $($rest)* }
+    };
     // public entry: a = 0 (no `a` term in the doubling numerator)
-    (
+    (@width $bits:literal,
         base = $base:literal,
         scalar = $scalar:literal,
         a = 0,
@@ -36,6 +44,7 @@ macro_rules! weierstrass {
         correction = [ $cx0:literal, $cx1:literal, $cx2:literal, $cy0:literal, $cy1:literal, $cy2:literal $(,)? ] $(,)?
     ) => {
         $crate::weierstrass! { @build
+            bits = $bits,
             base = $base,
             scalar = $scalar,
             // a = 0: numerator is exactly `3x²` (no subtraction)
@@ -47,7 +56,7 @@ macro_rules! weierstrass {
         }
     };
     // public entry: a = -3 (numerator gains a `- 3`)
-    (
+    (@width $bits:literal,
         base = $base:literal,
         scalar = $scalar:literal,
         a = -3,
@@ -56,6 +65,7 @@ macro_rules! weierstrass {
         correction = [ $cx0:literal, $cx1:literal, $cx2:literal, $cy0:literal, $cy1:literal, $cy2:literal $(,)? ] $(,)?
     ) => {
         $crate::weierstrass! { @build
+            bits = $bits,
             base = $base,
             scalar = $scalar,
             // a = -3: numerator is `3x² - 3` (`Fp` resolves to the type generated
@@ -71,6 +81,7 @@ macro_rules! weierstrass {
 
     // internal builder: one expansion, so `Point` exists before use
     (@build
+        bits = $bits:literal,
         base = $base:literal,
         scalar = $scalar:literal,
         numerator_sub = { $($nsub:tt)* },
@@ -79,9 +90,9 @@ macro_rules! weierstrass {
         generators = [ $( [ $gx0:literal, $gx1:literal, $gx2:literal, $gy0:literal, $gy1:literal, $gy2:literal ] ),* ],
         correction = [ $cx0:literal, $cx1:literal, $cx2:literal, $cy0:literal, $cy1:literal, $cy2:literal ]
     ) => {
-        // base field `Fp` (mod p), scalar field `Fq` (mod n), 3 × 86-bit limbs
-        xark_bignum::fp!(pub Fp, $base);
-        xark_bignum::fp!(no_host pub Fq, $scalar);
+        // base field `Fp` (mod p), scalar field `Fq` (mod n), 3 × `$bits`-bit limbs
+        xark_bignum::fp!(pub Fp, $base, 3, $bits);
+        xark_bignum::fp!(no_host pub Fq, $scalar, 3, $bits);
 
         /// An affine curve point: two base-field (`Fp`) coordinates.
         #[derive(Clone, Copy)]
@@ -126,11 +137,12 @@ macro_rules! weierstrass {
             Fp::new([xark::Field::from(a), xark::Field::from(b), xark::Field::from(c)])
         }
 
-        /// Pin `p` to the curve `y² = x³ + a·x + b` (range-checks limbs, then the
-        /// equation). Required before the incomplete group law.
+        /// Pin `p` to the curve `y² = x³ + a·x + b`: canonical coordinates (`< p`, which
+        /// the field gadgets' `a, b < m` precondition needs), then the equation.
+        /// Required before the incomplete group law on any point from outside.
         pub fn enforce_on_curve(p: Point) {
-            p.x.range_check();
-            p.y.range_check();
+            p.x.assert_canonical();
+            p.y.assert_canonical();
             let b = fp($b0, $b1, $b2);
             let a_coeff = $($acoeff)*;
             // y² == x³ + a·x + b, reduced for an exact per-limb compare
@@ -143,7 +155,9 @@ macro_rules! weierstrass {
             }
         }
 
-        /// Incomplete affine addition, 3-limb (slope-based, `a`-independent).
+        /// Incomplete affine addition, 3-limb (slope-based, `a`-independent). Inputs
+        /// must be canonical (`< p`) — true of every gadget output; check outside
+        /// points with [`enforce_on_curve`] first.
         pub fn ec_add_incomplete(p: Point, q: Point) -> Point {
             let dx = q.x - p.x;
             let dy = q.y - p.y;
@@ -154,7 +168,8 @@ macro_rules! weierstrass {
             Point::new(x3, y3)
         }
 
-        /// Incomplete affine doubling, 3-limb: `λ = (3x² + a)/(2y)`.
+        /// Incomplete affine doubling, 3-limb: `λ = (3x² + a)/(2y)`. Inputs must be
+        /// canonical, as for [`ec_add_incomplete`].
         pub fn ec_double_incomplete(p: Point) -> Point {
             let x_sq = p.x * p.x;
             let three_x_sq = x_sq.triple();
@@ -383,11 +398,11 @@ macro_rules! edwards {
             Fp::new(D_LIMBS)
         }
 
-        /// Pin `p` to the twisted-Edwards curve `−x² + y² = 1 + d·x²·y²`
-        /// (range-checks limbs, then the equation).
+        /// Pin `p` to the twisted-Edwards curve `−x² + y² = 1 + d·x²·y²`: canonical
+        /// coordinates (`< p`, the field gadgets' precondition), then the equation.
         pub fn enforce_on_curve(p: Point) {
-            p.x.range_check();
-            p.y.range_check();
+            p.x.assert_canonical();
+            p.y.assert_canonical();
             let x2 = p.x * p.x;
             let y2 = p.y * p.y;
             // y² − x² == 1 + d·x²·y², reduced for an exact per-limb compare
@@ -467,10 +482,10 @@ macro_rules! edwards {
         /// does 4 doublings and one 16-way select+add. The complete law keeps `acc`
         /// (starting at the identity) always valid — no offset accumulator needed.
         pub fn scalar_mul(bits: [xark::Field; 256], p: Point) -> Point {
-            // pin coordinates to < 2^BITS before the non-native group law
-            // (`mod_mul` assumes in-range operand limbs, else products wrap `Fr`)
-            p.x.range_check();
-            p.y.range_check();
+            // pin coordinates canonical (< p) before the non-native group law: `mod_mul`
+            // needs in-range limbs (else products wrap `Fr`), `mod_add` needs `a, b < p`
+            p.x.assert_canonical();
+            p.y.assert_canonical();
             let mut table = [identity(); 16];
             let mut i = 1usize;
             while i < 16usize {
@@ -495,11 +510,11 @@ macro_rules! edwards {
         /// window does 2 doublings and one 16-way select+add. Complete law → no
         /// correction term.
         pub fn double_scalar_mul(bits1: [xark::Field; 256], p1: Point, bits2: [xark::Field; 256], p2: Point) -> Point {
-            // pin coordinates to < 2^BITS before the non-native group law (see `scalar_mul`)
-            p1.x.range_check();
-            p1.y.range_check();
-            p2.x.range_check();
-            p2.y.range_check();
+            // pin coordinates canonical before the non-native group law (see `scalar_mul`)
+            p1.x.assert_canonical();
+            p1.y.assert_canonical();
+            p2.x.assert_canonical();
+            p2.y.assert_canonical();
             let jp1 = [p1, p1.double(), p1.double().add(p1)];
             let jp2 = [p2, p2.double(), p2.double().add(p2)];
             let mut table = [identity(); 16];
