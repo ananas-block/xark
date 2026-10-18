@@ -245,7 +245,7 @@ impl std::error::Error for SolveError {}
 /// Cap on a hint's limb_bits (real limbs are 86-bit).
 const MAX_LIMB_BITS: u32 = 128;
 
-fn modulus_of(program: &PrimitiveProgram) -> Result<BigUint, SolveError> {
+pub(crate) fn modulus_of(program: &PrimitiveProgram) -> Result<BigUint, SolveError> {
     modulus_of_field(&program.field)
 }
 

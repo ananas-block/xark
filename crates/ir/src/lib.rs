@@ -19,6 +19,7 @@ pub mod r1cs;
 pub mod r1cs_cache;
 pub mod r1cs_stream;
 pub mod solver;
+pub mod witness_search;
 
 pub use circuit::{CircuitProgram, R1csRow, expr_from_r1cs};
 pub use field::FieldConst;
