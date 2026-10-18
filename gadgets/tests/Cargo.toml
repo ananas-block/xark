@@ -27,7 +27,6 @@ solana-nostd-alt-bn128 = "0.1.1"
 [dev-dependencies]
 xark-backend = { path = "../../crates/backend", version = "0.3.0", features = ["test-deterministic"] }
 xark-prover = { path = "../../crates/prover", version = "0.3.0" }
-xark-snarkjs = { path = "../../crates/snarkjs", version = "0.3.0" }
 xark-ir = { path = "../../crates/ir", version = "0.3.0" }
 ark-bn254.workspace = true
 ark-ec.workspace = true

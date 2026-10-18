@@ -41,7 +41,7 @@ const single = xark.proveStreaming(xbc, pk, INPUTS, { seed: 5 });
 test("single-threaded proveStreaming verifies", () => {
   assert.equal(single.numPublicInputs, 2);
   assert.ok(xark.verify(vk, single.proof, single.publicInputs));
-  assert.deepEqual(xark.public_inputs_to_snarkjs(single.publicInputs), [INPUTS["digest.hi"], INPUTS["digest.lo"]]);
+  assert.deepEqual(xark.decode_public_inputs(single.publicInputs), [INPUTS["digest.hi"], INPUTS["digest.lo"]]);
 });
 
 test("a tampered public input is rejected", () => {

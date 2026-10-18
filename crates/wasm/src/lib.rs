@@ -39,9 +39,8 @@
 //! //   numPublicInputs:  number,
 //! // }
 //!
-//! // snarkjs-compatible objects are opt-in (most callers only need the bytes):
-//! //   proof_to_snarkjs(out.proof)                 // == snarkjs-proof.json
-//! //   public_inputs_to_snarkjs(out.publicInputs)  // == snarkjs-public.json
+//! // The public inputs as decimal strings, in proof order:
+//! //   decode_public_inputs(out.publicInputs)      // e.g. ["27"]
 //! ```
 //!
 //! ## Security
@@ -60,7 +59,6 @@ use wasm_bindgen::prelude::*;
 
 use xark_ir::VarId;
 use xark_prover::{flatten_inputs, resolve_input_ids, InputValue};
-use xark_snarkjs::{proof_to_snarkjs as snarkjs_proof, public_inputs_to_snarkjs as snarkjs_public};
 
 mod streaming;
 pub use streaming::{
@@ -275,24 +273,13 @@ pub fn verify(
     Groth16::<Bn254>::verify(&vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
 }
 
-/// Convert a binary proof (the `proof` `Uint8Array` from [`prove`], == `proof.bin`)
-/// to the snarkjs proof object.
+/// Decode binary public inputs (the `publicInputs` `Uint8Array` from [`prove`],
+/// == `public_inputs.bin`) to decimal strings, in proof order.
 #[wasm_bindgen]
-pub fn proof_to_snarkjs(proof_bytes: &Bytes) -> Result<JsValue, js_sys::Error> {
-    let proof_bytes = to_bytes(proof_bytes, "proof")?;
-    let proof = deserialize_bytes::<Proof<Bn254>>(&proof_bytes, "proof")?;
-    serde_wasm_bindgen::to_value(&snarkjs_proof(&proof))
-        .map_err(|e| js_error(&format!("encoding snarkjs proof: {e}")))
-}
-
-/// Convert binary public inputs (the `publicInputs` `Uint8Array` from [`prove`],
-/// == `public_inputs.bin`) to the snarkjs `public.json` array of decimal strings.
-#[wasm_bindgen]
-pub fn public_inputs_to_snarkjs(public_inputs_bytes: &Bytes) -> Result<JsValue, js_sys::Error> {
+pub fn decode_public_inputs(public_inputs_bytes: &Bytes) -> Result<Vec<String>, js_sys::Error> {
     let public_inputs_bytes = to_bytes(public_inputs_bytes, "public inputs")?;
     let public: Vec<Fr> = deserialize_bytes(&public_inputs_bytes, "public inputs")?;
-    serde_wasm_bindgen::to_value(&snarkjs_public(&public))
-        .map_err(|e| js_error(&format!("encoding snarkjs public inputs: {e}")))
+    Ok(public.iter().map(|x| x.to_string()).collect())
 }
 
 // ---------------------------------------------------------------------------

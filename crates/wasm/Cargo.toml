@@ -29,7 +29,6 @@ bench = ["dep:ark-poly"]
 # panic the prover.
 xark-ir = { path = "../ir", default-features = false }
 xark-prover = { path = "../prover", default-features = false }
-xark-snarkjs = { path = "../snarkjs" }
 # The streaming prover (`proveStreaming`) and its worker kernels.
 xark-groth16 = { path = "../groth16" }
 

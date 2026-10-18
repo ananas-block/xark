@@ -1,4 +1,4 @@
-// xark-wasm smoke test: `prove()` + `verify()` (+ preloading + snarkjs interop)
+// xark-wasm smoke test: `prove()` + `verify()` (+ preloading + public-input decoding)
 // against the pre-built `cube` example (secret^3 == result). Run from anywhere
 // after:
 //   wasm-pack build crates/wasm --target nodejs --dev --out-dir crates/wasm/dist/node
@@ -18,7 +18,7 @@ const { readFileSync } = require("node:fs");
 
 const {
   prove, verify, preload, prove_preloaded,
-  proof_to_snarkjs, public_inputs_to_snarkjs,
+  decode_public_inputs,
 } = require("../dist/node/xark_wasm.js");
 
 const D = process.env.CIRCUIT_ARTIFACTS_DIR
@@ -27,7 +27,6 @@ const xbc = new Uint8Array(readFileSync(join(D, "circuit.xbc")));
 const pk = new Uint8Array(readFileSync(join(D, "pk.bin")));
 const vk = new Uint8Array(readFileSync(join(D, "vk.bin"))); // host-written verifying key
 const hostPublic = readFileSync(join(D, "public_inputs.bin"));
-const hostSnarkPublic = readFileSync(join(D, "snarkjs-public.json"), "utf8").trim();
 
 // Prove two satisfiable instances once and reuse them across cases.
 const p27 = prove(xbc, pk, { secret: "3", result: "27" });
@@ -42,22 +41,12 @@ test("wasm publicInputs are byte-identical to the host public_inputs.bin", () =>
   assert.deepStrictEqual(Buffer.from(p27.publicInputs), Buffer.from(hostPublic));
 });
 
-test("wasm snarkjs public inputs match the host snarkjs-public.json", () => {
-  assert.deepStrictEqual(
-    public_inputs_to_snarkjs(p27.publicInputs),
-    JSON.parse(hostSnarkPublic),
-  );
-});
-
-test("proof_to_snarkjs emits a groth16/bn128 proof with a G1 pi_a", () => {
-  const sj = proof_to_snarkjs(p27.proof);
-  assert.strictEqual(sj.protocol, "groth16");
-  assert.strictEqual(sj.curve, "bn128");
-  assert.ok(Array.isArray(sj.pi_a) && sj.pi_a.length === 3, "pi_a is a G1 point");
+test("decode_public_inputs reads the host public_inputs.bin", () => {
+  assert.deepStrictEqual(decode_public_inputs(hostPublic), ["27"]);
 });
 
 test("prove(2->8) public inputs are ['8']", () => {
-  assert.deepStrictEqual(public_inputs_to_snarkjs(p8.publicInputs), ["8"]);
+  assert.deepStrictEqual(decode_public_inputs(p8.publicInputs), ["8"]);
 });
 
 test("verify round-trips under the host vk.bin (both 27 and 8)", () => {
@@ -116,7 +105,7 @@ test("inputs share the CLI resolver: numbers, bigints, and 0x-hex all work", () 
     { secret: "0x03", result: "0x1b" },
   ]) {
     const out = prove(xbc, pk, inputs);
-    assert.deepStrictEqual(public_inputs_to_snarkjs(out.publicInputs), ["27"]);
+    assert.deepStrictEqual(decode_public_inputs(out.publicInputs), ["27"]);
   }
 });
 

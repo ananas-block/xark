@@ -19,7 +19,6 @@ use xark_backend::keys::KeyMetadata;
 use xark_backend::serialization::canonical_write_to_file;
 use xark_ir::Visibility;
 use xark_prover::XarkCircuit;
-use xark_snarkjs::vk_to_snarkjs;
 
 use super::{circuit_hash, load_backend_r1cs, num_public_inputs};
 use crate::xark_project::XarkProject;
@@ -433,7 +432,6 @@ pub fn run(args: SetupArgs) -> Result<()> {
     let pk_path = out_dir.join("pk.bin");
     let vk_path = out_dir.join("vk.bin");
     let meta_path = out_dir.join("metadata.json");
-    let snarkjs_vk_path = out_dir.join("snarkjs-verification_key.json");
 
     if let Keyed::Program(circuit) = &keyed {
         circuit
@@ -549,14 +547,11 @@ pub fn run(args: SetupArgs) -> Result<()> {
     drop(keyed);
 
     canonical_write_to_file(&vk, &vk_path)?;
-    let snarkjs_vk = vk_to_snarkjs(&vk, num_pi);
-    fs::write(&snarkjs_vk_path, serde_json::to_string_pretty(&snarkjs_vk)?)?;
     fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)
         .with_context(|| format!("writing {}", meta_path.display()))?;
 
     println!("Wrote {}", pk_path.display());
     println!("Wrote {}", vk_path.display());
-    println!("Wrote {}", snarkjs_vk_path.display());
     println!("Wrote {}", meta_path.display());
     if ptau_path.is_some() {
         println!(

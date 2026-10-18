@@ -22,7 +22,6 @@ use xark_backend::{keys::Groth16Keys, prove};
 use xark_groth16::{ConstraintSource, PkSource};
 use xark_ir::VarId;
 use xark_prover::{XarkCircuit, fr_from_decimal};
-use xark_snarkjs::{proof_to_snarkjs, public_inputs_to_snarkjs};
 
 use super::{
     load_backend_r1cs, load_circuit_auto, parse_inputs_arg, resolve_input_ids, setup,
@@ -609,7 +608,7 @@ fn prove_streaming(
     Ok((proof, public, fingerprint))
 }
 
-/// Write the proof, public inputs, snarkjs files, and the self-contained bundle,
+/// Write the proof, public inputs and the self-contained bundle,
 /// and print the proof / calldata summary.
 #[allow(clippy::too_many_arguments)]
 fn write_outputs(
@@ -634,21 +633,6 @@ fn write_outputs(
     let public_path = out_dir.join("public_inputs.bin");
     write_public_inputs(&public, &public_path)?;
 
-    // snarkjs-compatible proof + public inputs (reused for the standalone files
-    // and embedded into the self-contained bundle below).
-    let snarkjs_proof = proof_to_snarkjs(&bundle.proof);
-    let snarkjs_public = public_inputs_to_snarkjs(&public);
-    let snarkjs_proof_path = out_dir.join("snarkjs-proof.json");
-    fs::write(
-        &snarkjs_proof_path,
-        serde_json::to_string_pretty(&snarkjs_proof)?,
-    )?;
-    let snarkjs_public_path = out_dir.join("snarkjs-public.json");
-    fs::write(
-        &snarkjs_public_path,
-        serde_json::to_string_pretty(&snarkjs_public)?,
-    )?;
-
     // Verifier calldata: the packed `proof (256 B) || public_inputs (N * 32 B)`
     // bytes, little-endian, that the xark on-chain verifier consumes (`A` is
     // pre-negated; see `xark_backend::solana`).
@@ -666,10 +650,19 @@ fn write_outputs(
     let proof_sha = super::sha256_hex(&proof_bytes);
     let proof_short = &proof_sha[..proof_sha.len().min(8)];
 
-    // Self-contained, shareable proof bundle: the snarkjs proof (verify
-    // off-chain) plus the verifier calldata, in one file. Named by the entry
-    // name so it lines up with the generated client.
-    let snarkjs_proof_value = serde_json::to_value(&snarkjs_proof)?;
+    // Self-contained, shareable proof bundle: the proof and public inputs as the
+    // canonical bytes `xark verify` / xark-wasm `verify` take (`proof.bin`,
+    // `public_inputs.bin`), the public inputs as decimals, and the verifier
+    // calldata, in one file. Named by the entry name so it lines up with the
+    // generated client.
+    let proof_bin =
+        fs::read(proof_out).with_context(|| format!("reading {}", proof_out.display()))?;
+    let public_bin =
+        fs::read(&public_path).with_context(|| format!("reading {}", public_path.display()))?;
+    let public_decimal: Vec<String> = public
+        .iter()
+        .map(|x| num_bigint::BigUint::from(*x).to_string())
+        .collect();
     let name = project.entry_name();
     let bundle_json = serde_json::json!({
         "circuit": name,
@@ -677,8 +670,9 @@ fn write_outputs(
         "proof_sha256": format!("0x{proof_sha}"),
         "protocol": "groth16",
         "curve": "bn128",
-        "public_signals": snarkjs_public,
-        "proof": snarkjs_proof_value,
+        "public_inputs": public_decimal,
+        "proof_bin": format!("0x{}", hex::encode(&proof_bin)),
+        "public_inputs_bin": format!("0x{}", hex::encode(&public_bin)),
         "calldata": {
             "endianness": "little",
             "hex": calldata_hex,
@@ -692,12 +686,10 @@ fn write_outputs(
 
     println!("Wrote {}", proof_out.display());
     println!("Wrote {}", public_path.display());
-    println!("Wrote {}", snarkjs_proof_path.display());
-    println!("Wrote {}", snarkjs_public_path.display());
     println!(
         "Wrote {}  {}",
         bundle_path.display(),
-        crate::style::dim("# self-contained: snarkjs proof + public + on-chain calldata")
+        crate::style::dim("# self-contained: proof + public inputs + on-chain calldata")
     );
     println!(
         "\n{}",

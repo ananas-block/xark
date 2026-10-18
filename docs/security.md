@@ -387,7 +387,7 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
   (`enforce_on_curve`); the offset construction is tested against reference vectors but
   not separately proven.
 * **Trusted-setup ceremony.** Implemented end-to-end (ptau ingest, phase-2 derivation,
-  MPC driver) and cross-checked against snarkjs, but **not externally audited**; a real
+  MPC driver), but **not externally audited**; a real
   deployment's security still rests on off-chain conduct (honest participants, transcript
   integrity).
 * **`RecursiveAggregation`.** Rejected — BN254 doesn't form a cycle with itself.

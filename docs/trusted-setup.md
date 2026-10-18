@@ -63,9 +63,8 @@ xark verify --verifying-key ceremony/verifying_key.bin --proof proof.bin --publi
 
 ## Regenerating all committed test vectors
 
-`scripts/ceremony_vectors.sh <power> [circuit …]` runs the whole pipeline and installs the resulting
-`*.solana.bin` over the committed fixtures, sanity-checking each ceremony-keyed proof with snarkjs.
-`<power>` must cover the circuit's constraint count (`2^power ≥ constraints`):
+Run the steps above for each circuit, then install the resulting `*.solana.bin` over the committed
+fixtures. The phase-1 power must cover the circuit's constraint count (`2^power ≥ constraints`):
 
 | power | covers (committed circuits) |
 |------:|-----------------------------|
@@ -87,8 +86,7 @@ Caveats when regenerating:
 
 ## For a real production ceremony
 
-The fixed entropy/seed/beacon in `ceremony_vectors.sh` make *test* vectors reproducible; they are
-**not** secure. A production ceremony needs:
+Fixed entropy, seeds and beacons make *test* vectors reproducible; they are **not** secure. A production ceremony needs:
 - multiple **independent** phase-1 contributors and a **public randomness beacon** (e.g. a future
   block hash / drand round) for phase 1;
 - multiple independent phase-2 `contribute` participants, each publishing their attestation, with

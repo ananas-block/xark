@@ -102,8 +102,8 @@ every operation's circuit meaning unambiguous.
 Circuit crates are tested with **`xark test`** (not bare `cargo test`): it builds the `target/xark/`
 artifacts first, then runs the crate's tests, which load the built circuit and check the witness
 solves. A `#[circuit]`-style test expecting failure asserts the solve is `Err`. Run `xark build` then
-`xark prove <dir> --input name=value …` to prove end-to-end; `--input` takes a decimal string per
-declared input (`--input x=42`, repeated per array element).
+`xark prove <dir> --inputs '{"x": "42", …}'` to prove end-to-end; `--inputs` takes inline JSON or a
+file (a JSON object, or `name = value` lines), with array elements under their flat names (`path[0]`).
 
 See also: [architecture.md](architecture.md) (compile pipeline),
 [integer-ops.md](integer-ops.md) (bit/integer gadget layer).

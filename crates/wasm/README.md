@@ -226,8 +226,8 @@ rounded; pass it as a bigint or a string. Flat leaf names (`"id.dob"`, `"path[0]
 still work and can be mixed with nested values.
 
 `proof` and `publicInputs` are the canonical compressed bytes (identical to the
-host's `proof.bin` / `public_inputs.bin`) — pass them straight to `verify`. For
-snarkjs interop, convert them on demand (see `proof_to_snarkjs` below).
+host's `proof.bin` / `public_inputs.bin`) — pass them straight to `verify`. To
+read the public inputs, see `decode_public_inputs` below.
 
 > `prove` checks the proof against the key's verifying key before returning it;
 > an unsatisfiable witness is reported as an error, never returned as a proof.
@@ -254,19 +254,14 @@ hasn't been called.
 Returns `true` if valid, `false` if well-formed but not verifying. Throws on
 deserialization errors.
 
-### `proof_to_snarkjs(proofBytes)` → `object`
+### `decode_public_inputs(publicInputsBytes)` → `string[]`
 
-Converts the `proof` `Uint8Array` from `prove()` into the snarkjs proof object.
-
-### `public_inputs_to_snarkjs(publicInputsBytes)` → `string[]`
-
-Converts the `publicInputs` `Uint8Array` from `prove()` into the snarkjs
-`public.json` array of decimal strings.
+Decodes the `publicInputs` bytes from `prove()` (or a `public_inputs.bin`) into
+decimal strings, in proof order.
 
 ```js
-const { proof, publicInputs } = prove(xbc, pk, { secret: "3", result: "27" });
-const snarkjsProof  = proof_to_snarkjs(proof);
-const snarkjsPublic = public_inputs_to_snarkjs(publicInputs);
+const { publicInputs } = prove(xbc, pk, { secret: "3", result: "27" });
+decode_public_inputs(publicInputs); // ["27"]
 ```
 
 ## Security

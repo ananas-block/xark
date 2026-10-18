@@ -61,7 +61,7 @@ xark codegen ts examples/cube
 xark setup examples/cube
 
 # Solve the witness from your inputs, then produce AND verify a Groth16 proof.
-xark prove examples/cube --input secret=3 --input result=27
+xark prove examples/cube --inputs '{"secret": "3", "result": "27"}'
 # → ✅ Proof produced and self-checked (1 public input).
 
 # Validate a circuit WITHOUT emitting artifacts — subset violations as rustc
@@ -141,19 +141,15 @@ rustc (CI checks every example on 1.88, stable and beta), and constraint-reducin
 rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 [`crates/frontend/README.md`](crates/frontend/README.md).
 
-## snarkjs compatibility
+## Verifying in JavaScript
 
-`xark setup` and `xark prove` emit snarkjs-compatible JSON alongside the native
-binary artifacts: `snarkjs-verification_key.json` (from `xark setup`),
-`snarkjs-proof.json` and `snarkjs-public.json` (from `xark prove`). Verify
-directly with snarkjs (enabling verification in JS/browser/Node environments):
-
-```bash
-snarkjs groth16 verify \
-  target/xark/<name>/snarkjs-verification_key.json \
-  target/xark/<name>/snarkjs-public.json \
-  target/xark/<name>/snarkjs-proof.json
-```
+`xark prove` writes a self-contained `<name>-<hash>.proof.json` bundle: the proof
+and public inputs as the bytes `xark verify` takes, the public inputs as
+decimals, and the on-chain verifier calldata. Verify it anywhere JavaScript runs
+with [`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`verify(vk, proof,
+publicInputs)`), or with the small [`xark-client`](clients/typescript/README.md)
+wrapper that `xark client` scaffolds. xark-wasm also proves; `xark codegen ts`
+generates a typed client over it.
 
 ## Crates and gadgets
 

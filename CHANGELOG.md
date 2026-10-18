@@ -37,6 +37,17 @@ keys. Beyond that, these gadgets now check more:
   proofs are compatible with the arkworks path (byte-identical for the same
   randomness).
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
+- **snarkjs output removed.** `xark setup` no longer writes
+  `snarkjs-verification_key.json`, `xark prove` no longer writes
+  `snarkjs-proof.json` / `snarkjs-public.json`, and xark-wasm drops
+  `proof_to_snarkjs` (`public_inputs_to_snarkjs` becomes `decode_public_inputs`).
+  Verify in JavaScript with xark-wasm's `verify`. The proof bundle
+  (`<name>-<hash>.proof.json`) now carries `proof_bin` / `public_inputs_bin` (the
+  bytes `verify` takes) and `public_inputs` (decimals) instead of the snarkjs
+  proof and `public_signals`.
+- **xark-client 0.2.0** verifies through xark-wasm: `new XarkClient(wasm, vkBytes)`,
+  and `verify` returns a `boolean` (it was a `Promise`). `xark client` scaffolds
+  against `vk.bin`.
 
 ### Added
 
@@ -47,7 +58,7 @@ keys. Beyond that, these gadgets now check more:
 - Exhaustive witness search (`xark_ir::witness_search`) and
   `scripts/difftest-examples.sh`, which check that each example accepts exactly
   the inputs it should, with exactly one witness.
-- `xark-groth16` and `xark-snarkjs` are published.
+- `xark-groth16` is published.
 
 ### Fixed
 
