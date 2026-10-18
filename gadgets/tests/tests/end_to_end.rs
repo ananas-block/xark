@@ -1,7 +1,7 @@
 //! End-to-end integration tests driving the `xark` CLI (`build` + `prove`)
 //! against the purpose-built circuit crates under `examples/`.
 //!
-//! `xark build <crate> --out <dir>` compiles a circuit crate (rustc-MIR →
+//! `xark build <crate> --out <dir>` compiles a circuit crate (wasm32 →
 //! xark-IR → R1CS) to the self-contained `<dir>/circuit.xbc`; `xark prove <dir>
 //! --inputs '{...}'` solves the witness and produces + verifies a Groth16 proof
 //! in one shot.

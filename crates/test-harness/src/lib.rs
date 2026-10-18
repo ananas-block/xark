@@ -2,17 +2,10 @@
 //! read back its emitted artifacts (no shell script). Used by the snapshot
 //! suite and every gadget crate's `vec.rs`.
 //!
-//! Handles the repo's build layout once per test process. `crates/lang` (the
-//! compiler) is excluded from the root workspace and needs nightly
-//! (`rustc_private`) with its own `target/`; the gadget crates are root-workspace
-//! members. So this builds:
-//!   1. the gadget rlibs (`-Zalways-encode-mir`, so their MIR is inlinable) into
-//!      an isolated `target/xark-compile`, apart from the root `target/` so a
-//!      `cargo test -p <gadget>` can't collide with them (rustc E0514);
-//!   2. the compiler binary in `crates/lang`'s own target (a rustc *driver*, so
-//!      its deps needn't match the circuit's).
-//!
-//! Then it invokes the compiler with an `--extern` per gadget rlib.
+//! Builds the `xark` lib and the gadget crates once per test process for wasm32
+//! (`--cfg xark`, in an isolated `target/xark-compile-wasm`), then compiles each
+//! circuit source with stable `rustc` against them and lowers the module with
+//! `xark-frontend`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -229,98 +222,6 @@ fn workspace_root() -> PathBuf {
         .expect("canonicalize workspace root")
 }
 
-/// The nightly channel the compiler is pinned to (in `crates/rustc`, the
-/// rustc-driver crate, not root).
-fn nightly_channel(root: &Path) -> String {
-    let toml =
-        std::fs::read_to_string(root.join("crates/rustc/rust-toolchain.toml")).unwrap_or_default();
-    for line in toml.lines() {
-        let t = line.trim();
-        if t.starts_with("channel")
-            && let Some(v) = t.split('"').nth(1)
-        {
-            return v.to_string();
-        }
-    }
-    "nightly".to_string()
-}
-
-const RUSTFLAGS: &str = "--allow=unexpected_cfgs -Zalways-encode-mir -Zmir-opt-level=0";
-
-/// Build the compiler binary + gadget rlibs once; return `(binary, deps_dir)`.
-fn built() -> &'static (PathBuf, PathBuf) {
-    static BUILT: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let root = workspace_root();
-        let target = root.join("target/xark-compile");
-        let channel = nightly_channel(&root);
-
-        // 1. The rustc-driver binary in crates/rustc's own target (excluded
-        //    nightly pkg with its own pinned `rust-toolchain.toml`). Built *first*
-        //    so it can serve as `RUSTC` for the gadget rlibs below.
-        let ok = Command::new("cargo")
-            // `--features debug` compiles in the diagnostic markers the tests require
-            // on; a `--features` build still lands at `target/release/xark-rustc`.
-            .args(["build", "--release", "--features", "debug"])
-            .env("RUSTUP_TOOLCHAIN", &channel)
-            .env("RUSTFLAGS", RUSTFLAGS)
-            .env_remove("CARGO_TARGET_DIR")
-            .current_dir(root.join("crates/rustc"))
-            .status()
-            .expect("run cargo build (compiler)")
-            .success();
-        assert!(ok, "building the xark-rustc driver failed");
-        let driver = root.join("crates/rustc/target/release/xark-rustc");
-
-        // 2. Gadget rlibs → isolated target (all root-member `xark-*` crates
-        //    except the non-circuit libraries and excluded packages). Built with
-        //    the driver as `RUSTC` (like the real `xark build`): it reports the
-        //    `xark` cfg on `--print cfg`, so Cargo gates each crate's
-        //    `[target.'cfg(not(xark))'.dependencies]` (host prover/num-bigint) out
-        //    and the sources compile their lean circuit shape — exactly what links
-        //    into the circuit crate. No `RUSTUP_TOOLCHAIN`: the driver resolves its
-        //    own pinned sysroot.
-        let mut args = vec!["build".to_string(), "--release".to_string()];
-        let mut names: Vec<String> = std::fs::read_dir(root.join("crates"))
-            .expect("read crates/")
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| {
-                n.starts_with("xark-")
-                    && !matches!(
-                        n.as_str(),
-                        "xark"
-                            | "xark-ir"
-                            | "xark-prover"
-                            | "xark-test-harness"
-                            | "xark-cli"
-                            | "xark-rustc"
-                            | "xark-wasm"
-                    )
-            })
-            .collect();
-        names.sort();
-        for n in names {
-            args.push("-p".to_string());
-            args.push(n);
-        }
-        let ok = Command::new("cargo")
-            .args(&args)
-            .env("RUSTC", &driver)
-            .env("RUSTFLAGS", RUSTFLAGS)
-            .env("CARGO_TARGET_DIR", &target)
-            .current_dir(&root)
-            .status()
-            .expect("run cargo build (gadgets)")
-            .success();
-        assert!(ok, "building gadget rlibs failed");
-
-        // The rustc_driver shim (invoked directly with `--r1cs-out`), not the
-        // `xark` CLI — the driver lives in a separate binary/crate now.
-        (driver, target.join("release/deps"))
-    })
-}
-
 /// One `--extern name=path` per circuit rlib (newest per crate; skip stray
 /// non-hashed artifacts and the non-circuit libraries).
 fn externs(deps: &Path) -> Vec<String> {
@@ -383,13 +284,6 @@ pub fn compile_file_json(src: &Path, out_name: &str, field: &str) -> Compiled {
     compile_file_inner(src, out_name, field, true)
 }
 
-/// Use the stable frontend (the default): stable `rustc` compiles the source to
-/// wasm32 and `xark-frontend` lowers it. `XARK_TEST_FRONTEND=mir` selects the
-/// deprecated MIR frontend (the pinned-nightly `xark-rustc` driver).
-pub fn stable_frontend() -> bool {
-    std::env::var("XARK_TEST_FRONTEND").as_deref() != Ok("mir")
-}
-
 /// The gadget crates (`gadgets/xark-*`) plus the `xark` lib, built once for wasm32
 /// with `--cfg xark`; returns `(wasm deps dir, host deps dir)` (the proc macros
 /// are host artifacts).
@@ -445,9 +339,9 @@ fn compile_file_stable(src: &Path, out_name: &str, field: &str, emit_json: bool)
     let _ = std::fs::remove_dir_all(&out_dir);
     std::fs::create_dir_all(&out_dir).expect("create out dir");
     let wasm = out_dir.join("circuit.wasm");
-    // The stable frontend's entry is the `#[circuit]` fn. An older-style source (a
-    // bare `pub fn` whose params are all `Private<…>`/`Public<…>`, which the MIR
-    // driver finds by signature) gets the attribute added here.
+    // The frontend's entry is the `#[circuit]` fn. A test source written as a bare
+    // `pub fn` whose params are all `Private<…>`/`Public<…>` gets the attribute
+    // added here.
     let text = std::fs::read_to_string(src).expect("read circuit source");
     let src_path = if text.contains("circuit]") {
         src.to_path_buf()
@@ -544,7 +438,7 @@ fn annotate_entry(text: &str) -> String {
                 .filter(|a| a.contains(':'))
                 .all(|a| a.contains("Private<") || a.contains("Public<"));
         // Failing that, a `pub fn circuit(…)` with unmarked params: annotate it so
-        // `#[circuit]` rejects the params (as the MIR driver does).
+        // `#[circuit]` rejects the params with its diagnostic.
         let fallback = !text_has_marked_entry(text) && sig.starts_with("pub fn circuit(");
         if !done && at_line_start && (all_marked || fallback) {
             out.push_str("#[::xark::circuit]\n");
@@ -575,52 +469,7 @@ fn text_has_marked_entry(text: &str) -> bool {
 }
 
 fn compile_file_inner(src: &Path, out_name: &str, field: &str, emit_json: bool) -> Compiled {
-    if stable_frontend() {
-        return compile_file_stable(src, out_name, field, emit_json);
-    }
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let (bin, deps) = built();
-    let root = workspace_root();
-    let out_dir = root.join("target/test-out").join(out_name);
-    let _ = std::fs::remove_dir_all(&out_dir);
-
-    let mut cmd = Command::new(bin);
-    // Soundness gate: the driver is built with `--features debug`, so
-    // `XARK_VERIFY=1` makes every compiled circuit self-check that its bytecode
-    // artifact expands byte-identically to the flat R1CS. The prover proves the
-    // artifact, so an artifact≠flat drift (e.g. a revived mul-product missing from
-    // the artifact) is a forgeable under-constraint — caught on every test build
-    // (the drift is invisible to solve tests, which use the flat).
-    cmd.env("XARK_VERIFY", "1");
-    cmd.args([
-        "--crate-type=lib",
-        "--edition=2021",
-        "-Z",
-        "mir-opt-level=0",
-    ]);
-    for e in externs(deps) {
-        cmd.arg("--extern").arg(e);
-    }
-    cmd.arg("-L")
-        .arg(format!("dependency={}", deps.display()))
-        .arg("--field")
-        .arg(field);
-    if emit_json {
-        cmd.arg("--emit-json");
-    }
-    let output = cmd
-        .arg(src)
-        .arg("--r1cs-out")
-        .arg(&out_dir)
-        .current_dir(&root)
-        .output()
-        .expect("run xark compiler");
-
-    Compiled {
-        status_success: output.status.success(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        out_dir,
-    }
+    compile_file_stable(src, out_name, field, emit_json)
 }
 
 /// Compile a circuit source **string** (written to a temp file) to `circuit.xbc`.

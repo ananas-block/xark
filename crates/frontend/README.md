@@ -1,10 +1,10 @@
 # xark-frontend
 
-xark's **stable-Rust frontend**: compiles a circuit with any stable `rustc` (no pinned
-nightly, no `rustc-dev`) and lowers it to the same `circuit.xbc` the prover reads.
+xark's frontend: compiles a circuit with any stable `rustc` (1.88+) and lowers it to
+the `circuit.xbc` the prover reads.
 
 ```bash
-xark build examples/sha256          # the default; `--frontend mir` for the deprecated MIR driver
+xark build examples/sha256
 ```
 
 ## How it works
@@ -16,14 +16,13 @@ xark build examples/sha256          # the default; `--frontend mir` for the depr
    rustc/LLVM, so optimization can't drop, duplicate or reorder them, and every witness
    value only exists inside them.
 2. The frontend runs the module (`interp.rs`) with the imports implemented as the circuit
-   builder (`host.rs`, `builder.rs` — the MIR frontend's emission code, ported). Concrete
-   values (constants, loop counters, indices) simply execute; that *is* the unrolling,
-   const-evaluation and inlining the MIR frontend does by walking MIR.
+   builder (`host.rs`, `builder.rs`). Concrete values (constants, loop counters,
+   indices) simply execute; that *is* the unrolling, const-evaluation and inlining.
 3. Values derived from a witness that aren't `Field`s — comparison `bool`s and native
    `uN` inputs — are symbolic. A branch on one runs both arms and merges what differs into
    selects (muxes); an arm that can only panic is pinned impossible instead (so `assert!`
    and checked `uN` arithmetic become constraints). Native integer ops on witnesses lower
-   to the same range-checked gadgets as the MIR frontend.
+   to range-checked gadgets.
 4. After lowering, repeated wasm call bodies are found post hoc and encoded once as
    templates (`templates.rs`) — compression only; the circuit is the flat one.
    Templates nest: a def's body is its first call's rows, with its own repeated
@@ -35,13 +34,14 @@ xark build examples/sha256          # the default; `--frontend mir` for the depr
 `#[circuit]` generates the module's `__xark_main` export (input binding + call) and its
 `xark.entry` name section; `schema.json` is rebuilt from the input bindings.
 
-## Semantics vs the MIR frontend
+## Semantics
 
 Everything is inlined, so a circuit is the same no matter how rustc/LLVM inline or
-schedule it. Differences from today's (templated) MIR lowering:
+schedule it. Compared with the removed MIR frontend (`xark-rustc`), whose circuits it
+replaces:
 
-* **Large linear combinations stay inline** in multiplication rows (the MIR frontend names
-  any operand over 8 terms with an extra constraint). Fewer constraints: Poseidon
+* **Large linear combinations stay inline** in multiplication rows (the MIR frontend
+  named any operand over 8 terms with an extra constraint). Fewer constraints: Poseidon
   400 → 241, Pedersen 5575 → 3340.
 * **Repeated products are reused**: a second `A · B` of an existing row `A · B = x`
   returns `x` (the row is re-checked to be literally that). SHA-256's `Maj` reuses
@@ -135,22 +135,16 @@ whose index LLVM narrowed using an earlier overflow check (`1 − x` can't under
 `x ≤ 1`, so `x & 7` is just `x`), which the frontend can't bound, and a store through a
 select of two witness pointers.
 
-With `XARK_MIR_COMPAT=1` (the MIR operand rule, unreduced constants, no product
-reuse) an example's constraint system is **identical** (same `stream_digest`) to the
-MIR frontend run with `XARK_FLAT=1` (templates off) — the check that both frontends
-lower the same program the same way. (Exception: `Field::and` with a constant
-operand, which the MIR frontend emits as a product and the stable one folds —
-`scalar_range` and the ECDSA examples.)
-
-**Soundness of the reductions.** With `XARK_MIR_COMPAT=1` off, the lowering differs
-from the MIR one only by those four rules (the switches are `mat_threshold`, `cse`,
-`reduce` and the `pow` fold), and each is an exact rewrite, proven in Lean in
+**Soundness of the reductions.** The lowering differed from the MIR one only by those
+four rules (the switches are `mat_threshold`, `cse`, `reduce` and the `pow` fold; when
+both frontends existed, turning them off made every example's circuit identical to the
+MIR frontend's flat build), and each is an exact rewrite, proven in Lean in
 `formal/Formal/Rewrites.lean`: `cse_sound`, `inline_sound`, `fold_sound` /
 `const_mul_sound` (built on `elim_sound`) show the rewritten rows' solutions are
 exactly the original's with the dropped variable forgotten — nothing new for a
 forger, nothing lost for an honest prover; mod-`p` reduction is the identity in
-`ZMod p`. The Lean bridge tests (`crates/lang/tests/snapshot.rs`) pin both frontends'
-gate counts and name the rewrite behind each difference. Diagnostics: `XARK_NO_CSE`,
+`ZMod p`. The Lean bridge tests (`crates/lang/tests/snapshot.rs`) pin the gate counts
+and name the rewrite behind each difference from the models. Diagnostics: `XARK_NO_CSE`,
 `XARK_NO_POWFOLD`, `XARK_NO_REDUCE`, `XARK_MAT_THRESHOLD=<n>`, `XARK_CSE_LOG`.
 
 ## Source locations (`xark profile`, `xark check`)
@@ -160,7 +154,7 @@ emitted constraint records the wasm call stack it came from (`(function, pc)` pe
 interned; only when profiling), and a lowering error records where execution stopped.
 `debuginfo.rs` maps those through `addr2line` — inlined frames included — to the line in
 the `#[circuit]` fn plus the chain of functions below it, down to the `xark` API call
-(arithmetic operator impls elided), the same shape as the MIR frontend's `profile.json`.
+(arithmetic operator impls elided).
 `xark check` reports a rejection as a rustc-style diagnostic at the innermost user line
 (a cargo `compiler-message` with `--message-format=json`, for rust-analyzer). Without
 line tables (a plain `xark build`), errors name the wasm functions instead.
@@ -171,5 +165,7 @@ line tables (a plain `xark build`), errors name the wasm functions instead.
 cargo run -p xark-frontend --release --example stablec -- examples/ed25519 \
     [--compare other/circuit.xbc]          # digest, sizes, timing; faithfulness check
 XARK_FRONTEND_TIME=1 …                     # phase timings
-XARK_TEST_FRONTEND=wasm cargo test --test snapshot   # (in crates/lang) the snapshot suite
+cargo test --release --test snapshot                 # (in crates/lang) the snapshot suite
+cargo run -p xark-frontend --release --example xbcstat -- a.xbc b.xbc   # sizes
+scripts/difftest-examples.sh                         # examples' inputs, adversarially
 ```

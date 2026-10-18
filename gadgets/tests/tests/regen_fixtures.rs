@@ -365,10 +365,8 @@ fn specs() -> Vec<Spec> {
     v
 }
 
-/// The xark toolchain binary (rustc-driver `xark build`). Build it if absent.
+/// The `xark` CLI binary (`xark build`). Built if absent.
 fn xark_toolchain_bin() -> PathBuf {
-    // Build the `xark` CLI + the nightly `xark-rustc` driver and point the CLI at
-    // it (sets `XARK_RUSTC`). Same setup the rest of the suite uses.
     xark_tests::xark_bin()
 }
 

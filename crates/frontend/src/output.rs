@@ -1,6 +1,5 @@
 //! Finishing a lowered circuit: dead-code pruning, the flat R1CS + primitive views,
-//! the pinning gate, and the compact `circuit.xbc` container. Ported from
-//! `xark-rustc`'s MIR lowering unchanged, so the artifact format is shared.
+//! the pinning gate, and the compact `circuit.xbc` container.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

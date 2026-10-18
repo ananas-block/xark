@@ -2,9 +2,6 @@
 //! Single-element primitives (booleanity, `to_bits`/`from_bits`, and the boolean
 //! AND/OR/XOR/NOT) now live as methods on [`xark::Field`]; this crate keeps
 //! only the WORD-level layers (`[Field; N]` arrays), built on those methods.
-//!
-//! Build with `-Zalways-encode-mir` so the compiler can read this crate's MIR
-//! across the crate boundary (the workspace `.cargo/config.toml` sets this).
 
 #![no_std]
 // Circuit-lowered gadget code: the xark compiler rejects compound assignment on

@@ -3,9 +3,8 @@
 [![CI](https://github.com/blueshift-gg/xark/actions/workflows/ci.yml/badge.svg)](https://github.com/blueshift-gg/xark/actions/workflows/ci.yml)
 
 xark takes a circuit written as ordinary Rust all the way to an on-chain proof.
-You write the circuit in a small, explicitly validated Rust subset; xark drives
-`rustc` to type-check it, extracts its MIR, lowers that to R1CS, and proves it
-with Groth16 over BN254 — with a verifier that runs on Solana. There is no
+You write the circuit in Rust; xark compiles it with your stable `rustc` (to
+wasm32), lowers the module to R1CS, and proves it with Groth16 over BN254 — with a verifier that runs on Solana. There is no
 separate circuit DSL: **gadgets are ordinary Rust libraries** that lower to a
 small primitive constraint set, so the backend stays lean and the frontend
 stays expressive.
@@ -20,8 +19,7 @@ xark doctor        # checks your setup
 ```
 
 `xark build` compiles your circuit crate with the toolchain you already have (to
-`wasm32-unknown-unknown`, which it adds with `rustup` on first use) — no pinned
-nightly. To build from source instead, append `--git https://github.com/blueshift-gg/xark`.
+`wasm32-unknown-unknown`, which it adds with `rustup` on first use). To build from source instead, append `--git https://github.com/blueshift-gg/xark`.
 
 ## As a language (library)
 
@@ -140,10 +138,6 @@ rustc (CI checks every example on 1.88, stable and beta), and constraint-reducin
 rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 [`crates/frontend/README.md`](crates/frontend/README.md).
 
-The previous frontend — `xark-rustc`, a pinned-nightly `rustc_driver` that read
-MIR — is deprecated and still available as `xark build --frontend mir` for one
-release.
-
 ## snarkjs compatibility
 
 `xark setup` and `xark prove` emit snarkjs-compatible JSON alongside the native
@@ -163,8 +157,7 @@ snarkjs groth16 verify \
 * **`xark`** (`crates/lang`, `#![no_std]`, stable) — the language library; its
   `prelude` provides the marker primitives (`Field`, `require_eq`,
   `Private`/`Public`). The CLI is the **`xark`** binary (stable; published as the
-  `xark-cli` crate); **`xark-frontend`** turns a circuit's wasm into R1CS. The
-  deprecated MIR driver is **`xark-rustc`** (pinned nightly).
+  `xark-cli` crate); **`xark-frontend`** turns a circuit's wasm into R1CS.
 * **Backend** — `xark-backend` (Groth16 setup/prove/verify, trusted setup,
   serialization) and `xark-verifier` (the `no_std` on-chain Solana verifier).
   Both are frontend-agnostic.
@@ -235,7 +228,7 @@ XARK_FUZZ_CASES=400 cargo test --release --test semantics_fuzz  # wider fuzzing
 scripts/stable-digests.sh --check   # every example's circuit, unchanged
 ```
 
-Toolchains (and the deprecated MIR frontend's nightly pin): [`docs/toolchain.md`](docs/toolchain.md).
+Toolchains and circuit reproducibility: [`docs/toolchain.md`](docs/toolchain.md).
 Writing circuits — the supported subset and rejections: [`docs/subset.md`](docs/subset.md).
 Architecture: [`docs/architecture.md`](docs/architecture.md).
 Security walkthrough: [`docs/security.md`](docs/security.md).

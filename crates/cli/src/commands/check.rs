@@ -27,7 +27,6 @@ pub fn run(args: CheckArgs) -> Result<()> {
         build_argv.push("--out".into());
         build_argv.push(out.clone());
     }
-    super::push_frontend(&mut build_argv, &args.frontend);
     let code = crate::cli::cmd_build(&build_argv);
     if code != 0 {
         bail!("build failed (exit {code}); fix the circuit before `xark check --inputs`");

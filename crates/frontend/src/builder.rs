@@ -1,7 +1,5 @@
 //! The circuit builder: allocates variables and emits R1CS constraints and the
-//! witness-generation program. Ported from `xark-rustc`'s MIR lowering
-//! (`LoweringEnv`), keeping every emission rule byte-for-byte so both frontends
-//! lower the same operation sequence to the same circuit.
+//! witness-generation program.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,9 +47,6 @@ impl std::hash::Hasher for IdHasher {
 pub(crate) type IdMap<K, V> =
     std::collections::HashMap<K, V, std::hash::BuildHasherDefault<IdHasher>>;
 
-/// `XARK_MIR_COMPAT=1`: lower exactly as the MIR frontend does with templates off
-/// (materialize operands over 8 terms, keep constants unreduced) — for comparing
-/// the two frontends constraint-for-constraint.
 /// A content hash of a linear combination (deterministic across runs).
 pub(crate) fn lc_hash(lc: &LinearCombination) -> u64 {
     #[inline]
@@ -83,10 +78,6 @@ pub(crate) fn lc_hash(lc: &LinearCombination) -> u64 {
 /// Dev knob (diagnostics): an env var's numeric value.
 pub(crate) fn dev_knob(name: &str) -> Option<usize> {
     std::env::var(name).ok().and_then(|v| v.parse().ok())
-}
-
-pub(crate) fn mir_compat() -> bool {
-    std::env::var_os("XARK_MIR_COMPAT").is_some()
 }
 
 pub(crate) type CanonicalLcKey = (String, Vec<(String, VarId)>);
@@ -212,7 +203,7 @@ pub struct Builder {
     /// Products already constrained, by operand hash → `(output, constraint index)`
     /// (common-subexpression reuse in [`Builder::emit_mul`]).
     products: IdMap<(u64, u64), (VarId, usize)>,
-    /// Reuse repeated products (off under `XARK_MIR_COMPAT`).
+    /// Reuse repeated products (off under `XARK_NO_CSE`).
     pub(crate) cse: bool,
     /// Materialize multiplication operands with more terms than this.
     pub(crate) mat_threshold: usize,
@@ -249,13 +240,9 @@ impl Builder {
             kind_stack: Vec::new(),
             boolean_vars: crate::output::VarSet::default(),
             notes: true,
-            mat_threshold: if mir_compat() {
-                8
-            } else {
-                dev_knob("XARK_MAT_THRESHOLD").unwrap_or(4096)
-            },
+            mat_threshold: dev_knob("XARK_MAT_THRESHOLD").unwrap_or(4096),
             products: IdMap::default(),
-            cse: !mir_compat() && dev_knob("XARK_NO_CSE").is_none(),
+            cse: dev_knob("XARK_NO_CSE").is_none(),
             input_ids: Vec::new(),
             regions: Vec::new(),
             region_stack: Vec::new(),
@@ -470,12 +457,10 @@ impl Builder {
     /// If `lc` has more than `mat_threshold` terms, name it as a fresh internal
     /// variable `v` (emit `lc - v = 0`, record `v = eval(lc)`) and return `v`.
     ///
-    /// The MIR frontend does this past 8 terms, on every multiplication operand. The
-    /// stable frontend defaults to a far larger bound: in R1CS a large sum costs
-    /// nothing inline in a row, while naming it costs a constraint and a variable
-    /// (Poseidon: 400 → 241 constraints, the same as the MIR frontend's templated
-    /// build). The bound only guards against pathological growth. `XARK_MIR_COMPAT=1`
-    /// reproduces the MIR frontend's flat lowering exactly.
+    /// The bound is large: in R1CS a large sum costs nothing inline in a row, while
+    /// naming it costs a constraint and a variable (Poseidon: 400 → 241 constraints
+    /// against naming every operand over 8 terms). It only guards against
+    /// pathological growth (`XARK_MAT_THRESHOLD=<n>` to experiment).
     pub(crate) fn materialize(&mut self, lc: LinearCombination) -> LinearCombination {
         if lc.terms.len() <= self.mat_threshold {
             return lc;

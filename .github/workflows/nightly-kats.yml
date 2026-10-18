@@ -51,16 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install pinned nightly (rustc_private) toolchain
-        # See docs/toolchain.md for the pin and the bump procedure.
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-05-03
-          components: rustc-dev, llvm-tools-preview
-
-      - name: Install stable Rust + wasm32 (the default stable frontend)
-        # Installed last so it is the default toolchain the test harness compiles
-        # circuits with.
+      - name: Install stable Rust + wasm32
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -73,7 +64,6 @@ jobs:
             ~/.cargo/git
             target
             crates/lang/target
-            crates/rustc/target
           key: kats-${{ hashFiles('Cargo.lock') }}
 
       - name: cargo test (snapshots + ignored KAT vectors)
@@ -89,18 +79,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install pinned nightly (rustc_private) toolchain
-        # The ed25519 vec.rs suite drives the same nightly compiler via the
-        # `xark-test-harness` (which builds the gadgets + compiler), so it needs
-        # `rustc-dev` too. See docs/toolchain.md.
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-05-03
-          components: rustc-dev, llvm-tools-preview
-
-      - name: Install stable Rust + wasm32 (the default stable frontend)
-        # Installed last so it is the default toolchain the test harness compiles
-        # circuits with.
+      - name: Install stable Rust + wasm32
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -113,7 +92,6 @@ jobs:
             ~/.cargo/git
             target
             crates/lang/target
-            crates/rustc/target
           key: ed25519-${{ hashFiles('Cargo.lock') }}
 
       - name: cargo test (heavy EC gadget vectors, release)

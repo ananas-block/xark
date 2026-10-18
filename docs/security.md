@@ -338,9 +338,12 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
   mechanised in Lean (`formal/` — non-native field arithmetic, curve laws, ECDSA/EdDSA
   soundness, on-curve membership), and a cargo-fuzz harness
   (`gadgets/tests/tests/fuzz.rs`) covers the parsers and IR→R1CS lowering. But the
-  MIR→xark-IR→R1CS *pipeline itself* is not proof-assistant-verified; it rests on unit
-  tests, KAT cross-checks (`sha2`, `keccak`, `blake2`, `blake3`, `aes`, arkworks
-  Grumpkin), and adversarial forged-witness tests.
+  Rust→xark-IR→R1CS *pipeline itself* is not proof-assistant-verified (its
+  constraint-reducing rewrites and branch guards are, in `formal/Formal/Rewrites.lean`);
+  it rests on unit tests, KAT cross-checks (`sha2`, `keccak`, `blake2`, `blake3`,
+  `aes`, arkworks Grumpkin), adversarial forged-witness tests, and a native-semantics
+  fuzzer whose every verdict is an exhaustive witness search
+  (`crates/lang/tests/semantics_fuzz.rs`, `xark_ir::witness_search`).
 * **Solana on-chain verifier.** `crates/verifier/` is tested in Mollusk on the real
   `alt_bn128` syscalls (`gadgets/tests/tests/sbpf.rs` — positive across every committed
   circuit plus on-chain negatives) and fuzzed (`fuzz.rs`). **Never deployed to mainnet**;
@@ -370,9 +373,9 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
 
 Walk through before tagging a production release of a circuit deployed via xark:
 
-* [ ] **Toolchain pinned.** The nightly the tool builds circuits with is pinned
-  (`rust-toolchain.toml`) and matches the one used for the deployed circuit — MIR
-  extraction is nightly-only and its shape can drift across nightlies.
+* [ ] **Circuit reproducible.** Rebuild the deployed circuit and compare its digest
+  (`scripts/stable-digests.sh` does this for the examples): the circuit must not
+  depend on the rustc version, and the keys must match the circuit you rebuilt.
 * [ ] **All gadgets used have a KAT test.** Enumerate the gadget crates and
   cross-reference [§2](#2-per-gadget-soundness-sketches).
 * [ ] **`circuit_hash` recorded in deployed metadata** and matches what the verifier
@@ -396,7 +399,7 @@ Walk through before tagging a production release of a circuit deployed via xark:
 
 External auditors should focus first on:
 
-1. **The lowering layer** — `crates/ir/` and `crates/prover/` (MIR → xark-IR → R1CS)
+1. **The lowering layer** — `crates/frontend/`, `crates/ir/` and `crates/prover/` (wasm → xark-IR → R1CS)
    plus every gadget crate. A bug here is a soundness break in every downstream circuit.
    Load-bearing sub-claims: [§2.2](#22-decompose_into_bits-range-gadget) (253-bit
    boundary), [§2.11](#211-aes-128-encryption) (algebraic S-box),

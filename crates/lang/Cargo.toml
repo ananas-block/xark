@@ -39,8 +39,7 @@ serde_json = "1"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }
 
-# The stable frontend runs inside the test process (`XARK_TEST_FRONTEND=wasm`):
-# optimize it even in test builds.
+# The frontend runs inside the test process: optimize it even in test builds.
 [profile.dev.package.xark-frontend]
 opt-level = 3
 [profile.dev.package.xark-ir]

@@ -31,11 +31,6 @@ pub struct ProfileArgs {
     /// Emit the aggregated drill-down as JSON instead of the human-readable tree.
     #[arg(long, default_value_t = false)]
     pub json: bool,
-    /// Frontend: `wasm` (the default: any stable toolchain) or `mir` (the
-    /// deprecated pinned-nightly MIR driver; see `docs/toolchain.md`). Default:
-    /// `$XARK_FRONTEND`, else `wasm`.
-    #[arg(long, value_parser = ["mir", "wasm"])]
-    pub frontend: Option<String>,
 }
 
 pub fn run(args: ProfileArgs) -> Result<()> {
@@ -47,7 +42,6 @@ pub fn run(args: ProfileArgs) -> Result<()> {
     }
     build_argv.push("--field".into());
     build_argv.push(args.field.clone());
-    super::push_frontend(&mut build_argv, &args.frontend);
     let code = crate::cli::cmd_build_profile(&build_argv);
     if code != 0 {
         bail!("build failed (exit {code}); fix the circuit before `xark profile`");

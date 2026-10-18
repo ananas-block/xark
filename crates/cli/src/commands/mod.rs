@@ -1,9 +1,9 @@
 //! The clap-driven `xark` CLI.
 //!
-//! Frontend subcommands (`init`/`build`/`check`) drive `cargo` with `xark` as
-//! `RUSTC`; their implementations live in [`crate::cli`]. Backend subcommands
+//! Frontend subcommands (`init`/`build`/`check`) drive `cargo` (for wasm32) and
+//! the frontend; their implementations live in [`crate::cli`]. Backend subcommands
 //! (`setup`/`prove`/`verify`/`export`/`ceremony`/`inspect`) read the xark-IR
-//! produced by `xark build` and run the shared Arkworks Groth16 backend.
+//! produced by `xark build` and run the shared Groth16 backend.
 
 use std::collections::BTreeMap;
 
@@ -60,11 +60,10 @@ pub fn synth_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("XARK_GIT_HASH"), ")"),
     styles = crate::style::clap_styles(),
     about = "Write, compile, prove and verify zero-knowledge circuits in Rust",
-    long_about = "xark compiles a restricted Rust circuit (via rustc MIR) into \
-xark-IR + R1CS, then proves and verifies it with an Arkworks Groth16 backend \
-over BN254. `xark build` emits `circuit.json` + `r1cs.json` under \
-`<crate>/target/xark/`; the backend commands read them from there \
-automatically."
+    long_about = "xark compiles a Rust circuit (built for wasm32 with any stable \
+toolchain) into xark-IR + R1CS, then proves and verifies it with Groth16 over \
+BN254. `xark build` emits `circuit.xbc` under `<crate>/target/xark/`; the \
+backend commands read it from there automatically."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -78,7 +77,7 @@ pub enum Command {
     /// Scaffold a starter circuit crate (rust-analyzer ready).
     #[command(alias = "new")]
     Init(InitArgs),
-    /// Compile a circuit crate (rustc-MIR → xark-IR → R1CS) into target/xark/.
+    /// Compile a circuit crate (Rust → wasm32 → R1CS) into target/xark/.
     Build(BuildArgs),
     /// Validate a circuit crate and report subset rejections as diagnostics.
     Check(CheckArgs),
@@ -201,11 +200,6 @@ pub struct BuildArgs {
     /// circuits) JSON serialization. `r1cs.json` is always written.
     #[arg(long = "emit-json", default_value_t = false)]
     pub emit_json: bool,
-    /// Frontend: `wasm` (the default: any stable toolchain) or `mir` (the
-    /// deprecated pinned-nightly MIR driver; see `docs/toolchain.md`). Default:
-    /// `$XARK_FRONTEND`, else `wasm`.
-    #[arg(long, value_parser = ["mir", "wasm"])]
-    pub frontend: Option<String>,
 }
 
 impl BuildArgs {
@@ -220,7 +214,6 @@ impl BuildArgs {
         if self.emit_json {
             v.push("--emit-json".into());
         }
-        push_frontend(&mut v, &self.frontend);
         v
     }
 }
@@ -254,11 +247,6 @@ pub struct CheckArgs {
     /// by `--inputs` (default: `<crate>/target/xark/`). Only used with `--inputs`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<String>,
-    /// Frontend: `wasm` (the default: any stable toolchain) or `mir` (the
-    /// deprecated pinned-nightly MIR driver; see `docs/toolchain.md`). Default:
-    /// `$XARK_FRONTEND`, else `wasm`.
-    #[arg(long, value_parser = ["mir", "wasm"])]
-    pub frontend: Option<String>,
 }
 
 impl CheckArgs {
@@ -267,7 +255,6 @@ impl CheckArgs {
         if self.message_format.as_deref() == Some("json") {
             v.push("--message-format=json".into());
         }
-        push_frontend(&mut v, &self.frontend);
         v
     }
 }
@@ -280,30 +267,16 @@ pub struct TestArgs {
     /// Extra arguments forwarded verbatim to `cargo test` (after `--`).
     #[arg(last = true)]
     pub cargo_args: Vec<String>,
-    /// Frontend: `wasm` (the default: any stable toolchain) or `mir` (the
-    /// deprecated pinned-nightly MIR driver; see `docs/toolchain.md`). Default:
-    /// `$XARK_FRONTEND`, else `wasm`.
-    #[arg(long, value_parser = ["mir", "wasm"])]
-    pub frontend: Option<String>,
 }
 
 impl TestArgs {
     fn to_argv(&self) -> Vec<String> {
         let mut v = vec![self.crate_dir.clone()];
-        push_frontend(&mut v, &self.frontend);
         if !self.cargo_args.is_empty() {
             v.push("--".into());
             v.extend(self.cargo_args.iter().cloned());
         }
         v
-    }
-}
-
-/// Append `--frontend <f>` when one was given.
-pub(crate) fn push_frontend(v: &mut Vec<String>, frontend: &Option<String>) {
-    if let Some(f) = frontend {
-        v.push("--frontend".into());
-        v.push(f.clone());
     }
 }
 
@@ -425,8 +398,8 @@ pub fn load_circuit(path: &std::path::Path) -> Result<PrimitiveProgram> {
     xark_ir::primitive::from_json(&s).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// True if `bytes` is a current `XBC` circuit container: version 1 (the MIR
-/// frontend's) or 2 (the stable frontend's denser encoding of the same container).
+/// True if `bytes` is a current `XBC` circuit container: version 2 (what `xark build`
+/// writes) or 1 (the older, less dense encoding of the same container).
 /// The magic + u16 version guard rejects stale/foreign files so every loader can
 /// dispatch on it.
 pub fn is_function_artifact(bytes: &[u8]) -> bool {

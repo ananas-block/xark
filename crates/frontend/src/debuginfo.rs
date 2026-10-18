@@ -6,9 +6,8 @@
 //! — maps to source frames, inlined ones included: each wasm frame's address goes
 //! through `addr2line`, which yields the inlined callees innermost-first.
 //!
-//! The attribution follows the MIR frontend's profile: the line is the statement in
-//! the `#[circuit]` fn, the chain the functions it expanded into (short names,
-//! arithmetic operator impls elided).
+//! The attribution: the line is the statement in the `#[circuit]` fn, the chain the
+//! functions it expanded into (short names, arithmetic operator impls elided).
 
 use std::collections::HashMap;
 
@@ -277,7 +276,7 @@ fn is_internal(function: &str) -> bool {
         || function.starts_with("xark_")
 }
 
-/// The MIR frontend's elided operator impls (see `lower_mir::is_operator_impl_name`).
+/// Operator impls elided from attribution chains.
 fn is_operator_impl_name(name: &str) -> bool {
     matches!(
         name,
@@ -285,8 +284,7 @@ fn is_operator_impl_name(name: &str) -> bool {
     )
 }
 
-/// The kind the innermost hinting function on the chain fixes (as the MIR
-/// frontend's `function_kind_hint`).
+/// The kind the innermost hinting function on the chain fixes.
 fn kind_hint(frames: &[SrcFrame]) -> Option<ConstraintKind> {
     chain_frames(frames)
         .into_iter()

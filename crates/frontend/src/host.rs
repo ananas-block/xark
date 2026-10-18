@@ -1,6 +1,5 @@
 //! The `xark.*` imports: each intrinsic call from the circuit module lands here and
-//! drives the [`Builder`] exactly as the MIR frontend's `lower_call` does for the
-//! same operation.
+//! drives the [`Builder`].
 //!
 //! **`Field` ABI.** A `Field` is 4 little-endian `u64` limbs in wasm memory, passed
 //! by pointer. A constant keeps its true limbs (so `const` items and constructors
@@ -147,10 +146,7 @@ impl Host {
         b.notes = notes;
         Host {
             reduce: modulus
-                .filter(|_| {
-                    !crate::builder::mir_compat()
-                        && crate::builder::dev_knob("XARK_NO_REDUCE").is_none()
-                })
+                .filter(|_| crate::builder::dev_knob("XARK_NO_REDUCE").is_none())
                 .and_then(|m| m.parse::<BigInt>().ok())
                 .map(|p| {
                     let half = &p >> 1;
@@ -1362,8 +1358,7 @@ impl crate::interp::Host for Host {
                 let n = int_of(a[2], "the exponent of `pow`")?;
                 // A constant base is a constant power: fold it (as `mul` folds
                 // constant operands) rather than emit `c·c = t` rows. Needs the
-                // modulus, and stays off under `XARK_MIR_COMPAT` (the MIR frontend
-                // emits those rows).
+                // modulus.
                 let out = match &self.reduce {
                     Some((p, _))
                         if base.is_constant()

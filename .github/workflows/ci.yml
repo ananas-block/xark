@@ -19,25 +19,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install pinned compiler toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-05-03
-          components: rustc-dev, llvm-tools-preview
-
       - name: Install stable Rust toolchain
+        # wasm32: the CLI end-to-end tests build circuits with `xark build`.
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Install pinned nightly for the xark-rustc driver
-        # The xark-tests integration tests build the `xark-rustc` rustc_driver
-        # (a workspace-excluded, nightly-pinned crate) via the test harness,
-        # which selects it with `RUSTUP_TOOLCHAIN` — that does NOT auto-install,
-        # so the pinned nightly + `rustc-dev` must be present. Installed here
-        # WITHOUT `rustup default`, so stable stays the default for the workspace
-        # fmt / clippy / test steps.
-        run: rustup toolchain install nightly-2026-05-03 --profile minimal --component rustc-dev --component llvm-tools-preview
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry, git, and target
         uses: Swatinem/rust-cache@v2
@@ -77,11 +64,10 @@ jobs:
           done
           cargo test -p xark-tests --release "${tests_args[@]}"
 
-  stable-reproducible:
-    # The stable frontend's guarantee: a circuit is identical (same R1CS digest)
-    # under every supported rustc. Rebuild every example with the oldest supported
+  reproducible:
+    # A circuit is identical (same R1CS digest) under every supported rustc. Rebuild every example with the oldest supported
     # toolchain, stable and beta, and compare with tests/stable-digests.txt.
-    name: stable frontend reproducibility (${{ matrix.toolchain }})
+    name: circuit reproducibility (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -105,11 +91,11 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
         run: scripts/stable-digests.sh --check
 
-  stable-snapshots:
-    # The default (stable) frontend: the snapshot suite (count bridges to the Lean
-    # models, rejection diagnostics, solves) and the native-semantics fuzzer, on
-    # plain stable Rust.
-    name: compiler snapshot suite + semantics fuzz (stable)
+  compiler-snapshots:
+    # The snapshot suite (count bridges to the Lean models, rejection diagnostics,
+    # solves) and the native-semantics fuzzer. The heavy `#[ignore]`d known-answer
+    # vectors run in `nightly-kats.yml`.
+    name: compiler snapshot suite + semantics fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -128,77 +114,25 @@ jobs:
           XARK_FUZZ_CASES: "200"
         run: cd crates/lang && cargo test --release --test snapshot --test semantics_fuzz
 
-  compiler-snapshots:
-    name: compiler snapshot suite (nightly)
+  wasm-smoke:
+    # The xark-wasm prover package against host artifacts: build + setup + prove
+    # `examples/cube` natively, then check the wasm build reproduces the public
+    # inputs byte-for-byte.
+    name: xark-wasm smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Install pinned nightly (rustc_private) toolchain
-        # `crates/rustc` is the `rustc_driver`, built on this pinned nightly
-        # with `rustc-dev`; it is excluded from the root workspace, so the `check`
-        # job's `cargo test --workspace` never builds it. The harness selects it via
-        # `RUSTUP_TOOLCHAIN=nightly-2026-05-03`, so the pin here must match.
-        # See docs/toolchain.md for the pin and the bump procedure.
-        uses: dtolnay/rust-toolchain@master
+      - name: Install stable Rust + wasm32
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2026-05-03
-          components: rustc-dev, llvm-tools-preview, clippy
-
-      - name: Cache cargo registry, git, and target
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-        with:
-          cache-directories: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            crates/lang/target
-            crates/rustc/target
-          key: snapshots-${{ hashFiles('Cargo.lock') }}
 
-      - name: cargo clippy (xark-rustc driver)
-        # The workspace `check` job runs on stable and excludes this nightly
-        # `rustc_private` crate, so lint it here where the pinned nightly +
-        # `rustc-dev` are available. `--features debug` covers the diagnostic
-        # paths (timing / XARK_VERIFY) too.
-        run: cd crates/rustc && cargo clippy --all-targets --features debug -- -D warnings
-
-      - name: cargo test (compiler snapshots)
-        # Runs `crates/lang/tests/snapshot.rs` — the byte-identical count bridges
-        # (fp_mul 1154, ec_incomplete 15369/15891, sha256 39018, blake2s 21600,
-        # blake3 15248, keccak 153664, aes 145816, poseidon2 240, bignum 1189,
-        # struct_point, aggregate-input + int-operator solves, …).
-        #
-        # The `xark-test-harness` builds every gadget crate with
-        # `-Zalways-encode-mir` into an isolated `target/xark-compile` (so their
-        # MIR is inlinable) and the `xark-rustc` compiler into
-        # `crates/rustc/target`, then
-        # compiles each example and diffs its emitted R1CS/IR against the
-        # committed snapshots. The heavy `#[ignore]`d known-answer-vector tests
-        # run separately in `nightly-kats.yml`.
-        # The deprecated MIR frontend, while it ships (`stable-snapshots` covers the
-        # default stable frontend).
-        env:
-          XARK_TEST_FRONTEND: mir
-        run: cd crates/lang && cargo test --test snapshot
-
-      # ---- xark-wasm smoke test ----
-      # Reuse the nightly toolchain and xark-rustc binary already built above, then
-      # produce the cube artifacts the wasm smoke test cross-checks (build + setup +
-      # prove). Cube is rebuilt with a real field (bn254): the snapshot test compiled
-      # it field-independent (`unknown`), which the prover can't solve.
-
-      - name: Rebuild cube with bn254 field
-        # Drop the field-independent `unknown` output the snapshot test wrote, then
-        # rebuild with the default bn254 field.
-        run: |
-          # The driver crate is `xark-rustc` but it lives under `crates/rustc`
-          # (renamed from `crates/xark-rustc` in the `1a19385 reorg`); the path
-          # below must match the dir the snapshot test built it into.
-          export XARK_RUSTC="$PWD/crates/rustc/target/release/xark-rustc"
-          rm -rf target/test-out/cube
-          cargo run --release -p xark-cli -- build examples/cube --out target/test-out/cube
+      - name: Build cube
+        run: cargo run --release -p xark-cli -- build examples/cube --out target/test-out/cube
 
       - name: Generate proving + verifying keys for cube
         run: cargo run --release -p xark-cli -- setup target/test-out/cube
@@ -207,11 +141,6 @@ jobs:
         # The smoke test cross-checks the wasm-generated public inputs against
         # the host's (same circuit, same witness — must be byte-identical).
         run: cargo run --release -p xark-cli -- prove target/test-out/cube --inputs '{"secret":"3","result":"27"}'
-
-      - name: Activate stable Rust for wasm steps
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked

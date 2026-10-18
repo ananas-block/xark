@@ -1,60 +1,36 @@
-//! `xark` frontend subcommands: `init` (scaffold), `build` (Rust → xark-IR →
-//! R1CS) and `check` (editor-facing validation). The backend subcommands
+//! `xark` frontend subcommands: `init` (scaffold), `build` (Rust → wasm32 →
+//! R1CS), `test` and `check` (editor-facing validation). The backend subcommands
 //! (`setup`/`prove`/`verify`/`export`/`ceremony`/`inspect`) live in the
-//! [`crate::commands`] module; these three retain their hand-rolled argument
-//! parsing (driven from the clap layer in `commands`) because they shell out to
-//! `cargo` with a carefully constructed environment.
+//! [`crate::commands`] module; these keep their hand-rolled argument parsing
+//! (driven from the clap layer in `commands`).
 
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Locate the `xark-rustc` driver without failing: the `XARK_RUSTC` env override
-/// (used by the test harness), else a sibling of the `xark` CLI. `None` if
-/// neither exists. `xark build`/`check` invoke it as `RUSTC`.
-pub(crate) fn find_rustc_shim() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("XARK_RUSTC") {
-        return Some(PathBuf::from(path));
-    }
-    let self_exe = std::env::current_exe().ok()?;
-    self_exe
-        .parent()
-        .map(|dir| dir.join(format!("xark-rustc{}", std::env::consts::EXE_SUFFIX)))
-        .filter(|p| p.exists())
-}
-
-/// Locate the `xark-rustc` driver, or panic with a reinstall hint.
-fn rustc_shim() -> PathBuf {
-    find_rustc_shim().unwrap_or_else(|| {
-        panic!(
-            "xark-rustc not found next to the `xark` binary (or set XARK_RUSTC) — install \
-             it: `cargo +{} install xark-rustc`",
-            env!("XARK_NIGHTLY")
-        )
-    })
-}
-
-/// Which frontend a command uses: the stable one (`wasm`, the default — any stable
-/// `rustc`), unless `--frontend mir` / `XARK_FRONTEND=mir` asks for the deprecated
-/// MIR frontend (the pinned-nightly `xark-rustc` driver).
-fn use_stable(frontend: Option<&str>) -> bool {
+/// `--frontend` / `XARK_FRONTEND`: only `wasm` remains; the MIR frontend (the
+/// pinned-nightly `xark-rustc` driver) was removed. `Err(exit code)` otherwise.
+fn check_frontend(frontend: Option<&str>) -> Result<(), i32> {
     match frontend {
+        None | Some("wasm") => Ok(()),
         Some("mir") => {
             eprintln!(
-                "{} the MIR frontend (`--frontend mir`) is deprecated and will be removed; \
-                 the default stable frontend needs no pinned nightly",
-                crate::style::err("warning:")
+                "{} the MIR frontend (`--frontend mir`) was removed; xark builds with any \
+                 stable Rust toolchain now (drop the flag)",
+                crate::style::err("error:")
             );
-            false
+            Err(2)
         }
-        _ => true,
+        Some(other) => {
+            eprintln!("{} unknown frontend `{other}`", crate::style::err("error:"));
+            Err(2)
+        }
     }
 }
 
 /// `xark build <crate-dir> [--out DIR] [--field F]`
 ///
-/// Drives `cargo build` on the circuit crate with `xark` itself as `RUSTC`, under
-/// one pinned nightly, so every dependency (the `xark` lib + gadget crates) is
-/// built with matching MIR-encoded rlibs and only the primary crate is extracted.
+/// Builds the circuit crate for wasm32 with `cargo` (any stable toolchain), then
+/// lowers the module with `xark-frontend`.
 pub fn cmd_build(args: &[String]) -> i32 {
     cmd_build_impl(args, false)
 }
@@ -74,8 +50,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     // the prover/checker load `circuit.xbc`, so a normal build skips the (multi-GB
     // on large circuits) JSON serialization.
     let mut emit_json = false;
-    // `--frontend wasm` (or `XARK_FRONTEND=wasm`): the stable-Rust frontend, which
-    // compiles the circuit with the ambient toolchain to wasm32 and lowers that.
+    // `--frontend` / `XARK_FRONTEND`: accepted for `wasm` (the only frontend).
     let mut frontend: Option<String> = std::env::var("XARK_FRONTEND").ok();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -105,7 +80,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     let cwd = std::env::current_dir().expect("cwd");
     let crate_abs = cwd.join(&crate_dir);
     // Everything xark produces lives under the crate's `target/xark/`, isolated
-    // from the crate's normal `target/` so the nightly / MIR-encoded rlibs don't
+    // from the crate's normal `target/` so the wasm32 / `--cfg xark` builds don't
     // thrash the one `cargo` and rust-analyzer use. The build cache stays at the
     // shared `target/xark/` (workspace circuits share deps); each circuit's
     // artifacts land in a name-scoped `target/xark/<pkg-name>/`, the package name
@@ -116,112 +91,12 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .map(|o| cwd.join(o))
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
 
-    if use_stable(frontend.as_deref()) {
-        return build_stable(
-            &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
-        );
+    if let Err(code) = check_frontend(frontend.as_deref()) {
+        return code;
     }
-
-    let self_exe = rustc_shim();
-
-    // Artifacts are a side-effect of compilation: if deleted while the source is
-    // unchanged, cargo cache-hits and never re-runs the extractor, so they never
-    // come back. Bump the source mtime to force a recompile when the output looks
-    // incomplete. `circuit.xbc` (every build writes it) is the primary signal.
-    let regen_needed = !out_abs.join("circuit.xbc").exists()
-        // `--emit-json` needs circuit.json / r1cs.json; force a recompile if they
-        // are absent so a circuit already built without them gets the JSON when
-        // re-requested.
-        || (emit_json
-            && (!out_abs.join("circuit.json").exists() || !out_abs.join("r1cs.json").exists()))
-        // `xark profile` needs profile.json; force a recompile if it's absent so
-        // an already-built (cache-hit) circuit still produces the attribution.
-        || (profile && !out_abs.join("profile.json").exists());
-    if regen_needed {
-        touch_sources(&crate_abs);
-    }
-
-    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| xark_dir.clone());
-    eprintln!("{} building circuit `{name}`", crate::style::tag());
-    // `--profile` / `--emit-json` (when requested) are injected globally, but
-    // only the primary package extracts (see `run_as_rustc`), so dependency
-    // crates ignore them.
-    let mut rustflags =
-        String::from("--allow=unexpected_cfgs -Zalways-encode-mir -Zmir-opt-level=0");
-    if profile {
-        rustflags.push_str(" --profile");
-    }
-    if emit_json {
-        rustflags.push_str(" --emit-json");
-    }
-    // Heartbeat: large circuits lower for minutes with no output (ed25519 ~2min),
-    // which reads as a hang. A watcher thread prints every 15s and exits when the
-    // build finishes (tx drop); builds under 15s print nothing.
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
-    let heartbeat = std::thread::spawn(move || {
-        let start = std::time::Instant::now();
-        while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
-            rx.recv_timeout(std::time::Duration::from_secs(15))
-        {
-            eprintln!(
-                "{} still building… ({}s; large circuits take a while — RUST_LOG=debug for detail)",
-                crate::style::tag(),
-                start.elapsed().as_secs()
-            );
-        }
-    });
-    let status = Command::new("cargo")
-        .arg("build")
-        .current_dir(&crate_dir)
-        // No `RUSTUP_TOOLCHAIN`: `xark-rustc` is a self-contained rustc_driver that
-        // resolves its own (pinned-nightly) sysroot via a baked rpath, so cargo can
-        // run under the user's ambient (stable) toolchain with it as `RUSTC`.
-        .env("RUSTC", &self_exe)
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .env("RUSTFLAGS", rustflags)
-        .env("XARK_OUT", &out_abs)
-        .env("XARK_FIELD", &field)
-        .status();
-    drop(tx);
-    let _ = heartbeat.join();
-
-    match status {
-        Ok(_) if out_abs.join("circuit.xbc").exists() => {
-            eprintln!(
-                "{} wrote {}",
-                crate::style::tag(),
-                crate::style::brand(&out_abs.display().to_string())
-            );
-            eprintln!(
-                "\n{}",
-                crate::style::next_steps(&[
-                    (
-                        format!("xark setup {}", crate_dir.display()),
-                        "generate the proving/verifying keys",
-                    ),
-                    (
-                        format!("xark codegen ts {}", crate_dir.display()),
-                        "generate a typed TypeScript client (no setup needed)",
-                    ),
-                ])
-            );
-            0
-        }
-        Ok(s) => {
-            eprintln!(
-                "xark: no circuit.xbc produced (does the crate expose `pub fn circuit(..)`?); \
-                 cargo exit {:?}",
-                s.code()
-            );
-            1
-        }
-        Err(e) => {
-            eprintln!("xark: failed to run cargo: {e}");
-            1
-        }
-    }
+    build_stable(
+        &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
+    )
 }
 
 /// `xark build` with the stable frontend: `cargo` (any toolchain) builds the circuit
@@ -303,28 +178,6 @@ fn build_stable(
     0
 }
 
-/// Bump the mtime of the crate's `src/*.rs` files so cargo recompiles the primary
-/// crate on the next build (forcing the extractor to re-emit artifacts).
-/// Best-effort: per-file failures are ignored. Content is never modified.
-fn touch_sources(crate_dir: &std::path::Path) {
-    fn walk(dir: &std::path::Path, now: std::time::SystemTime) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, now);
-            } else if path.extension().is_some_and(|e| e == "rs")
-                && let Ok(f) = std::fs::File::options().write(true).open(&path)
-            {
-                let _ = f.set_modified(now);
-            }
-        }
-    }
-    walk(&crate_dir.join("src"), std::time::SystemTime::now());
-}
-
 /// `xark clean` — remove **every** xark output tree under the current directory:
 /// each circuit crate's `target/xark/` (emitted artifacts, keys, proofs, and the
 /// isolated cargo target). Takes no arguments.
@@ -394,13 +247,7 @@ pub fn cmd_test(args: &[String]) -> i32 {
         .find(|a| !a.starts_with('-'))
         .cloned()
         .unwrap_or_else(|| ".".to_string());
-    let mut build_argv = vec![crate_dir.clone()];
-    if let Some(i) = ours.iter().position(|a| a == "--frontend")
-        && let Some(f) = ours.get(i + 1)
-    {
-        build_argv.push("--frontend".into());
-        build_argv.push(f.clone());
-    }
+    let build_argv = vec![crate_dir.clone()];
 
     // Build first so the tests' artifacts are present + current. Build with
     // `--profile` (also writes `profile.json`, leaving the other artifacts
@@ -433,12 +280,9 @@ pub fn cmd_test(args: &[String]) -> i32 {
 
 /// `xark check <crate-dir>`
 ///
-/// Fast, artifact-free validation of a circuit crate for editor diagnostics.
-/// Drives `cargo check` with `xark` as `RUSTC` and injects `--check` via
-/// `RUSTFLAGS`; the driver validates + lowers the primary crate and routes any
-/// rejection through rustc's diagnostic context. `--message-format=json` makes
-/// cargo emit JSON diagnostics on stdout, the shape `rust-analyzer`'s
-/// `check.overrideCommand` consumes. Exit status mirrors `cargo check`.
+/// Fast, artifact-free validation of a circuit crate for editor diagnostics (see
+/// `check_stable`). `--message-format=json` emits JSON diagnostics on stdout, the
+/// shape `rust-analyzer`'s `check.overrideCommand` consumes.
 pub fn cmd_check(args: &[String]) -> i32 {
     let mut crate_dir: Option<String> = None;
     let mut json = false;
@@ -459,38 +303,10 @@ pub fn cmd_check(args: &[String]) -> i32 {
     };
     let crate_dir = PathBuf::from(crate_dir);
     let crate_abs = std::env::current_dir().expect("cwd").join(&crate_dir);
-    if use_stable(frontend.as_deref()) {
-        return check_stable(&crate_abs, json);
+    if let Err(code) = check_frontend(frontend.as_deref()) {
+        return code;
     }
-
-    let self_exe = rustc_shim();
-
-    let mut cmd = Command::new("cargo");
-    cmd.arg("check")
-        .current_dir(&crate_dir)
-        // No `RUSTUP_TOOLCHAIN`: the driver self-resolves its nightly sysroot (see
-        // `run_build`), so cargo runs under the ambient toolchain.
-        .env("RUSTC", &self_exe)
-        // Isolated cargo target (nightly / MIR-encoded rlibs) so on-save checks
-        // never invalidate the crate's normal `target/`, which keeps editor
-        // integration fast (no rebuild-on-save thrash).
-        .env("CARGO_TARGET_DIR", crate_abs.join("target/xark"))
-        // `--check` is injected globally, but only the primary package extracts
-        // (see `run_as_rustc`); dependency crates compile normally.
-        .env(
-            "RUSTFLAGS",
-            "--allow=unexpected_cfgs -Zalways-encode-mir -Zmir-opt-level=0 --check",
-        );
-    if json {
-        cmd.arg("--message-format=json");
-    }
-    match cmd.status() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("xark: failed to run cargo: {e}");
-            1
-        }
-    }
+    check_stable(&crate_abs, json)
 }
 
 /// `xark check` with the stable frontend: build the circuit for wasm32 (with line

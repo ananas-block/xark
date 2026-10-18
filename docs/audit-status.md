@@ -215,9 +215,9 @@ so an unpinned hint output can't force a satisfying assignment. An auditor shoul
 * construct adversarial circuits where a hint output is **not** pinned and confirm
   `solve_and_check` still rejects a bad witness.
 
-### 3. xark-IR → R1CS lowering (`crates/ir/`, `crates/lang/src/lower_mir.rs`)
+### 3. xark-IR → R1CS lowering (`crates/ir/`, `crates/frontend/`)
 
-Deliberately small: **no opcode dispatch, no predication.** The accepted MIR subset lowers to
+Deliberately small: **no opcode dispatch.** The circuit's wasm lowers to
 `add`/`sub`/`mul`/`require_eq` + `hint_*`/advice, then directly to R1CS. Auditable points:
 
 * **Each primitive → its expected constraint.** Fixed, small footprint; FV bridge tests pin
@@ -268,7 +268,7 @@ by `.github/workflows/reproducible-build.yml`.
 
 | Component | Mitigation |
 |---|---|
-| `rustc` MIR shape (nightly) | Pin the nightly, validate the accepted MIR subset and reject the rest, fuzz the lowering. |
+| `rustc` codegen (wasm32) | Circuit ops are opaque wasm imports, so the circuit is rustc-independent (CI compares every example's digest on 1.88 / stable / beta); witness branches are guarded (Lean `gated_sat` & co.); the lowering is fuzzed against native Rust with exhaustive witness search. |
 | `solana_nostd_alt_bn128` syscall ↔ Arkworks fallback | Differential test `gadgets/tests/tests/differential_alt_bn128.rs`: same fixed vectors via the Arkworks fallback (host `#[test]`s) and the on-chain syscall path (`#[svm_test]`s through Mollusk + cargo-build-sbf), asserting byte-identical results. Run under the `Solana E2E` CI workflow on every verifier change; each new `G1_ADD`/`G1_MUL`/`G2_ADD`/`PAIRING_2` vector adds an anchor. Extending to OSS-Fuzz CPU-weeks is a follow-up. |
 | Arkworks Groth16 | Cite published Groth16 mechanisations (e.g. Microsoft's verified Groth16 in F*); no in-repo proof. |
 | Lean kernel + mathlib | Trusted base; replace via Coq cross-check if needed. |

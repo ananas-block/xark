@@ -1,4 +1,4 @@
-//! Differential test of two builds of the same circuit (e.g. MIR vs stable frontend)
+//! Differential test of two builds of the same circuit (e.g. before and after a change)
 //! on a corpus of real inputs recorded by the prover (`XARK_DUMP_INPUTS=<dir>` while
 //! running the circuit crate's `cargo test`).
 //!

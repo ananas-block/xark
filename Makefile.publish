@@ -9,7 +9,7 @@
 
 .PHONY: publish publish-dry $(addprefix pub-,$(PKGS))
 
-PKGS := xark-backend xark-curve xark-ir xark-macros xark-prover xark-rustc xark-test-harness xark-verifier xark xark-aes xark-bignum xark-bits xark-cli xark-ed25519 xark-grumpkin xark-hash xark-keccak xark-mimc xark-pedersen xark-poseidon xark-poseidon2 xark-secp256k1 xark-secp256r1 xark-sha256 xark-blake2s xark-blake3 xark-merkle
+PKGS := xark-backend xark-curve xark-ir xark-macros xark-prover xark-frontend xark-test-harness xark-verifier xark xark-aes xark-bignum xark-bits xark-cli xark-ed25519 xark-grumpkin xark-hash xark-keccak xark-mimc xark-pedersen xark-poseidon xark-poseidon2 xark-secp256k1 xark-secp256r1 xark-sha256 xark-blake2s xark-blake3 xark-merkle
 
 publish:
 	@echo ">>> publishing xark-backend"
@@ -22,8 +22,8 @@ publish:
 	cargo publish -p xark-macros
 	@echo ">>> publishing xark-prover"
 	cargo publish -p xark-prover
-	@echo ">>> publishing xark-rustc"
-	(cd crates/rustc && cargo publish)
+	@echo ">>> publishing xark-frontend"
+	cargo publish -p xark-frontend
 	@echo ">>> publishing xark-test-harness"
 	cargo publish -p xark-test-harness
 	@echo ">>> publishing xark-verifier"
@@ -79,8 +79,8 @@ publish-dry:
 	cargo publish --dry-run -p xark-macros
 	@echo ">>> dry-run xark-prover"
 	cargo publish --dry-run -p xark-prover
-	@echo ">>> dry-run xark-rustc"
-	(cd crates/rustc && cargo publish --dry-run)
+	@echo ">>> dry-run xark-frontend"
+	cargo publish --dry-run -p xark-frontend
 	@echo ">>> dry-run xark-test-harness"
 	cargo publish --dry-run -p xark-test-harness
 	@echo ">>> dry-run xark-verifier"

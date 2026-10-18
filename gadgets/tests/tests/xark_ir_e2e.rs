@@ -2,7 +2,7 @@
 //! backend → a *verified* proof, end to end within xark's own pipeline.
 //!
 //! The circuit (`cube`: prove knowledge of `a` with `a^3 = c`) was written in
-//! the Rust subset, compiled through rustc-MIR → xark-IR → R1CS by the xark
+//! the Rust subset, compiled through wasm32 → xark-IR → R1CS by the xark
 //! compiler, and committed as a fixture. Here we:
 //!   1. load the IR (`R1csProgram` + witness-gen `PrimitiveProgram`),
 //!   2. **solve the witness with xark's own solver**,

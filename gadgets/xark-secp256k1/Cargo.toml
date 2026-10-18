@@ -19,7 +19,7 @@ xark-bignum = { path = "../xark-bignum", version = "0.2.1" }
 xark-curve = { path = "../xark-curve", version = "0.2.1" }
 
 # Host-only deps for the `NativeInput` impls (native bytes → circuit inputs).
-# Gated on `cfg(not(xark))`: the `xark-rustc` driver reports the `xark` cfg, so a
+# Gated on `cfg(not(xark))`: the circuit build sets the `xark` cfg, so a
 # circuit build drops these and the crate stays lean `no_std`; an ordinary host
 # build (tests, downstream provers) pulls them in with no feature flag.
 [target.'cfg(not(xark))'.dependencies]

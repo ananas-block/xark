@@ -1,5 +1,10 @@
 # DAG functions & the JIT prover
 
+> **Note.** The templated (function) form described here was produced by the removed
+> MIR frontend. `xark-frontend` lowers flat (version-2 containers without templates);
+> the decoder, minimizer and prover still read templated artifacts, so the format and
+> its soundness checks below remain current for them.
+
 xark treats a circuit's functions as **reusable functions**, stores the circuit as a
 **DAG-compact bytecode artifact** (templates + call sites, not a flat constraint stream),
 and **expands it on demand** at setup/prove time — the "JIT prover" model. This covers the

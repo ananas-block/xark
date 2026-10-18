@@ -1,11 +1,11 @@
 //! The `xark` language markers used by circuit programs: the `Field` circuit
 //! type, the `Private`/`Public` visibility aliases, and `#[inline(never)]`
-//! marker/intrinsic functions the compiler recognizes in MIR. None of these
-//! functions execute in a circuit — the compiler stops after MIR extraction — and on
-//! the host they panic with an explanation rather than computing anything.
+//! intrinsic functions the compiler recognizes (in the circuit build, calls to its
+//! `xark.*` imports). On the host they panic with an explanation rather than
+//! computing anything.
 
-// Marker stubs are recognized by name and never run in a circuit; their body is
-// `intrinsics::__xark_marker` (a `loop {}` there, an explanatory panic on the host).
+// Off the circuit build, an intrinsic's body is `intrinsics::__xark_marker` (an
+// explanatory panic on the host).
 #![allow(clippy::empty_loop)]
 // The compiler rejects compound assignment on `Field`, so `acc = acc + …` is
 // required, not `acc += …`.
@@ -17,14 +17,13 @@ use core::ops::{
     Add, AddAssign, BitXor, Div, DivAssign, Mul, MulAssign, Neg, Rem, Shl, Shr, Sub, SubAssign,
 };
 
-// The `__xark_*` marker stubs live in `crate::intrinsics`; recognition is by
-// name, so their module location does not affect the compiler.
+// The `__xark_*` intrinsics live in `crate::intrinsics`.
 use crate::intrinsics::*;
 
 /// The opaque circuit field element.
 ///
 /// Carries a private non-zero-sized payload so that (a) it cannot be constructed
-/// except through the recognized intrinsics, and (b) MIR optimization cannot
+/// except through the recognized intrinsics, and (b) optimization cannot
 /// collapse `Field` values to a single constant ZST (which would erase the
 /// data-flow the compiler tracks).
 ///
@@ -274,9 +273,8 @@ impl Field {
                 "to_bits::<N>: N must be <= 253 (BN254 field capacity)"
             )
         };
-        // Stable frontend: the compiler's decomposition memo (a constant's bits, a sum
-        // of proven bits, or an earlier `to_bits::<N>` of the same value) — what the
-        // MIR frontend does when it reaches this call.
+        // The compiler's decomposition memo: a constant's bits, a sum of proven bits,
+        // or an earlier `to_bits::<N>` of the same value.
         #[cfg(all(xark, target_arch = "wasm32"))]
         if let Some(bits) = crate::wasm::to_bits_lookup::<N>(&self) {
             return bits;
