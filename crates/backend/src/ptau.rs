@@ -116,7 +116,7 @@ pub enum Phase2Error {
     DomainConstruction(usize),
 
     /// A ptau section holds fewer points than the QAP domain size `n` requires.
-    /// A transcript from [`parse_ptau`](crate::parse_ptau) always has
+    /// A transcript from [`parse_ptau`] always has
     /// consistent section lengths; this fires only on a hand-built or otherwise
     /// malformed [`PtauFile`] whose vectors are too short — caught here so the
     /// per-variable QAP loop cannot index out of bounds and panic.

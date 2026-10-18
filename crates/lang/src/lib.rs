@@ -1,7 +1,7 @@
 //! `xark`: the standard prelude (`use xark::prelude::*`) for writing zero-knowledge
 //! programs in the `xark` Rust subset. A circuit is an ordinary `#![no_std]` Rust
-//! function over [`Field`] values; the toolchain compiles it end to end (rustc-MIR
-//! → xark-IR → R1CS → Groth16) with no per-gadget backend support — gadgets are
+//! function over [`Field`] values; the toolchain compiles it end to end (rustc →
+//! wasm32 → xark-IR → R1CS → Groth16) with no per-gadget backend support — gadgets are
 //! ordinary frontend library code lowering to the same primitive constraint set.
 //!
 //! ```rust,ignore
@@ -35,8 +35,8 @@ extern crate self as xark;
 /// `Field` methods and operator impls, and the recognized intrinsics.
 pub mod lang;
 
-/// The compiler intrinsics — the `#[inline(never)]` `loop {}` stubs the compiler
-/// recognizes by name in MIR (the `Field` operator/hint ABI). See the module doc
+/// The compiler intrinsics — `#[inline(never)]` functions that, in the circuit
+/// build, call the frontend's `xark.*` wasm imports (the `Field` operator/hint ABI). See the module doc
 /// for the constraint-vs-hint distinction. `lang.rs` calls these to back its
 /// `Field` impls; circuit authors use the `Field` methods, not these directly.
 pub mod intrinsics;

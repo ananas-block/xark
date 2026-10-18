@@ -16,7 +16,7 @@
 //! The public inputs are the transparent [`Point`] / [`Signature`] / [`Scalar`]
 //! types, each a 256-bit value in the compact **2×128-bit half** form (2 public
 //! field elements per value) — matching secp256k1. The 3×86-bit limbs the field
-//! arithmetic uses are recomposed in-circuit by [`unpack`]; the affine curve
+//! arithmetic uses are recomposed in-circuit by `unpack`; the affine curve
 //! gadget (`Point`/`Fq`/`Fp`, emitted by [`xark_curve::weierstrass!`]) lives in
 //! the [`affine`] submodule.
 
@@ -52,7 +52,7 @@ use xark::{Field, Transparent, require_eq};
 /// compact **2×128-bit half** public-input form — `{ limbs: [Field; 2] }` =
 /// `[lo128, hi128]` in-circuit (2 public field elements vs 3 raw 86-bit limbs),
 /// `[u8; 32]` big-endian on the host. Recomposed to the internal 3×86 limbs by
-/// [`unpack`]. `#[derive(Transparent)]` derives the host `NativeInput` (`[u8; 32]`
+/// `unpack`. `#[derive(Transparent)]` derives the host `NativeInput` (`[u8; 32]`
 /// → `<name>.limbs[0..2]`) from this declaration.
 #[derive(Clone, Copy, Transparent)]
 #[transparent(bits = 128)]
@@ -152,7 +152,7 @@ impl Point {
 
 /// P-256 ECDSA verification core (3×86-bit incomplete-affine path). P-256 has no
 /// efficient endomorphism, so there's no GLV variant as on secp256k1. Each of
-/// `q`, `r`, `s`, `e` is a 256-bit value in compact 2×128 form, [`unpack`]ed to the
+/// `q`, `r`, `s`, `e` is a 256-bit value in compact 2×128 form, `unpack`ed to the
 /// 3×86 limbs the macro's shared primitives (`double_scalar_mul_incomplete`, `Fq`,
 /// `Fp`, `Point`) operate on. Wrapped by [`Point::verify`] — callers use that.
 pub fn ecdsa_verify(q: Point, r: Scalar, s: Scalar, e: Scalar) {

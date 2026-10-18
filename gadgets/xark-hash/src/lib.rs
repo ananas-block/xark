@@ -1,6 +1,6 @@
 //! `xark-hash` — shared 256-bit digest types for the hash gadgets.
 //!
-//! [`Hash`] packs a 256-bit digest into two field elements (a compact 2-input
+//! [`Hash`](struct@Hash) packs a 256-bit digest into two field elements (a compact 2-input
 //! public form); [`Digest`] keeps all 256 bits (bit-exact). Both, and the
 //! `RequireEqCircuit<…>` impls comparing a raw gadget output against them, live
 //! here (not in the `xark` core) because coherence requires them where `Hash` is

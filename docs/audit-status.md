@@ -111,18 +111,17 @@ depending on `sorryAx`. Coverage (theorem names → modules):
   (`pairing_operand_assembly`); see `#[cfg(kani)] mod proofs` in
   `crates/verifier/src/verifier.rs` and `.github/workflows/kani.yml`.
 
-`lean.yml` enumerates **all** these theorem names and rejects any proof depending on
-`sorryAx`. Standard mathlib axioms (`propext`, `Classical.choice`, `Quot.sound`) are allowed.
+`lean.yml` enumerates **all** these theorem names and checks what each depends on: only
+the standard mathlib axioms (`propext`, `Classical.choice`, `Quot.sound`), plus the
+`native_decide` of the lemmas listed below. Anything else — a `sorryAx`, a declared
+`axiom`, a new `native_decide` — fails CI.
 
-### Trusted base additions (axiomatised)
-
-Three axioms in `formal/`, each documented at its declaration site:
+### Trusted base additions
 
 There are no `axiom` declarations in `formal/`: the secp256k1, secp256r1 and BN254
 primes, once trusted axioms, are theorems proven by Pratt certificates
 (`Formal.CurvePrimes`, checked by the kernel with `decide`). No `sorry`/`sorryAx`.
-`lean.yml` prints `#print axioms` for every load-bearing theorem and fails CI on any
-`sorryAx`.
+The only additions to the kernel's trust are the `native_decide` uses below.
 
 ### `native_decide` axioms
 
@@ -132,6 +131,12 @@ exhaustive computation over the 256-element byte range — `gf256_mul_inv` (`x·
 (`Affine(gf256_inv x) ⊕ 0x63 = SBOX[x]` over all 256). These use `native_decide`, adding
 `Lean.ofReduceBool`-style axioms — strictly weaker than `axiom`, since the propositions are
 pure computations the compiled bytecode deterministically evaluates.
+
+The secp256k1 GLV constants are checked the same way in `Formal.Secp256k1Group`:
+`secp256k1_beta_cube_eq_one` (`β³ = 1`), `secp256k1_G_nonsingular` and
+`secp256k1_phi_eigenvalue_at_G` (`λ·G = φ(G)`) — and so every theorem built on them
+(`glv_endomorphism_correct_secp256k1`, `secp256k1_phi_acts_as_lambda`, …). Moving these to
+the kernel would need a kernel-evaluable scalar multiplication.
 
 ### AES S-box bit-level soundness
 

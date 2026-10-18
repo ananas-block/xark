@@ -35,7 +35,7 @@
 //! off-circuit against the gadget's own `corr₁₂₈`).
 
 #![cfg_attr(xark, no_std)]
-// The xark subset rejects compound assignment on `Field`; `x = x + y` is required.
+// Written in the `x = x + y` style (`+=` on `Field` works too).
 #![allow(clippy::assign_op_pattern)]
 
 use xark_grumpkin::prelude::*;

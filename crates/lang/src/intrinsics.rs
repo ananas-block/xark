@@ -4,7 +4,7 @@
 //! An intrinsic is a plain `#[inline(never)]` function. In the circuit build (`xark`
 //! on `wasm32`) its body calls the matching `xark.*` wasm import, which the frontend
 //! (`xark-frontend`'s `host.rs`) turns into the real R1CS / witness-gen effect; called
-//! from a host build, it panics with an explanation (the [`__xark_marker`] body).
+//! from a host build, it panics with an explanation (the `__xark_marker` body).
 //! `lang.rs` wrappers reach it via inlining.
 //!
 //! Two families:

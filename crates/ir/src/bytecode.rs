@@ -1,4 +1,4 @@
-//! Compact binary form (`circuit.xbc`) of a [`PrimitiveProgram`] that round-trips
+//! Compact binary form (`circuit.xbc`) of a [`PrimitiveProgram`](crate::primitive::PrimitiveProgram) that round-trips
 //! exactly. Each constraint and each witness-gen op becomes one *opcode* whose
 //! operands are witness offsets (`VarId`s) plus immediates. Each opcode fully
 //! embeds the `VarId`s it writes / constraint slot it fills, so an opcode can be
@@ -28,7 +28,7 @@
 //!
 //! The opcode stream is emitted constraints-first (one [`OP_CONSTRAINT`] per
 //! constraint, in order) then witness-gen ops (one opcode per [`WitnessGen`]
-//! kind, in order), so [`expand`] rebuilds the two ordered vectors exactly.
+//! kind, in order), so [`decode_and_expand_ops`] rebuilds the two ordered vectors exactly.
 //!
 //! Field constants are stored as a sign byte + little-endian magnitude (via
 //! `BigInt`): compact and exactly round-trips the canonical decimal.
@@ -718,10 +718,10 @@ pub struct Repeat {
     /// contain nested [`Repeat`]s.
     pub body: Vec<Item>,
     /// Per-operand affine step, in `body`'s operand-traversal order (see
-    /// [`item_operands`]). Per-slot steps let a loop reference both
+    /// `item_operands`). Per-slot steps let a loop reference both
     /// iteration-local vars (nonzero step) and fixed inputs (step 0).
     pub steps: Vec<i64>,
-    /// Per-note affine rule, in `body`'s note-traversal order (see [`item_notes`]).
+    /// Per-note affine rule, in `body`'s note-traversal order (see `item_notes`).
     pub notes: Vec<NoteRule>,
 }
 

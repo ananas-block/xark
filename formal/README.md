@@ -154,8 +154,9 @@ The proofs use only the standard mathlib axioms (`propext`, `Classical.choice`,
 listed at their declaration sites (GF(2⁸) tables, the secp256k1 GLV constants). The
 secp256k1, secp256r1 and BN254 primes are proven prime by kernel-checked Pratt
 certificates ([`Formal/CurvePrimes.lean`](Formal/CurvePrimes.lean), machinery in
-[`Formal/Pratt.lean`](Formal/Pratt.lean)). No `sorry`. CI checks this with
-`#print axioms`.
+[`Formal/Pratt.lean`](Formal/Pratt.lean)). No `sorry`. CI (`lean.yml`) runs
+`#print axioms` on every listed theorem and fails on anything else, including a
+`native_decide` outside that list.
 
 [`Formal/Rewrites.lean`](Formal/Rewrites.lean) — **the stable frontend's
 constraint-reducing rewrites preserve the circuit.** The theorems above are stated

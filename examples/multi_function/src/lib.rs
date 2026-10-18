@@ -2,7 +2,7 @@
 
 use xark::{circuit, require_eq, Field, Private, Public};
 
-// require(square(x) == y) via a helper (xark inlines cross-function MIR).
+// require(square(x) == y) via a helper (xark inlines calls across functions).
 #[inline(never)]
 fn square(x: Field) -> Field {
     x * x

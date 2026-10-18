@@ -14,7 +14,7 @@
 //! row = 3 × LC,  LC = const_idx n_terms (var_delta coeff_idx)*
 //! ```
 //! Coefficients are interned in a pool (a minimized circuit reuses a few distinct
-//! constants millions of times); `const_idx == 0` / pool[0] is always zero. Term
+//! constants millions of times); `const_idx == 0` / `pool[0]` is always zero. Term
 //! vars are delta-encoded within an LC (sorted ascending), so typical rows cost a
 //! few bytes per term. Window offsets let any window decode independently.
 

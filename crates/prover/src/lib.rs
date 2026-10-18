@@ -442,7 +442,7 @@ impl std::error::Error for ProveError {}
 /// 256 bit leaves (`("result.bits[0][0]", "1"), …`). The leaf **names** are the
 /// compiler's structural-flatten names and the **values** are decimal strings
 /// (so digest bits / curve coordinates that overflow `i128` are representable);
-/// [`Circuit::resolve_inputs`] matches each name to its variable.
+/// `Circuit::resolve_inputs` matches each name to its variable.
 pub trait ProveInputs {
     fn into_inputs(self) -> Vec<(String, String)>;
 }
@@ -578,7 +578,7 @@ fn try_autobuild(dir: &std::path::Path) {
 /// Load a circuit built by `xark build` from `target/xark/<name>/`, relative to
 /// the current directory (where `cargo test` runs, i.e. the crate root).
 ///
-/// Missing artifacts trigger a best-effort [`try_autobuild`]; if that can't run,
+/// Missing artifacts trigger a best-effort `try_autobuild`; if that can't run,
 /// panics with a clear message — run `xark build` first.
 pub fn circuit(name: &str) -> Circuit {
     circuit_at(std::path::Path::new("target/xark").join(name))

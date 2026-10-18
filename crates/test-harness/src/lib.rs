@@ -71,7 +71,7 @@ impl Compiled {
     }
 
     /// Check that native `inputs` **satisfy** this compiled circuit — the
-    /// in-memory analogue of [`xark_prover::Circuit::check`], for a circuit
+    /// in-memory analogue of `xark_prover::Circuit::check`, for a circuit
     /// compiled straight from source with [`compile_file`] (no `xark build`).
     ///
     /// Each `(name, value)` fans out to witness leaves via [`bignum::LeafInput`],

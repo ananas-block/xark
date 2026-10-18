@@ -50,7 +50,7 @@ We instantiate this machinery with the secp256k1 short Weierstrass curve
 `F := ZMod secp256k1_p`, and define `Secp256k1Point` as an alias for the
 resulting `Point` type. The `AddCommGroup` is then automatically inherited.
 
-## Trusted base addition: primality of secp256k1_p
+## Primality of secp256k1_p
 
 `secp256k1_p = 2^256 - 2^32 - 977` is a 256-bit prime.
 `secp256k1_p_prime : Fact (Nat.Prime secp256k1_p)` is a **theorem**, proven by a

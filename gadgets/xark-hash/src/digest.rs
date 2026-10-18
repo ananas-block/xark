@@ -19,7 +19,7 @@
 //! `Public<Digest>` is 256 public inputs — use it for a **constant** expected hash
 //! baked into the circuit, and [`Hash`](crate::Hash) for a runtime public digest.
 //!
-//! ## Layout (must match [`xark_sha256::sha256`])
+//! ## Layout (must match `xark_sha256::sha256`)
 //!
 //! The gadget returns the hash as 8 words. Word `w` covers digest bytes `4w..4w+4`
 //! **big-endian**: byte slot `k` (`k = 0` most-significant) occupies word bits
@@ -30,7 +30,7 @@
 
 use xark::{CircuitInput, Field, RequireEqCircuit};
 
-/// A 256-bit SHA-256 digest in [`xark_sha256::sha256`]'s native output layout:
+/// A 256-bit SHA-256 digest in `xark_sha256::sha256`'s native output layout:
 /// 8 words × 32 little-endian bits (`[[Field; 32]; 8]`). Build from the gadget
 /// output (`Digest::from(sha256(msg))`) or a known constant (`EXPECTED.into()`),
 /// then pin them with [`Digest::require_eq`].
@@ -60,7 +60,7 @@ impl Digest {
     }
 }
 
-/// Wrap the raw [`xark_sha256::sha256`] output directly — it is already in this
+/// Wrap the raw `xark_sha256::sha256` output directly — it is already in this
 /// type's storage layout, so this is a zero-constraint move.
 impl From<[[Field; 32]; 8]> for Digest {
     fn from(bits: [[Field; 32]; 8]) -> Digest {

@@ -1043,7 +1043,7 @@ pub fn analyze_underconstrained(
 // materialized into `Expression`s. Equivalence with the `Expression`-based path
 // is asserted in the tests below.
 
-/// Run the witness-generation program of a [`CircuitProgram`].
+/// Run the witness-generation program of a [`CircuitProgram`](crate::circuit::CircuitProgram).
 pub fn solve_cp(
     program: &crate::circuit::CircuitProgram,
     inputs: &BTreeMap<VarId, String>,

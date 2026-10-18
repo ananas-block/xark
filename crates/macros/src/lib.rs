@@ -95,10 +95,9 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
             quote! { #name: #wrapper<#cty> }
         })
         .collect();
-    // The real `Field` circuit body (the one the xark compiler lowers to MIR), emitted
-    // under a hidden name so it is **never cfg-gated** — it compiles in every build. The
-    // xark compiler auto-detects it as the entry (the sole fn with all-`Public`/`Private`
-    // params); `cargo`/host builds just carry it as present-but-unused code, which also
+    // The real `Field` circuit body (the one `__xark_main` binds the inputs for and
+    // calls), emitted under a hidden name so it is **never cfg-gated** — it compiles in
+    // every build; `cargo`/host builds just carry it as present-but-unused code, which also
     // keeps the circuit's `use`s live (no separate `__circuit_def` shim needed).
     //
     // Keeping it un-gated is what stops rust-analyzer greying the body you wrote: every
@@ -815,7 +814,7 @@ fn schema_type(ty: &Type) -> syn::Result<TokenStream2> {
 ///
 /// The generated impl is `#[cfg(not(xark))]` — `NativeInput` is host-only.
 ///
-/// [`NativeInput`]: xark_prover::NativeInput
+/// [`NativeInput`]: https://docs.rs/xark-prover/latest/xark_prover/trait.NativeInput.html
 #[proc_macro_derive(Transparent, attributes(transparent))]
 pub fn derive_transparent(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);

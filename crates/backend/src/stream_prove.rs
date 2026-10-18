@@ -203,7 +203,7 @@ fn stream_msm_g2(
 
 /// Prove `circuit` against the proving key at `pk_path`, streaming the key from
 /// disk. `public_inputs` is the public portion of the witness. The proof is
-/// self-verified before returning (same guard as [`crate::prove`]).
+/// self-verified before returning (same guard as [`crate::prove()`]).
 pub fn stream_prove<Circ, R>(
     pk_path: &Path,
     circuit: Circ,
