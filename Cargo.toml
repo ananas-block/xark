@@ -47,9 +47,10 @@ version = "0.2.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/blueshift-gg/xark"
-# 1.88: let-chains (the `xark` circuit library uses them; circuits build with any
-# stable rustc from here on — see tests/stable-digests.txt).
-rust-version = "1.88"
+# 1.89: the host tools' dependencies (`wincode`, `enum-ordinalize`). Circuits build
+# with 1.88+ (the `xark` crate's own `rust-version`; it uses let-chains) — see
+# tests/stable-digests.txt.
+rust-version = "1.89"
 
 [workspace.dependencies]
 ark-bn254 = { version = "0.6", default-features = false, features = ["curve"] }

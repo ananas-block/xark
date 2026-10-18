@@ -69,7 +69,7 @@ jobs:
       - name: cargo test (snapshots + ignored KAT vectors)
         # `--include-ignored` runs the fast snapshot tests AND the heavy
         # known-answer-vector tests in one pass.
-        run: cd crates/lang && cargo test --test snapshot -- --include-ignored
+        run: cd crates/lang && cargo test --release --test snapshot -- --include-ignored
 
   ec-gadget-vectors:
     name: heavy EC gadget vectors (ed25519 + secp256k1/r1, release)

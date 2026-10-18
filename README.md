@@ -11,7 +11,8 @@ stays expressive.
 
 ## Installation
 
-xark needs only stable Rust (1.88 or newer):
+xark needs only stable Rust: 1.89 or newer to install the CLI, 1.88 or newer to
+build circuits:
 
 ```bash
 cargo install xark-cli

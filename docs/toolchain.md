@@ -1,7 +1,8 @@
 # Toolchains
 
 `xark build` needs **only stable Rust, 1.88 or newer** (the `xark` crate's
-`rust-version`; it uses let-chains). The circuit crate is compiled by the ambient
+`rust-version`; it uses let-chains). Installing the CLI itself needs 1.89 (the
+workspace `rust-version`, set by its dependencies). The circuit crate is compiled by the ambient
 `cargo`/`rustc` for `wasm32-unknown-unknown` (added with `rustup` on first use), and
 `crates/frontend` runs the module to lower it. Every circuit operation is an opaque
 wasm import, so the constraint system doesn't depend on the compiler version:

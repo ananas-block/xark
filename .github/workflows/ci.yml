@@ -80,10 +80,10 @@ jobs:
       - name: Install workspace toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Install toolchain under test
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          targets: wasm32-unknown-unknown
+        # Installed, not made the default: the dev tool (`stablec`) builds with the
+        # workspace toolchain (its dependencies need 1.89); only the circuits are
+        # built with the toolchain under test, via RUSTUP_TOOLCHAIN below.
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --target wasm32-unknown-unknown
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Compare circuit digests
