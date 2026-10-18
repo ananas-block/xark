@@ -10,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-xark-ir = { path = "../ir", version = "0.2.1", default-features = false }
+xark-ir = { path = "../ir", version = "0.3.0", default-features = false }
 # Field + curve arithmetic only. The prover itself (MSM, FFT, R1CS→QAP, proof
 # assembly) is implemented here; `ark-groth16` contributes just the key/proof types
 # so keys and proofs stay byte-compatible with every existing xark artifact.
@@ -26,7 +26,7 @@ ark-poly = { version = "0.6", default-features = false, features = ["std"] }
 rayon = "1"
 
 [dev-dependencies]
-xark-prover = { path = "../prover", version = "0.2.1" }
+xark-prover = { path = "../prover", version = "0.3.0" }
 ark-poly = { version = "0.6", default-features = false, features = ["std", "parallel"] }
 ark-relations = { version = "0.6", default-features = false, features = ["std"] }
 ark-snark = { workspace = true }

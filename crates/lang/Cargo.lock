@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "xark"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "xark-frontend"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "addr2line",
  "num-bigint",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "xark-ir"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
@@ -1493,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "xark-macros"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "xark-prover"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "xark-test-harness"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "num-bigint",
  "serde_json",

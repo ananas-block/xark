@@ -1,4 +1,4 @@
-# Auto-generated publish orchestration for xark (v0.2.0).
+# Auto-generated publish orchestration for xark (v0.3.0).
 # Publishes every crate to crates.io in dependency order (leaves first).
 # `cargo publish` waits for each crate to index before the next, so deps
 # are always available when a dependent is published.
