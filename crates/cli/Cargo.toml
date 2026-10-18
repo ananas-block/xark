@@ -26,6 +26,7 @@ xark-ir = { path = "../ir", version = "0.2.1" }
 xark-prover = { path = "../prover", version = "0.2.1" }
 xark-backend = { path = "../backend", version = "0.2.1" }
 xark-groth16 = { path = "../groth16", version = "0.2.1" }
+xark-frontend = { path = "../frontend", version = "0.2.1" }
 ark-groth16 = { version = "0.6", default-features = false }
 xark-snarkjs = { path = "../snarkjs", version = "0.2.1" }
 serde_json = "1"

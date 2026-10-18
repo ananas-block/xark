@@ -12,24 +12,16 @@ stays expressive.
 
 ## Installation
 
-xark installs as **two** binaries: `xark` — the CLI, plain **stable** Rust — and
-`xark-rustc`, the `rustc_driver` shim `xark build` runs to extract MIR, which needs
-a **pinned nightly**. `xark build` invokes `xark-rustc` as a sibling of `xark`, so
-install both into the same bin directory (`cargo install` uses `~/.cargo/bin`).
-
-Install the pinned nightly the driver needs, then both binaries from crates.io:
+xark needs only stable Rust (1.88 or newer):
 
 ```bash
-rustup toolchain install nightly-2026-05-03 --profile minimal --component rust-src --component rustc-dev --component llvm-tools
-# the rustc-driver shim (pinned nightly)
-cargo +nightly-2026-05-03 install xark-rustc
-# the CLI (stable Rust)
 cargo install xark-cli
+xark doctor        # checks your setup
 ```
 
-Only `xark-rustc` touches nightly — you write **stable Rust** in your circuits. To
-build from source instead, append `--git https://github.com/blueshift-gg/xark` to
-each `cargo install`.
+`xark build` compiles your circuit crate with the toolchain you already have (to
+`wasm32-unknown-unknown`, which it adds with `rustup` on first use) — no pinned
+nightly. To build from source instead, append `--git https://github.com/blueshift-gg/xark`.
 
 ## As a language (library)
 
@@ -54,7 +46,7 @@ pub fn circuit(secret: Private<Field>, result: Public<Field>) {
 # Scaffold a new circuit crate, pre-wired for rust-analyzer diagnostics.
 xark init my-circuit
 
-# Compile: Rust → MIR → xark-IR → R1CS. All output (artifacts + an isolated
+# Compile: Rust → wasm → xark-IR → R1CS. All output (artifacts + an isolated
 # cargo target) lives under the crate's target/xark/.
 xark build examples/cube
 # → writes examples/cube/target/xark/cube/ (circuit.xbc + schema.json)
@@ -134,24 +126,23 @@ note: branch conditions must be compile-time constants (e.g. loop bounds)
 ## The pipeline
 
 ```text
-Rust source  →  rustc MIR  →  xark-IR  →  R1CS  →  Groth16 (BN254)  →  Solana verifier
+Rust source  →  rustc (stable, wasm32)  →  xark-IR  →  R1CS  →  Groth16 (BN254)  →  Solana verifier
 ```
 
-`xark build` runs `cargo build` on your circuit crate with `xark-rustc` (the
-`rustc_driver` shim, pinned nightly) as the compiler, so every dependency (the
-`xark` lib and any gadget crates) is compiled with matching MIR-encoded rlibs.
-rustc does the hard work — parse, type-check, borrow-check, monomorphize — and
-`xark-rustc` then finds `pub fn circuit(..)`, reads its signature for `Private` /
-`Public` visibility, extracts its MIR (cross-crate gadget calls inlined via
-`-Zalways-encode-mir`), validates the accepted subset (rejecting arbitrary
-control flow, references, aggregates, unknown calls, …), and lowers it to
-xark-IR then R1CS. Signalling intrinsics recognised in MIR are named `__xark_*`
-(`__xark_add`, `__xark_mul`, `__xark_hint_bit`, …). The backend never grows a
-per-gadget opcode: hashes / curves / ECDSA are plain Rust crates that lower to
-the same primitive constraints.
+`xark build` runs `cargo` on your circuit crate for `wasm32-unknown-unknown` with
+`--cfg xark`, where every circuit operation (`Field` arithmetic, comparisons,
+hints, `require_eq`, input binding) is a call to an `xark.*` wasm import. rustc
+does the hard work — parse, type-check, borrow-check, monomorphize, optimize — and
+xark then runs the module with those imports implemented as the circuit builder:
+loops and calls with known values simply execute (that *is* the unrolling), and
+witness values flow into constraints. The circuit is the same under every stable
+rustc (CI checks every example on 1.88, stable and beta), and constraint-reducing
+rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
+[`crates/frontend/README.md`](crates/frontend/README.md).
 
-MIR access has no stable API, so `xark-rustc` uses a pinned nightly
-(`rust-toolchain.toml`) internally — invisible to circuit authors.
+The previous frontend — `xark-rustc`, a pinned-nightly `rustc_driver` that read
+MIR — is deprecated and still available as `xark build --frontend mir` for one
+release.
 
 ## snarkjs compatibility
 
@@ -172,8 +163,8 @@ snarkjs groth16 verify \
 * **`xark`** (`crates/lang`, `#![no_std]`, stable) — the language library; its
   `prelude` provides the marker primitives (`Field`, `require_eq`,
   `Private`/`Public`). The CLI is the **`xark`** binary (stable; published as the
-  `xark-cli` crate) and the MIR-extraction driver is **`xark-rustc`** (pinned
-  nightly).
+  `xark-cli` crate); **`xark-frontend`** turns a circuit's wasm into R1CS. The
+  deprecated MIR driver is **`xark-rustc`** (pinned nightly).
 * **Backend** — `xark-backend` (Groth16 setup/prove/verify, trusted setup,
   serialization) and `xark-verifier` (the `no_std` on-chain Solana verifier).
   Both are frontend-agnostic.
@@ -229,22 +220,22 @@ No external audit has been performed; see [`docs/audit-status.md`](docs/audit-st
 ## Development
 
 ```bash
-# Install the CLI (puts `xark` on PATH) and the nightly rustc-driver into the
-# same bin dir so `xark` finds `xark-rustc`:
+# Install the CLI (puts `xark` on PATH):
 cargo install --path crates/cli
-cargo +nightly-2026-05-03 install --path crates/rustc
 
 cargo test --workspace --release
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 
-# `crates/lang` is excluded from the root workspace (needs the pinned nightly),
-# so its snapshot suite runs separately:
-cd crates/lang && cargo test --test snapshot          # fast, ~78 tests
-cd crates/lang && cargo test --test snapshot -- --include-ignored  # + heavy KATs
+# `crates/lang` is its own workspace, so its suites run separately:
+cd crates/lang && cargo test --release --test snapshot --test semantics_fuzz
+cd crates/lang && cargo test --release --test snapshot -- --include-ignored  # + heavy KATs
+XARK_FUZZ_CASES=400 cargo test --release --test semantics_fuzz  # wider fuzzing
+
+scripts/stable-digests.sh --check   # every example's circuit, unchanged
 ```
 
-The nightly pin (and how to bump it): [`docs/toolchain.md`](docs/toolchain.md).
+Toolchains (and the deprecated MIR frontend's nightly pin): [`docs/toolchain.md`](docs/toolchain.md).
 Writing circuits — the supported subset and rejections: [`docs/subset.md`](docs/subset.md).
 Architecture: [`docs/architecture.md`](docs/architecture.md).
 Security walkthrough: [`docs/security.md`](docs/security.md).

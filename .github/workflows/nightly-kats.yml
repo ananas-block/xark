@@ -18,6 +18,31 @@ on:
   workflow_dispatch:
 
 jobs:
+  semantics-fuzz-long:
+    # The native-semantics fuzzer at depth: random circuits checked against Rust,
+    # each input decided by exhaustive witness search (no forged witness, exactly
+    # one honest one). A new seed every run; a failure prints it for reproduction
+    # (`XARK_FUZZ_SEED=<seed> XARK_FUZZ_CASES=5000`).
+    name: semantics fuzz (5,000 programs, rotating seed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install stable Rust + wasm32
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/lang
+      - name: cargo test (semantics fuzz)
+        env:
+          XARK_FUZZ_CASES: "5000"
+          XARK_FUZZ_SEED: ${{ github.run_id }}
+        run: cd crates/lang && cargo test --release --test semantics_fuzz -- --nocapture
+
   compiler-kats:
     name: compiler KAT vectors (nightly, --include-ignored)
     runs-on: ubuntu-latest
@@ -32,6 +57,13 @@ jobs:
         with:
           toolchain: nightly-2026-05-03
           components: rustc-dev, llvm-tools-preview
+
+      - name: Install stable Rust + wasm32 (the default stable frontend)
+        # Installed last so it is the default toolchain the test harness compiles
+        # circuits with.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry, git, and target
         uses: Swatinem/rust-cache@v2
@@ -65,6 +97,13 @@ jobs:
         with:
           toolchain: nightly-2026-05-03
           components: rustc-dev, llvm-tools-preview
+
+      - name: Install stable Rust + wasm32 (the default stable frontend)
+        # Installed last so it is the default toolchain the test harness compiles
+        # circuits with.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry, git, and target
         uses: Swatinem/rust-cache@v2

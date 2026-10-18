@@ -1,12 +1,35 @@
-# Toolchain: the nightly pin
+# Toolchains
 
-xark's compiler (`crates/lang`) is a `rustc_driver` — it links against rustc internals to run the
-frontend and read MIR. That requires **nightly Rust** and the `rustc-dev` component; there is no
-stable API for MIR access. This records what is pinned, why, its fragility, and how to bump it.
+## The stable frontend (default)
+
+`xark build` needs **only stable Rust, 1.88 or newer** (the `xark` crate's
+`rust-version`; it uses let-chains). The circuit crate is compiled by the ambient
+`cargo`/`rustc` for `wasm32-unknown-unknown` (added with `rustup` on first use), and
+`crates/frontend` runs the module to lower it. Every circuit operation is an opaque
+wasm import, so the constraint system doesn't depend on the compiler version:
+`scripts/stable-digests.sh --check` rebuilds every example and compares its R1CS
+digest with `tests/stable-digests.txt`, and CI runs it on 1.88, stable and beta.
+(All 70 examples were identical on 1.88, 1.89, 1.93, 1.96, 1.98 and a 2026-10
+nightly when this was introduced.) See `crates/frontend/README.md` for the design
+and how its circuits differ from the MIR frontend's.
+
+`build`, `check` (editor diagnostics, `--message-format=json` included), `profile`
+and `test` all use it, sharing one cache (`target/xark-wasm`). Builds carry DWARF line
+tables (`debug = "line-tables-only"`) so constraints and rejections are attributed to
+source lines; they don't change the circuit or the lowering time, and compile time is
+the same within noise (only the `.wasm` grows).
+
+## The MIR frontend (deprecated)
+
+`--frontend mir` (or `XARK_FRONTEND=mir`; `XARK_TEST_FRONTEND=mir` for the test
+harness) selects the previous frontend, `xark-rustc`: a `rustc_driver` that links
+against rustc internals to read MIR. That requires a **pinned nightly** with the
+`rustc-dev` component. It ships for one more release, then `crates/rustc` and the
+pin below go. The rest of this document is about that pin.
 
 ## What is pinned
 
-The pin lives in **`crates/lang/rust-toolchain.toml`** (not the repo root — the root workspace is
+The pin lives in **`crates/rustc/rust-toolchain.toml`** (not the repo root — the root workspace is
 plain stable Rust):
 
 ```toml

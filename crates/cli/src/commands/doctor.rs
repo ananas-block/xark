@@ -1,10 +1,10 @@
 //! `xark doctor` — check the local machine is set up to build and prove
 //! circuits, and print the exact fix for anything missing.
 //!
-//! The `xark build`/`check` path drives `cargo` with `xark` as `RUSTC` under a
-//! pinned nightly (with `rustc-dev` / `rust-src` / `llvm-tools`). That toolchain
-//! is the single most common thing a newcomer gets wrong, so `doctor` verifies
-//! it up front — turning a cryptic mid-build failure into a one-line fix.
+//! The default (stable) frontend needs only a stable Rust toolchain (1.88+) and
+//! its `wasm32-unknown-unknown` standard library (`xark build` adds it with
+//! `rustup` on first use). The deprecated MIR frontend (`--frontend mir`) also
+//! needs the `xark-rustc` driver's pinned nightly, reported as optional.
 
 use std::process::Command;
 
@@ -13,6 +13,9 @@ use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct DoctorArgs {}
+
+/// Oldest `rustc` that builds a circuit (the `xark` crate's `rust-version`).
+const MIN_RUSTC: (u32, u32) = (1, 88);
 
 pub fn run(_args: DoctorArgs) -> Result<()> {
     // The pinned toolchain, queried from the `xark-rustc` driver — which bakes it
@@ -47,7 +50,20 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
         cargo.as_deref(),
         "install Rust from https://rustup.rs",
     );
-
+    let rustc = cmd_ok("rustc", &["--version"]);
+    let version = rustc.as_deref().and_then(|v| {
+        let mut it = v.split_whitespace().nth(1)?.split('.');
+        Some((
+            it.next()?.parse::<u32>().ok()?,
+            it.next()?.parse::<u32>().ok()?,
+        ))
+    });
+    problems += check(
+        version.is_some_and(|v| v >= MIN_RUSTC),
+        &format!("rustc {}.{}+", MIN_RUSTC.0, MIN_RUSTC.1),
+        rustc.as_deref(),
+        "rustup update stable",
+    );
     let rustup = cmd_ok("rustup", &["--version"]);
     problems += check(
         rustup.is_some(),
@@ -55,19 +71,21 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
         rustup.as_deref(),
         "install Rust from https://rustup.rs",
     );
+    let targets = cmd_ok("rustup", &["target", "list", "--installed"]).unwrap_or_default();
+    info(
+        targets
+            .lines()
+            .any(|l| l.trim() == "wasm32-unknown-unknown"),
+        "target wasm32-unknown-unknown",
+        "installed automatically on the first `xark build`",
+        "rustup target add wasm32-unknown-unknown",
+    );
 
+    // The deprecated MIR frontend's pinned nightly (informational).
     let toolchains = cmd_ok("rustup", &["toolchain", "list"]).unwrap_or_default();
     let tc_ok = toolchains
         .lines()
         .any(|l| l.starts_with(toolchain) || l.starts_with(channel.as_str()));
-    problems += check(
-        tc_ok,
-        &format!("toolchain {channel}"),
-        tc_ok.then_some(toolchain),
-        &install_tc,
-    );
-
-    // Toolchain components (required; only checked if the toolchain is present).
     let comps = if tc_ok {
         cmd_ok(
             "rustup",
@@ -77,20 +95,17 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
     } else {
         String::new()
     };
-    for comp in ["rustc-dev", "rust-src", "llvm-tools"] {
-        // Match a whole component line — `llvm-tools` or a target-suffixed
-        // `llvm-tools-<triple>` — not any incidental substring.
-        let installed = tc_ok
-            && comps
-                .lines()
-                .any(|l| l.trim() == comp || l.trim().starts_with(&format!("{comp}-")));
-        problems += check(
-            installed,
-            &format!("component {comp}"),
-            None,
-            &format!("rustup component add {comp} --toolchain {channel}"),
-        );
-    }
+    let comps_ok = ["rustc-dev", "rust-src", "llvm-tools"].iter().all(|comp| {
+        comps
+            .lines()
+            .any(|l| l.trim() == *comp || l.trim().starts_with(&format!("{comp}-")))
+    });
+    info(
+        tc_ok && comps_ok && crate::cli::find_rustc_shim().is_some(),
+        &format!("toolchain {channel} + xark-rustc"),
+        "only for the deprecated `--frontend mir`",
+        &install_tc,
+    );
 
     // Optional (informational — never a hard failure).
     let onpath = cmd_ok("xark", &["--version"]);
@@ -98,7 +113,7 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
         onpath.is_some(),
         "xark on PATH",
         "needed for `xark init` and rust-analyzer diagnostics",
-        "cargo +nightly-… install --path crates/lang --features cli",
+        "cargo install xark-cli",
     );
     let node = cmd_ok("node", &["--version"]);
     info(

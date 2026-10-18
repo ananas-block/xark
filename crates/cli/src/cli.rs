@@ -33,6 +33,23 @@ fn rustc_shim() -> PathBuf {
     })
 }
 
+/// Which frontend a command uses: the stable one (`wasm`, the default — any stable
+/// `rustc`), unless `--frontend mir` / `XARK_FRONTEND=mir` asks for the deprecated
+/// MIR frontend (the pinned-nightly `xark-rustc` driver).
+fn use_stable(frontend: Option<&str>) -> bool {
+    match frontend {
+        Some("mir") => {
+            eprintln!(
+                "{} the MIR frontend (`--frontend mir`) is deprecated and will be removed; \
+                 the default stable frontend needs no pinned nightly",
+                crate::style::err("warning:")
+            );
+            false
+        }
+        _ => true,
+    }
+}
+
 /// `xark build <crate-dir> [--out DIR] [--field F]`
 ///
 /// Drives `cargo build` on the circuit crate with `xark` itself as `RUSTC`, under
@@ -57,6 +74,9 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     // the prover/checker load `circuit.xbc`, so a normal build skips the (multi-GB
     // on large circuits) JSON serialization.
     let mut emit_json = false;
+    // `--frontend wasm` (or `XARK_FRONTEND=wasm`): the stable-Rust frontend, which
+    // compiles the circuit with the ambient toolchain to wasm32 and lowers that.
+    let mut frontend: Option<String> = std::env::var("XARK_FRONTEND").ok();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -67,6 +87,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
                 }
             }
             "--emit-json" => emit_json = true,
+            "--frontend" => frontend = it.next().cloned(),
             _ if crate_dir.is_none() => crate_dir = Some(a.clone()),
             _ => {}
         }
@@ -94,6 +115,12 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     let out_abs = out
         .map(|o| cwd.join(o))
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
+
+    if use_stable(frontend.as_deref()) {
+        return build_stable(
+            &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
+        );
+    }
 
     let self_exe = rustc_shim();
 
@@ -197,6 +224,85 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     }
 }
 
+/// `xark build` with the stable frontend: `cargo` (any toolchain) builds the circuit
+/// for wasm32, then `xark-frontend` runs it to lower the circuit.
+fn build_stable(
+    crate_abs: &std::path::Path,
+    crate_dir: &std::path::Path,
+    out_abs: &std::path::Path,
+    name: &str,
+    field: &str,
+    profile: bool,
+    emit_json: bool,
+) -> i32 {
+    eprintln!(
+        "{} building circuit `{name}` (stable frontend)",
+        crate::style::tag()
+    );
+    // Every build carries DWARF line tables (free; see `BuildOptions`), so errors
+    // and `--profile` attribution name source lines.
+    let (target_dir, opts) = (
+        crate_abs.join("target/xark-wasm"),
+        xark_frontend::BuildOptions::default(),
+    );
+    let wasm = match xark_frontend::build_crate_with(crate_abs, &target_dir, &opts) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("xark: {e}");
+            return 1;
+        }
+    };
+    let mut lowered = match xark_frontend::lower_module(
+        &wasm,
+        xark_ir::FieldSpec::named(field),
+        profile,
+        emit_json,
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("{} {e}", crate::style::err("error:"));
+            return 1;
+        }
+    };
+    if profile {
+        xark_frontend::relativize_profile(&mut lowered.output, crate_abs);
+    }
+    if let Err(e) =
+        xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
+    {
+        eprintln!("xark: writing {}: {e}", out_abs.display());
+        return 1;
+    }
+    if let Some(entry) = &lowered.entry {
+        let _ = std::fs::write(out_abs.join("entry"), entry);
+    }
+    let _ = std::fs::write(
+        out_abs.join("schema.json"),
+        serde_json::to_string_pretty(&lowered.schema).unwrap_or_default() + "\n",
+    );
+    let p = &lowered.output.primitive;
+    eprintln!(
+        "{} {} vars, {} constraints, {} witness-gen ops",
+        crate::style::tag(),
+        p.vars.len(),
+        lowered.output.r1cs.constraints.len(),
+        p.witness_gen.len(),
+    );
+    eprintln!(
+        "{} wrote {}",
+        crate::style::tag(),
+        crate::style::brand(&out_abs.display().to_string())
+    );
+    eprintln!(
+        "\n{}",
+        crate::style::next_steps(&[(
+            format!("xark setup {}", crate_dir.display()),
+            "generate the proving/verifying keys",
+        )])
+    );
+    0
+}
+
 /// Bump the mtime of the crate's `src/*.rs` files so cargo recompiles the primary
 /// crate on the next build (forcing the extractor to re-emit artifacts).
 /// Best-effort: per-file failures are ignored. Content is never modified.
@@ -288,12 +394,19 @@ pub fn cmd_test(args: &[String]) -> i32 {
         .find(|a| !a.starts_with('-'))
         .cloned()
         .unwrap_or_else(|| ".".to_string());
+    let mut build_argv = vec![crate_dir.clone()];
+    if let Some(i) = ours.iter().position(|a| a == "--frontend")
+        && let Some(f) = ours.get(i + 1)
+    {
+        build_argv.push("--frontend".into());
+        build_argv.push(f.clone());
+    }
 
     // Build first so the tests' artifacts are present + current. Build with
     // `--profile` (also writes `profile.json`, leaving the other artifacts
     // byte-identical): the test harness reads it to explain which source line /
     // function a failing constraint came from.
-    let code = cmd_build_profile(std::slice::from_ref(&crate_dir));
+    let code = cmd_build_profile(&build_argv);
     if code != 0 {
         eprintln!("xark: build failed; skipping tests");
         return code;
@@ -329,10 +442,13 @@ pub fn cmd_test(args: &[String]) -> i32 {
 pub fn cmd_check(args: &[String]) -> i32 {
     let mut crate_dir: Option<String> = None;
     let mut json = false;
-    for a in args.iter() {
+    let mut frontend: Option<String> = std::env::var("XARK_FRONTEND").ok();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
             // Emit machine-readable JSON diagnostics (for editors / rust-analyzer).
             "--message-format=json" | "--json" => json = true,
+            "--frontend" => frontend = it.next().cloned(),
             _ if crate_dir.is_none() => crate_dir = Some(a.clone()),
             _ => {}
         }
@@ -343,6 +459,9 @@ pub fn cmd_check(args: &[String]) -> i32 {
     };
     let crate_dir = PathBuf::from(crate_dir);
     let crate_abs = std::env::current_dir().expect("cwd").join(&crate_dir);
+    if use_stable(frontend.as_deref()) {
+        return check_stable(&crate_abs, json);
+    }
 
     let self_exe = rustc_shim();
 
@@ -372,6 +491,116 @@ pub fn cmd_check(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// `xark check` with the stable frontend: build the circuit for wasm32 (with line
+/// tables, so a rejection points at its source line), then lower it. Cargo's own
+/// diagnostics pass through; a lowering rejection is reported like a rustc error —
+/// with `--message-format=json`, as a cargo `compiler-message` on stdout (what
+/// rust-analyzer's `check.overrideCommand` reads).
+fn check_stable(crate_abs: &std::path::Path, json: bool) -> i32 {
+    let opts = xark_frontend::BuildOptions {
+        json_diagnostics: json,
+        ..Default::default()
+    };
+    let target_dir = crate_abs.join("target/xark-wasm");
+    let wasm = match xark_frontend::build_crate_with(crate_abs, &target_dir, &opts) {
+        Ok(w) => w,
+        // Cargo already reported why (on stdout as JSON when asked).
+        Err(e) => {
+            if !json {
+                eprintln!("xark: {e}");
+            }
+            return 1;
+        }
+    };
+    // Field-agnostic check: lower over BN254 (rejections don't depend on the field).
+    match xark_frontend::lower_module(&wasm, xark_ir::FieldSpec::named("bn254"), false, false) {
+        Ok(_) => {
+            if !json {
+                eprintln!("{} circuit ok", crate::style::tag());
+            }
+            0
+        }
+        Err(e) => {
+            if json {
+                println!("{}", check_diagnostic_json(crate_abs, &e));
+            } else {
+                eprintln!("{} {e}", crate::style::err("error:"));
+            }
+            1
+        }
+    }
+}
+
+/// A frontend rejection as a cargo `compiler-message` (rustc's JSON diagnostic
+/// shape), with the primary span at the error's source line when known.
+fn check_diagnostic_json(crate_abs: &std::path::Path, e: &xark_frontend::CompileError) -> String {
+    let package_id = std::fs::read_to_string(crate_abs.join("Cargo.toml"))
+        .ok()
+        .and_then(|m| {
+            m.lines()
+                .skip_while(|l| l.trim() != "[package]")
+                .find_map(|l| {
+                    let v = l
+                        .trim()
+                        .strip_prefix("name")?
+                        .trim_start()
+                        .strip_prefix('=')?;
+                    Some(v.trim().trim_matches('"').to_string())
+                })
+        })
+        .unwrap_or_default();
+    let spans: Vec<serde_json::Value> = e
+        .site
+        .iter()
+        .filter_map(|s| s.span.as_ref())
+        .map(|(file, line, col)| {
+            let col = (*col).max(1);
+            serde_json::json!({
+                "file_name": file,
+                "byte_start": 0,
+                "byte_end": 0,
+                "line_start": line,
+                "line_end": line,
+                "column_start": col,
+                "column_end": col + 1,
+                "is_primary": true,
+                "text": [],
+                "label": null,
+                "suggested_replacement": null,
+                "suggestion_applicability": null,
+                "expansion": null,
+            })
+        })
+        .collect();
+    let children: Vec<serde_json::Value> = e
+        .notes
+        .iter()
+        .map(|n| ("note", n))
+        .chain(e.help.iter().map(|h| ("help", h)))
+        .map(|(level, m)| {
+            serde_json::json!({
+                "message": m, "code": null, "level": level, "spans": [],
+                "children": [], "rendered": null,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "reason": "compiler-message",
+        "package_id": package_id,
+        "manifest_path": crate_abs.join("Cargo.toml").display().to_string(),
+        "target": { "name": package_id, "kind": ["lib"], "src_path": crate_abs.join("src/lib.rs").display().to_string() },
+        "message": {
+            "message": e.message,
+            "code": { "code": "xark", "explanation": null },
+            "level": "error",
+            "spans": spans,
+            "children": children,
+            "rendered": format!("error: {e}\n"),
+        },
+    })
+    .to_string()
 }
 
 /// `xark init [name]` — scaffold a ready-to-edit circuit crate, pre-wired for

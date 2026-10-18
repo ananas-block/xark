@@ -77,6 +77,57 @@ jobs:
           done
           cargo test -p xark-tests --release "${tests_args[@]}"
 
+  stable-reproducible:
+    # The stable frontend's guarantee: a circuit is identical (same R1CS digest)
+    # under every supported rustc. Rebuild every example with the oldest supported
+    # toolchain, stable and beta, and compare with tests/stable-digests.txt.
+    name: stable frontend reproducibility (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: ["1.88", stable, beta]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install workspace toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install toolchain under test
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Compare circuit digests
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: scripts/stable-digests.sh --check
+
+  stable-snapshots:
+    # The default (stable) frontend: the snapshot suite (count bridges to the Lean
+    # models, rejection diagnostics, solves) and the native-semantics fuzzer, on
+    # plain stable Rust.
+    name: compiler snapshot suite + semantics fuzz (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install stable Rust + wasm32
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/lang
+      - name: cargo test (snapshots, semantics fuzz)
+        env:
+          XARK_FUZZ_CASES: "200"
+        run: cd crates/lang && cargo test --release --test snapshot --test semantics_fuzz
+
   compiler-snapshots:
     name: compiler snapshot suite (nightly)
     runs-on: ubuntu-latest
@@ -126,6 +177,10 @@ jobs:
         # compiles each example and diffs its emitted R1CS/IR against the
         # committed snapshots. The heavy `#[ignore]`d known-answer-vector tests
         # run separately in `nightly-kats.yml`.
+        # The deprecated MIR frontend, while it ships (`stable-snapshots` covers the
+        # default stable frontend).
+        env:
+          XARK_TEST_FRONTEND: mir
         run: cd crates/lang && cargo test --test snapshot
 
       # ---- xark-wasm smoke test ----
