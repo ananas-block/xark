@@ -106,8 +106,12 @@ and known-width (≤ 20-bit) variables with any signed coefficients (a narrow in
 `match` too), enumerated as every subset sum or the grid of its range. Candidates
 are allowed to over-approximate (an impossible one is never selected); an
 out-of-bounds one is ruled out (it would trap). A store `t[i] = v` through such an
-address writes `i == o ? v : old` to every candidate slot (a store through a select of
-two *witness* pointers is still refused). Shifts by a witness amount use
+address writes `i == o ? v : old` to every candidate slot, and a store through a
+select of such pointers does the same over the union of their addresses. An index
+bounded only by an earlier check (LLVM rewrites `x & 7` to `x` once `1 − x` is known
+not to underflow) is bounded by that check: an unsigned comparison of a variable with
+a constant that is required outside any witness branch records the bound it proves,
+which also lets a provably small 64-bit value skip truncation. Shifts by a witness amount use
 `2^k = Π (1 + (2^2^i − 1)·kᵢ)`.
 
 ### Native-semantics fuzzing
@@ -138,10 +142,9 @@ secp256k1 circuit digest-for-digest (`small_field_curve_gadgets_are_sound`,
 Mutation testing (each guard, pin and gated range check removed in turn; see the
 plan) is caught by these tests, except a handful that only a specific shape reaches —
 those shapes are regression tests in `snapshot.rs` (`pruned_arms_constrain_the_condition`,
-`conditional_*`). A few programs are still refused, with a diagnostic: a table lookup
-whose index LLVM narrowed using an earlier overflow check (`1 − x` can't underflow, so
-`x ≤ 1`, so `x & 7` is just `x`), which the frontend can't bound, and a store through a
-select of two witness pointers.
+`conditional_*`). About 0.3% of fuzz programs are still refused with a diagnostic
+(beyond ones that always panic): a loop whose exit LLVM made witness-dependent, and the
+odd store whose index the frontend can't bound.
 
 **Soundness of the reductions.** The lowering differed from the MIR one only by those
 four rules (the switches are `mat_threshold`, `cse`, `reduce` and the `pow` fold; when
