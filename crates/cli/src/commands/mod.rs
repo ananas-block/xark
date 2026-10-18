@@ -200,6 +200,11 @@ pub struct BuildArgs {
     /// circuits) JSON serialization. `r1cs.json` is always written.
     #[arg(long = "emit-json", default_value_t = false)]
     pub emit_json: bool,
+    /// Write the circuit's digest to `xark.digest` in the crate. Commit it: later
+    /// builds refuse a circuit whose digest differs (a changed circuit needs new
+    /// keys).
+    #[arg(long, default_value_t = false)]
+    pub pin: bool,
 }
 
 impl BuildArgs {
@@ -213,6 +218,9 @@ impl BuildArgs {
         v.push(self.field.clone());
         if self.emit_json {
             v.push("--emit-json".into());
+        }
+        if self.pin {
+            v.push("--pin".into());
         }
         v
     }

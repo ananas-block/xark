@@ -7,10 +7,12 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// `xark build <crate-dir> [--out DIR] [--field F]`
+/// `xark build <crate-dir> [--out DIR] [--field F] [--pin]`
 ///
 /// Builds the circuit crate for wasm32 with `cargo` (any stable toolchain), then
-/// lowers the module with `xark-frontend`.
+/// lowers the module with `xark-frontend`. If the crate has a committed
+/// [`DIGEST_PIN`] file, the build refuses a circuit whose digest differs from it;
+/// `--pin` writes (or updates) that file.
 pub fn cmd_build(args: &[String]) -> i32 {
     cmd_build_impl(args, false)
 }
@@ -30,6 +32,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     // the prover/checker load `circuit.xbc`, so a normal build skips the (multi-GB
     // on large circuits) JSON serialization.
     let mut emit_json = false;
+    let mut pin = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -40,6 +43,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
                 }
             }
             "--emit-json" => emit_json = true,
+            "--pin" => pin = true,
             _ if crate_dir.is_none() => crate_dir = Some(a.clone()),
             _ => {}
         }
@@ -69,9 +73,31 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
 
     build_stable(
-        &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
+        &crate_abs,
+        &crate_dir,
+        &out_abs,
+        &name,
+        &field,
+        BuildFlags {
+            profile,
+            emit_json,
+            pin,
+        },
     )
 }
+
+/// `xark build`'s switches: `--profile` (via `xark profile`), `--emit-json`, `--pin`.
+struct BuildFlags {
+    profile: bool,
+    emit_json: bool,
+    pin: bool,
+}
+
+/// The committed circuit-digest pin, at the circuit crate's root: one line, the
+/// 128-bit R1CS digest in hex. Like `Cargo.lock`, it is checked in so that every
+/// build — any developer's, any toolchain's, CI's — must produce the circuit the
+/// deployed keys were made for.
+pub const DIGEST_PIN: &str = "xark.digest";
 
 /// `xark build`: `cargo` (any toolchain) builds the circuit
 /// for wasm32, then `xark-frontend` runs it to lower the circuit.
@@ -81,9 +107,13 @@ fn build_stable(
     out_abs: &std::path::Path,
     name: &str,
     field: &str,
-    profile: bool,
-    emit_json: bool,
+    flags: BuildFlags,
 ) -> i32 {
+    let BuildFlags {
+        profile,
+        emit_json,
+        pin,
+    } = flags;
     eprintln!("{} building circuit `{name}`", crate::style::tag());
     // Every build carries DWARF line tables (free; see `BuildOptions`), so errors
     // and `--profile` attribution name source lines.
@@ -110,6 +140,41 @@ fn build_stable(
             return 1;
         }
     };
+    // The R1CS digest: what the proving/verifying keys depend on, and the same
+    // under every supported rustc (docs/toolchain.md). Checked against the pin
+    // before any artifact is overwritten.
+    let digest = lowered
+        .output
+        .function_xbc
+        .as_deref()
+        .map(|x| format!("{:032x}", xark_ir::function_decode::stream_digest(x)));
+    let pin_path = crate_abs.join(DIGEST_PIN);
+    if let Some(d) = &digest {
+        if pin {
+            if let Err(e) = std::fs::write(&pin_path, format!("{d}\n")) {
+                eprintln!("xark: writing {}: {e}", pin_path.display());
+                return 1;
+            }
+            eprintln!(
+                "{} pinned circuit digest {d} in {DIGEST_PIN}",
+                crate::style::tag()
+            );
+        } else if let Ok(want) = std::fs::read_to_string(&pin_path) {
+            let want = want.trim();
+            if want != d {
+                eprintln!(
+                    "{} the circuit's digest is {d}, but {DIGEST_PIN} pins {want}.\n\
+                     The circuit changed, so keys made for the pinned circuit won't work with it \
+                     (and proofs made with new keys won't verify against the old verifying key).\n\
+                     If you changed the circuit or upgraded xark on purpose, run `xark build --pin` \
+                     and regenerate the keys. If only the Rust toolchain changed, that is an xark \
+                     bug — please report it with `rustc --version`.",
+                    crate::style::err("error:")
+                );
+                return 1;
+            }
+        }
+    }
     if profile {
         xark_frontend::relativize_profile(&mut lowered.output, crate_abs);
     }
@@ -121,6 +186,9 @@ fn build_stable(
     }
     if let Some(entry) = &lowered.entry {
         let _ = std::fs::write(out_abs.join("entry"), entry);
+    }
+    if let Some(d) = &digest {
+        let _ = std::fs::write(out_abs.join("digest"), format!("{d}\n"));
     }
     let _ = std::fs::write(
         out_abs.join("schema.json"),
@@ -134,6 +202,14 @@ fn build_stable(
         lowered.output.r1cs.constraints.len(),
         p.witness_gen.len(),
     );
+    if let Some(d) = &digest {
+        let pinned = if pin_path.exists() {
+            " (matches xark.digest)"
+        } else {
+            ""
+        };
+        eprintln!("{} circuit digest {d}{pinned}", crate::style::tag());
+    }
     eprintln!(
         "{} wrote {}",
         crate::style::tag(),

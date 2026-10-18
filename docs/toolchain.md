@@ -23,14 +23,43 @@ removed once the stable frontend matched or beat it on every example: setup-mini
 circuits within +0.3% everywhere and up to 7% smaller, the same accept/reject verdict
 on every example's test inputs, and faster, smaller builds.)
 
+## Toolchain policy
+
+A circuit's proving and verifying keys are made for one exact constraint system,
+so the thing that matters is the **circuit digest**: a fingerprint of the R1CS
+that `xark build` prints and writes to `target/xark/<name>/digest`.
+
+- **Rust version.** Any stable Rust from 1.88 on builds circuits, and a circuit's
+  digest is the same on every one of them. That is a tested guarantee, not a
+  hope: `ci.yml` checks all 70 examples on 1.88, stable and beta on every push,
+  and `nightly-kats.yml` re-checks stable, beta and nightly daily, so a Rust
+  release that would change a circuit is caught while it is still in beta. If one
+  does, we fix xark so the old digest comes back; we don't ask anyone to make new
+  keys. You don't need to pin Rust (a `rust-toolchain.toml` does no harm).
+- **xark version.** Only your code or an xark upgrade may change a circuit. An
+  xark release that changes any circuit (a gadget fix, a lowering change) gets a
+  minor version bump before 1.0 (0.3 → 0.4) and is listed under "Circuits that
+  changed" in [CHANGELOG.md](../CHANGELOG.md); a patch release never changes one.
+  Lock the xark version (commit `Cargo.lock`) for anything deployed.
+- **Minimum Rust.** Raised only in a minor release, and noted in the changelog.
+  Nightly works but isn't supported; it's checked only as an early warning.
+
+**Pin your circuit.** Run `xark build --pin` once the circuit is final and commit
+the `xark.digest` file it writes in the crate. From then on, every `xark build`
+— any machine, any toolchain, CI — refuses a circuit whose digest differs, before
+it overwrites anything. After an intended change (your code, an xark upgrade
+listed in the changelog), run `xark build --pin` again and make new keys.
+
 ## When a circuit digest changes
 
 `scripts/stable-digests.sh --check` failing means one of two things:
 
 - **A toolchain changed a circuit** — rustc lowered some witness operation
   differently (LLVM rewriting integer ops). That is a bug: report it with the
-  toolchain and example, and pin the operation through an intrinsic.
+  toolchain and example, and pin the operation through an intrinsic so the
+  circuit (and its digest) goes back to what it was.
 - **The lowering changed on purpose** — run `scripts/stable-digests.sh --update`,
   review the diff, re-check the snapshot suite (`cd crates/lang && cargo test
   --release --test snapshot -- --include-ignored`) and the Lean-model bridges, and
-  regenerate any keys built from the old circuits.
+  regenerate any keys built from the old circuits. Name every changed circuit in
+  CHANGELOG.md and bump the minor version (see the policy above).

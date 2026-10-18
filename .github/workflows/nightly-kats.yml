@@ -106,3 +106,31 @@ jobs:
         # (never the flat system), and the count pins are a streamed digest — so
         # the peak is the compiler subprocess (~5 GB), well under the runner.
         run: cargo test -p xark-ed25519 -p xark-secp256k1 -p xark-secp256r1 --release
+
+  toolchain-drift:
+    # Early warning for a Rust release that would change a circuit (and so break
+    # every key made for it): rebuild every example with today's stable, beta and
+    # nightly and compare with tests/stable-digests.txt. `ci.yml` runs the same
+    # check on 1.88/stable/beta, but only when something is pushed; this catches a
+    # new beta or nightly weeks before it becomes stable. Nightly is a canary, not
+    # a supported toolchain — see "Toolchain policy" in docs/toolchain.md.
+    name: circuit digests on ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install workspace toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install toolchain under test
+        run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --target wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Compare circuit digests
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: scripts/stable-digests.sh --check
