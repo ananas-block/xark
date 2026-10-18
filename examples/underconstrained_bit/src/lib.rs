@@ -1,5 +1,5 @@
 //! **Intentionally unsound** circuit: a witness-based under-constraint the
-//! structural build-time pin check (`lower_mir::check_pinning`) cannot catch.
+//! structural build-time pinning gate (`xark-frontend`'s `check_pinning`) cannot catch.
 //!
 //! `b` is hinted to bit 0 of `x` and only pinned boolean (`b*b == b`). That
 //! constraint references `b` so the structural gate is satisfied, but booleanity

@@ -281,7 +281,7 @@ fn put_r1csrow(buf: &mut Vec<u8>, r: &R1csRow) {
 }
 
 /// Encode one witness-gen op into `stream`, returning its first output `VarId`.
-/// Public so `lower_mir` can reuse the exact same witness wire format.
+/// Public so the frontend's encoder can reuse the exact same witness wire format.
 pub fn put_witness(stream: &mut Vec<u8>, w: &WitnessGen) -> u32 {
     match w {
         WitnessGen::Product { out, left, right } => {

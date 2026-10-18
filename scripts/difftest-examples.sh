@@ -25,6 +25,8 @@ if [ ${#names[@]} -eq 0 ]; then
     [ -f "$d/src/lib.rs" ] && grep -q '#\[circuit\]' "$d/src/lib.rs" && names+=("$(basename "$d")")
   done
 fi
+# Intentionally unsound examples: the search must find their second witness.
+unsound=" underconstrained_bit "
 fails=0
 for n in "${names[@]}"; do
   out="$work/build/$n"
@@ -44,6 +46,15 @@ for n in "${names[@]}"; do
     continue
   fi
   base="${XARK_DIFF_BASE:+$XARK_DIFF_BASE/$n/circuit.xbc}"
+  if [[ "$unsound" == *" $n "* ]]; then
+    "$difftest" "${base:-$out/circuit.xbc}" "$out/circuit.xbc" "$dump" --search > "$work/$n.diff.log" 2>&1 || true
+    if grep -q "two witnesses" "$work/$n.diff.log"; then
+      echo "$n: intentionally under-constrained — second witness found"
+    else
+      fails=$((fails + 1)); echo "$n: FAILED — its known under-constraint went undetected"
+    fi
+    continue
+  fi
   if "$difftest" "${base:-$out/circuit.xbc}" "$out/circuit.xbc" "$dump" --search > "$work/$n.diff.log" 2>&1; then
     echo "$n: $(tail -2 "$work/$n.diff.log" | tr '\n' ' ')"
   else

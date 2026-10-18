@@ -9,7 +9,7 @@
 //! row LCs), and in a witness stream `4` (the next CALLs of the scope's
 //! constraint stream). Template bodies may contain CALLs (nested templates).
 //!
-//! Decode half of `lower_mir::build_function_blob`; lives in `xark-ir` so both the
+//! Decode half of `xark-frontend`'s `build_function_blob` (`output.rs`); lives in `xark-ir` so both the
 //! `xark` CLI and the compiler can reach it. Parses the container (function defs +
 //! top-level streams) and expands it to a full [`CircuitProgram`], the same shape a
 //! flat `circuit.xbc` yields. Wire format is defined jointly with the encoder; both
@@ -210,7 +210,7 @@ fn get_witness_with(
     }
 }
 
-/// Primary output var of a witness op (mirrors `lower_mir::witness_gen_out`);
+/// Primary output var of a witness op;
 /// decides whether the op survives the var prune.
 fn witness_out(op: &WitnessGen) -> VarId {
     match op {
@@ -231,7 +231,7 @@ fn witness_out(op: &WitnessGen) -> VarId {
 
 // Substitution: internals shift base+offset; plug vars map to plug LCs.
 /// Substitute an LC under `s`: each term `coeff·var` becomes `coeff · s(var)`.
-/// Mirrors `lower_mir::replay_function`'s `subst_lc`, so a bytecode CALL expands
+/// Mirrors the encoder's substitution (`xark-frontend`'s `subst_witness_vars`), so a bytecode CALL expands
 /// byte-identically to a walked replay.
 /// A variable substitution: the identity (top level), or a template call's —
 /// the def's fresh internals shifted to the call's `base`, its plugs replaced by
@@ -435,7 +435,7 @@ struct GDef {
 /// `count · period` individual CALLs it stands for. Iteration `k` of template `j`
 /// gets `base = base0 + k·base_step` and each plug-LC term var `var0 + k·var_step`
 /// (coeffs/constants loop-invariant). Expanding at parse time keeps the rolled form
-/// BYTE-IDENTICAL to the unrolled CALL tokens. Mirrors `lower_mir::put_rolled_call`.
+/// BYTE-IDENTICAL to the unrolled CALL tokens. Mirrors the encoder's `put_rolled_call_compact`.
 fn parse_rolled_calls(b: &[u8], p: &mut usize) -> Vec<(u32, u32, Vec<LinearCombination>)> {
     let count = get_uv(b, p) as i64;
     let period = get_uv(b, p) as usize;
