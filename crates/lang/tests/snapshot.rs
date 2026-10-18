@@ -65,7 +65,14 @@ fn accepts_exactly(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)]) -> 
             }
             true
         }
-        WitnessSearch::None => false,
+        WitnessSearch::None => {
+            // A witness the hint program computes and every row checks would
+            // contradict `None` (the search pruned a real witness).
+            if xark_ir::solver::solve_and_check(&program, &ids).is_ok() {
+                panic!("{inputs:?}: the search found no witness, but the hint program's checks");
+            }
+            false
+        }
         other => panic!("{inputs:?}: {other:?}"),
     }
 }
@@ -112,7 +119,13 @@ fn accepts_best_effort(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)])
             );
             true
         }
-        WitnessSearch::None => false,
+        WitnessSearch::None => {
+            assert!(
+                honest.is_err(),
+                "{inputs:?}: the search found no witness, but the hint program's checks"
+            );
+            false
+        }
         WitnessSearch::Multiple { name, .. } => panic!("{inputs:?}: two witnesses (`{name}`)"),
         WitnessSearch::Inconclusive(_) => match honest {
             Ok(assign) => {
@@ -3139,6 +3152,10 @@ struct BignumCase {
 /// exactly the reference (canonical); outside it the output must still be `≡` the
 /// reference or there must be no witness — never a wrong value, never two values.
 /// (This is what caught `mod_add` wrapping an overflowing sum and `mod_neg(0) = m`.)
+///
+/// Blind spot: at 3 × 2 bits every recomposition is far below Fr, so a check that is
+/// only wrong when a full-width value wraps the field can't show up here — that class
+/// is tested at full width (`mod_neg_full_width`, `lazy_field_gadgets_are_sound`).
 #[test]
 fn small_field_bignum_gadgets_are_sound() {
     use xark_ir::witness_search::{Projection, search_projection};
@@ -3382,14 +3399,22 @@ fn lazy_field_gadgets_are_sound() {
             seed ^= seed << 17;
             seed
         };
+        let (mut decided, mut beyond) = (0usize, 0usize);
         for t in 0..48usize {
             let mut limb = |j: usize| -> BigInt {
-                let bits = if (t + j) % 6 == 5 { bound + 1 } else { bound };
-                let max: BigInt = (BigInt::from(1) << bits) - 1;
+                let max: BigInt = (BigInt::from(1) << bound) - 1;
                 match (t + j) % 6 {
                     0 => BigInt::from(0),
                     1 => max,
-                    _ => (BigInt::from(next()) | (BigInt::from(next()) << 64)) & max,
+                    r => {
+                        let x = (BigInt::from(next()) | (BigInt::from(next()) << 64)) & max;
+                        // one bit past the bound: always set, so it really exceeds it
+                        if r == 5 {
+                            x | (BigInt::from(1) << bound)
+                        } else {
+                            x
+                        }
+                    }
                 }
             };
             let a: Vec<BigInt> = (0..n).map(&mut limb).collect();
@@ -3415,6 +3440,8 @@ fn lazy_field_gadgets_are_sound() {
                     let ls: Vec<BigInt> =
                         v.iter().map(|x| x.to_decimal().parse().unwrap()).collect();
                     assert_eq!(value(&ls, w) % p, want, "{call} {a:?} {b:?}: wrong value");
+                    decided += 1;
+                    beyond += !within as usize;
                 }
                 Projection::None => assert!(
                     !(within && total),
@@ -3423,6 +3450,12 @@ fn lazy_field_gadgets_are_sound() {
                 other => panic!("{call} {a:?} {b:?}: {other:?}"),
             }
         }
+        // Not vacuous: most samples are computed, not just rejected.
+        assert!(
+            decided >= 24,
+            "{call}: only {decided}/48 samples gave a value"
+        );
+        println!("{call}: {decided}/48 exact ({beyond} past the bound)");
     }
 }
 
@@ -4972,4 +5005,243 @@ fn build_writes_input_schema() {
             "public_inputs": ["policy.min", "policy.tags[0]", "policy.tags[1]", "out"],
         })
     );
+}
+
+/// Compile `body` as a bn254 circuit with `params` and, per case, check the
+/// exhaustive search accepts exactly when `accepted` says so.
+fn probe(name: &str, params: &str, body: &str, cases: &[(&[(&str, &str)], bool)]) {
+    let src = format!(
+        "#![no_std]\n#![allow(arithmetic_overflow, clippy::all)]\nuse xark::prelude::*;\n\
+         pub fn circuit({params}) {{\n{body}\n}}\n"
+    );
+    let c = compile_with_field(&write_case(name, &src), name, "bn254");
+    assert!(c.status_success, "{name}: {}", c.stderr);
+    for &(inputs, want) in cases {
+        assert_eq!(accepts_exactly(&c, inputs), want, "{name} {inputs:?}");
+    }
+}
+
+/// A `witness_begin()`/`witness_end()` region emits no constraints, so nothing it
+/// computes may be remembered as proven: redoing the same bit decomposition, select,
+/// AND, XOR or bounded subtraction after the region must constrain it afresh.
+#[test]
+fn witness_regions_leave_no_proven_facts() {
+    probe(
+        "wo_bits",
+        "x: Private<Field>, out: Public<Field>",
+        "witness_begin();\nlet _ = core::hint::black_box(x.to_bits::<8>());\nwitness_end();\n\
+         let b = x.to_bits::<8>();\nrequire_eq(b[0] + b[1] * 2u64 + b[2] * 4u64, out);",
+        &[
+            (&[("x", "5"), ("out", "5")], true),
+            (&[("x", "5"), ("out", "4")], false),
+            (&[("x", "300"), ("out", "4")], false),
+        ],
+    );
+    probe(
+        "wo_mux",
+        "c: Private<Field>, x: Private<Field>, y: Private<Field>, out: Public<Field>",
+        "witness_begin();\nlet r = if c == 1u64 { x } else { y };\n\
+         let _ = core::hint::black_box(r * r);\nwitness_end();\n\
+         let r2 = if c == 1u64 { x } else { y };\nrequire_eq(r2, out);",
+        &[
+            (&[("c", "1"), ("x", "5"), ("y", "7"), ("out", "5")], true),
+            (&[("c", "1"), ("x", "5"), ("y", "7"), ("out", "7")], false),
+            (&[("c", "0"), ("x", "5"), ("y", "7"), ("out", "7")], true),
+        ],
+    );
+    probe(
+        "wo_and",
+        "a: Private<u32>, b: Private<u32>, k: Private<u32>, out: Public<Field>",
+        "witness_begin();\ncore::hint::black_box(a & b);\nwitness_end();\n\
+         require_eq(Field::from(a & k), out);",
+        &[
+            (&[("a", "3"), ("b", "6"), ("k", "1"), ("out", "1")], true),
+            (&[("a", "3"), ("b", "6"), ("k", "1"), ("out", "0")], false),
+        ],
+    );
+    probe(
+        "wo_xor",
+        "x: Private<Field>, y: Private<Field>, out: Public<Field>",
+        "let a = x.to_bits::<1>()[0];\nlet b = y.to_bits::<1>()[0];\n\
+         witness_begin();\nlet c = core::hint::black_box(a ^ b);\nwitness_end();\n\
+         let d = (a ^ b).to_bits::<1>()[0];\nlet _ = c;\nrequire_eq(d, out);",
+        &[
+            (&[("x", "1"), ("y", "0"), ("out", "1")], true),
+            (&[("x", "1"), ("y", "0"), ("out", "0")], false),
+            (&[("x", "1"), ("y", "1"), ("out", "0")], true),
+        ],
+    );
+    probe(
+        "wo_bound",
+        "x: Private<u64>, out: Public<Field>",
+        "witness_begin();\ncore::hint::black_box(1u64 - x);\nwitness_end();\n\
+         require_eq(Field::from(x.wrapping_mul(1 << 40)), out);",
+        &[
+            (&[("x", "1"), ("out", "1099511627776")], true),
+            (&[("x", "1073741825"), ("out", "1099511627776")], true),
+            (
+                &[("x", "1073741825"), ("out", "1180591620717411303424")],
+                false,
+            ),
+        ],
+    );
+}
+
+/// Memory reached through a select of pointers: a `memory.copy` from a nested
+/// select, an unaligned store whose two possible targets overlap, and a
+/// sign-extending byte load of a select with a negative constant arm.
+#[test]
+fn memory_through_pointer_selects() {
+    probe(
+        "copy_nested_select",
+        "m: Private<u64>, n: Private<u64>, out: Public<Field>",
+        "let a = [1u64; 64];\nlet b = [2u64; 64];\nlet c = [3u64; 64];\nlet mut d = [0u64; 64];\n\
+         let p: &[u64; 64] = if m == 1 { if n == 1 { &a } else { &b } } else { &c };\n\
+         d.copy_from_slice(core::hint::black_box(p));\ncore::hint::black_box(&mut d);\n\
+         require_eq(Field::from(d[0] + d[63]), out);",
+        &[
+            (&[("m", "1"), ("n", "1"), ("out", "2")], true),
+            (&[("m", "1"), ("n", "1"), ("out", "0")], false),
+            (&[("m", "1"), ("n", "0"), ("out", "4")], true),
+            (&[("m", "0"), ("n", "1"), ("out", "6")], true),
+        ],
+    );
+    probe(
+        "store_overlapping_select",
+        "c: Private<u64>, x: Private<u64>, out: Public<Field>",
+        "let mut buf = [0u8; 16];\nlet i = if c == 1 { 0 } else { 4 };\n\
+         unsafe { core::ptr::write_unaligned(buf.as_mut_ptr().add(i) as *mut u64, x) };\n\
+         let buf = core::hint::black_box(buf);\n\
+         let v = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);\n\
+         require_eq(Field::from(v), out);",
+        &[
+            (
+                &[
+                    ("c", "1"),
+                    ("x", "1234605616436508552"),
+                    ("out", "287454020"),
+                ],
+                true,
+            ),
+            (
+                &[("c", "1"), ("x", "1234605616436508552"), ("out", "0")],
+                false,
+            ),
+            (
+                &[
+                    ("c", "0"),
+                    ("x", "1234605616436508552"),
+                    ("out", "1432778632"),
+                ],
+                true,
+            ),
+        ],
+    );
+    probe(
+        "sext_load_select",
+        "c: Private<u64>, y: Private<u32>, out: Public<Field>",
+        "#[inline(never)]\nfn first(a: &[i8; 4]) -> i32 { a[0] as i32 }\n\
+         let arr: [i8; 4] = [if c == 1 { -128 } else { 5 }, 0, 0, 0];\n\
+         let v = first(core::hint::black_box(&arr));\n\
+         require_eq(Field::from((v as u32) ^ y), out);",
+        &[
+            (&[("c", "1"), ("y", "0"), ("out", "4294967168")], true),
+            (&[("c", "1"), ("y", "0"), ("out", "0")], false),
+            (&[("c", "0"), ("y", "1"), ("out", "4")], true),
+        ],
+    );
+}
+
+/// `mod_neg` at full width (4 × 64 bits, secp256k1's `p`): `b = k·Fr` (k = 1..5, all
+/// `< p`) recomposes to `p` in the field, which once made `out = m` misfire and return
+/// non-canonical limbs. Every case must give exactly `(p − b) mod p`, canonical.
+#[test]
+fn mod_neg_full_width() {
+    use num_bigint::BigUint;
+    let p = BigUint::parse_bytes(
+        b"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F",
+        16,
+    )
+    .unwrap();
+    let fr = BigUint::parse_bytes(
+        b"21888242871839275222246405745257275088548364400416034343698204186575808495617",
+        10,
+    )
+    .unwrap();
+    let src = format!(
+        "#![no_std]\nuse xark::prelude::*;\nuse xark_bignum::*;\n\
+         const MM: [Field; 4] = modulus_limbs::<4, 64>(\"{p}\");\n\
+         #[circuit]\n\
+         pub fn circuit(a: Private<Bignum<4, 64>>, s: Public<Bignum<4, 64>>) {{\n\
+         \x20   range_check_limbs::<4, 64>(a.limbs);\n\
+         \x20   let r = mod_neg::<4, 64>(a.limbs, MM);\n\
+         \x20   let mut i = 0;\n\
+         \x20   while i < 4 {{ require_eq(r[i], s.limbs[i]); i += 1; }}\n\
+         }}\n"
+    );
+    let c = compile_with_field(&write_case("mod_neg_full", &src), "mod_neg_full", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let limbs = |x: &BigUint, n: &str| -> Vec<(String, String)> {
+        (0..4)
+            .map(|i| {
+                let l: BigUint = (x >> (64 * i)) & BigUint::from(u64::MAX);
+                (format!("{n}.limbs[{i}]"), l.to_string())
+            })
+            .collect()
+    };
+    let mut bs: Vec<BigUint> = (1u32..=5).map(|k| &fr * k).collect();
+    bs.extend([BigUint::from(0u8), BigUint::from(1u8), p.clone(), &p - 1u8]);
+    for b in bs {
+        assert!(b <= p);
+        let want = (&p - &b) % &p;
+        for (s, ok) in [(want.clone(), true), ((&want + 1u8) % &p, false)] {
+            let named: Vec<_> = limbs(&b, "a").into_iter().chain(limbs(&s, "s")).collect();
+            let refs: Vec<(&str, &str)> = named
+                .iter()
+                .map(|(n, v)| (n.as_str(), v.as_str()))
+                .collect();
+            assert_eq!(accepts_best_effort(&c, &refs), ok, "b = {b}, s = {s}");
+        }
+    }
+}
+
+/// A loop whose length is a witness bounded by its width (`0..(a & 3)`) unrolls: once
+/// the counter passes the bound's proven width the exit test is decided. An unbounded
+/// one (`0..(a & 255)` nests one witness branch per iteration) is refused with a
+/// diagnostic — it once overflowed the frontend's stack.
+#[test]
+fn witness_bounded_loops() {
+    let body = "let n = (a & 3) as usize;\nlet mut s = 0u32;\n\
+                for i in 0..n { s += core::hint::black_box(i as u32 * 5 + 1); }\n\
+                require_eq(Field::from(s), o);";
+    let cases: Vec<(String, String, bool)> = (0u32..8)
+        .flat_map(|a| {
+            let want: u32 = (0..(a & 3)).map(|i| i * 5 + 1).sum();
+            [
+                (a.to_string(), want.to_string(), true),
+                (a.to_string(), (want + 1).to_string(), false),
+            ]
+        })
+        .collect();
+    let refs: Vec<([(&str, &str); 2], bool)> = cases
+        .iter()
+        .map(|(a, o, ok)| ([("a", a.as_str()), ("o", o.as_str())], *ok))
+        .collect();
+    let cases: Vec<(&[(&str, &str)], bool)> = refs.iter().map(|(x, ok)| (&x[..], *ok)).collect();
+    probe(
+        "bounded_loop",
+        "a: Private<u32>, o: Public<Field>",
+        body,
+        &cases,
+    );
+    let src = "#![no_std]\nuse xark::prelude::*;\npub fn circuit(a: Private<u32>, o: Public<Field>) {\n\
+               let n = (a & 255) as usize;\nlet mut s = 0u32;\n\
+               for i in 0..n { s += core::hint::black_box(i as u32); }\nrequire_eq(Field::from(s), o);\n}\n";
+    let c = compile_with_field(
+        &write_case("unbounded_loop", src),
+        "unbounded_loop",
+        "bn254",
+    );
+    assert!(!c.status_success);
+    assert!(c.stderr.contains("nest too deeply"), "{}", c.stderr);
 }

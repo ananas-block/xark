@@ -42,7 +42,7 @@ replaces:
 
 * **Large linear combinations stay inline** in multiplication rows (the MIR frontend
   named any operand over 8 terms with an extra constraint). Fewer constraints: Poseidon
-  400 → 241, Pedersen 5575 → 3340.
+  400 → 238, Pedersen 5575 → 3340.
 * **Repeated products are reused**: a second `A · B` of an existing row `A · B = x`
   returns `x` (the row is re-checked to be literally that). SHA-256's `Maj` reuses
   the previous round's `a ∧ b` (−1952 rows); a 3-limb square's cross terms (−9).
@@ -114,6 +114,14 @@ a constant that is required outside any witness branch records the bound it prov
 which also lets a provably small 64-bit value skip truncation. Shifts by a witness amount use
 `2^k = Π (1 + (2^2^i − 1)·kᵢ)`.
 
+### Witness-only regions
+
+Between `witness_begin()` and `witness_end()` nothing is constrained: values are computed
+for the witness only, and requirements are dropped. Nothing computed there counts as
+proven afterwards — the bit-decomposition cache, select and product reuse, the set of
+proven booleans and the bounds learned from comparisons are only fed by emitted rows — so
+redoing an operation after the region constrains it again.
+
 ### Native-semantics fuzzing
 
 `crates/lang/tests/semantics_fuzz.rs` generates random programs over witness `uN`
@@ -144,7 +152,10 @@ plan) is caught by these tests, except a handful that only a specific shape reac
 those shapes are regression tests in `snapshot.rs` (`pruned_arms_constrain_the_condition`,
 `conditional_*`). About 0.3% of fuzz programs are still refused with a diagnostic
 (beyond ones that always panic): a loop whose exit LLVM made witness-dependent, and the
-odd store whose index the frontend can't bound.
+odd store whose index the frontend can't bound. A comparison the operands' proven bounds
+already decide is folded to a constant, so a loop over `0..n` with `n` a narrow witness
+(`x & 3`) unrolls; one whose witness branches keep nesting (an unbounded witness length)
+is refused after 48 levels.
 
 **Soundness of the reductions.** The lowering differed from the MIR one only by those
 four rules (the switches are `mat_threshold`, `cse`, `reduce` and the `pow` fold; when

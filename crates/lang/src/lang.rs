@@ -7,8 +7,8 @@
 // Off the circuit build, an intrinsic's body is `intrinsics::__xark_marker` (an
 // explanatory panic on the host).
 #![allow(clippy::empty_loop)]
-// The compiler rejects compound assignment on `Field`, so `acc = acc + …` is
-// required, not `acc += …`.
+// Written in the `acc = acc + …` style (the old compiler rejected `+=` on `Field`;
+// the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
 use core::cmp::{Ordering, PartialOrd};
@@ -824,7 +824,7 @@ impl_field_int_rem!(u8 => 8, u16 => 16, u32 => 32, u64 => 64);
 ///
 /// Dispatches through [`RequireEqCircuit`], so one `require_eq` compares scalars
 /// (`Field`/`bool`), fixed arrays `[T; N]` element-wise, and composite gadget
-/// outputs (e.g. a SHA-256 digest `[[Field; 32]; 8]` vs a [`Digest`](crate::Digest)).
+/// outputs (e.g. a SHA-256 digest `[[Field; 32]; 8]` vs a `Digest`).
 /// Every leaf bottoms out at the recognized scalar intrinsic
 /// ([`__xark_require_eq_scalar`]). A marker: the compiler lowers each leaf to an
 /// R1CS constraint rather than executing it.
@@ -862,8 +862,11 @@ pub fn require_ne(a: impl Into<Field>, b: impl Into<Field>) {
 /// coordinate) at **zero constraint cost**, then pin only the final result with
 /// normal constrained code after `witness_end`.
 ///
-/// Soundness is the caller's: nothing inside the region is constrained, so every
-/// value that must be trusted has to be pinned afterwards. A marker — never executes.
+/// Soundness is the caller's: nothing inside the region is constrained — a
+/// `require_eq`/`assert!` there is not enforced — so every value that must be
+/// trusted has to be pinned afterwards. Nothing done in the region counts as proven
+/// later: recomputing a value after `witness_end` (a `to_bits`, a select, a bounded
+/// subtraction) constrains it afresh. A marker — never executes.
 #[inline(never)]
 pub fn witness_begin() {
     #[cfg(all(xark, target_arch = "wasm32"))]

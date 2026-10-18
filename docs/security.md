@@ -287,6 +287,22 @@ hint output that is not subsequently constrained, that witness is free and the p
 unsound** — an explicit out-of-scope assumption per [§1](#1-threat-model): constraining
 every hint value is the author's/gadget's responsibility.
 
+### 2.17 Witness branches and witness-only regions
+
+**Where.** `crates/frontend/src/{interp,host,builder}.rs`; semantics in
+`crates/frontend/README.md` and [subset.md](subset.md#branches-on-witness-values).
+**Branches.** Both arms of a witness `if` run; an arm's requirements are emitted as
+`g · (a − b) = 0` and its hints pinned to 0 where it isn't taken (Lean: `gated_sat`,
+`guard_mul`, `pin_dead`, `select_taken`). A requirement inside an arm is therefore
+**vacuous when the arm isn't taken** — review that every check a circuit relies on
+unconditionally sits outside any witness branch. **Witness-only regions**
+(`witness_begin()`/`witness_end()`) emit no constraints at all: a value computed inside is
+free until pinned afterwards, and a requirement inside is not enforced. The frontend's
+memo tables — the bit-decomposition cache, select and product reuse, proven booleans,
+proven bounds — are **only fed by emitted rows**, so recomputing a value after the region
+constrains it afresh (`witness_regions_leave_no_proven_facts` in
+`crates/lang/tests/snapshot.rs`). Review each region's outputs for a pin.
+
 ## 3. Trusted setup
 
 ### Assumption restated

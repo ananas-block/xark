@@ -106,8 +106,8 @@ pub struct Host {
     pub(crate) gc_at: usize,
     /// `Sym::Wire` id → its linear combination.
     wires: Vec<LinearCombination>,
-    /// Constraints or hints emitted that can fail for some inputs ("partial"): a
-    /// witness branch's arms may emit only total ones (see `crate::interp`'s fork).
+    /// Partial intrinsics (ones some inputs can't satisfy) run outside a guard; in
+    /// an arm only input declarations count (see `crate::interp`'s fork).
     pub(crate) partial: usize,
     /// The witness-branch arms being run, outermost first: `(literal, guard)` where
     /// `literal` is the arm's condition (`c` or `1 − c`) and `guard` the conjunction
@@ -185,7 +185,7 @@ impl Host {
         }
     }
 
-    /// The circuit's input interface as `schema.json` (the MIR frontend's format):
+    /// The circuit's input interface as `schema.json`:
     /// rebuilt from the bound leaves' names plus the struct markers.
     pub fn schema(&self, circuit: &str) -> serde_json::Value {
         crate::schema::build(circuit, &self.leaves, &self.structs)
@@ -366,7 +366,7 @@ impl Host {
         let wb = m.read_field(ptr_of(pb)?)?;
         let va = self.view(m, &wa)?;
         let vb = self.view(m, &wb)?;
-        // `consume_pending` on each operand, as the MIR frontend does.
+        // `consume_pending` on each operand (a pending product it reads stays a row).
         for v in [&va, &vb] {
             match v {
                 View::Var(x) => self.b.consume_pending_var(*x),
@@ -583,7 +583,7 @@ impl Host {
         if 8 * k as u32 >= width {
             return Ok(LinearCombination::zero());
         }
-        let bits = self.bits_of(&lc, width as usize);
+        let bits = self.bits_of(&lc, width as usize)?;
         let hi = (8 * k as usize + 8).min(width as usize);
         Ok(Self::recompose(&bits[8 * k as usize..hi]))
     }
@@ -611,7 +611,10 @@ impl Host {
         let c = self.wires[id as usize].clone();
         let diff = t - e.clone();
         let out = e + self.b.emit_mul(c, diff);
-        self.muxes.insert(key, out.clone());
+        // Memo tables record proven facts: a witness-only region proves nothing.
+        if !self.b.witness_only {
+            self.muxes.insert(key, out.clone());
+        }
         out
     }
 
@@ -750,6 +753,12 @@ impl Host {
     /// constant are non-negative and every variable is bounded (known width,
     /// booleanity, or a proven bound); `None` otherwise.
     fn lc_bits(&self, lc: &LinearCombination) -> Option<u32> {
+        self.lc_max(lc).map(|max| 128 - max.leading_zeros())
+    }
+
+    /// An upper bound on the integer `lc` (non-negative coefficients and constant;
+    /// each variable bounded by its proven width, booleanity or a learned bound).
+    fn lc_max(&self, lc: &LinearCombination) -> Option<u128> {
         let mut max = u128::try_from(lc.constant.as_i64()?).ok()?;
         for t in &lc.terms {
             let c = u128::try_from(t.coeff.as_i64()?).ok()?;
@@ -770,7 +779,32 @@ impl Host {
             };
             max = max.checked_add(c.checked_mul(vmax)?)?;
         }
-        Some(128 - max.leading_zeros())
+        Some(max)
+    }
+
+    /// An unsigned comparison (or `==`/`!=`) the operands' bounds already decide —
+    /// e.g. a loop counter past a witness bound's proven width — with no gadget.
+    fn decided_cmp(&self, o: Cmp, la: &LinearCombination, lb: &LinearCombination) -> Option<bool> {
+        let range = |lc: &LinearCombination| -> Option<(u128, u128)> {
+            if lc.is_constant() {
+                let c = u128::try_from(lc.constant.as_i64()?).ok()?;
+                Some((c, c))
+            } else {
+                Some((0, self.lc_max(lc)?))
+            }
+        };
+        let ((alo, ahi), (blo, bhi)) = (range(la)?, range(lb)?);
+        let (lt, ge) = (ahi < blo, alo >= bhi); // a < b surely; a ≥ b surely
+        let (gt, le) = (alo > bhi, ahi <= blo); // a > b surely; a ≤ b surely
+        match o {
+            Cmp::LtU => lt.then_some(true).or(ge.then_some(false)),
+            Cmp::GeU => ge.then_some(true).or(lt.then_some(false)),
+            Cmp::GtU => gt.then_some(true).or(le.then_some(false)),
+            Cmp::LeU => le.then_some(true).or(gt.then_some(false)),
+            Cmp::Eq => (lt || gt).then_some(false),
+            Cmp::Ne => (lt || gt).then_some(true),
+            _ => None,
+        }
     }
 
     /// A gadget hint's limbs inside an arm: `g · limb`, plus `low · (1 − g)` on limb
@@ -850,10 +884,20 @@ impl Host {
 
     /// `x`'s `n` little-endian bits (range-checking `x < 2ⁿ`), memoized like
     /// `to_bits`.
-    fn bits_of(&mut self, x: &LinearCombination, n: usize) -> Vec<LinearCombination> {
+    fn bits_of(
+        &mut self,
+        x: &LinearCombination,
+        n: usize,
+    ) -> CompileResult<Vec<LinearCombination>> {
         if x.is_constant() {
-            let bits = x.constant.to_bits_le(n).unwrap_or_else(|| vec![false; n]);
-            return bits
+            // A constant wider than `n` bits would mean a width was mis-tracked;
+            // never read it as zero.
+            let bits = x.constant.to_bits_le(n).ok_or_else(|| {
+                CompileError::new(format!(
+                    "internal: a constant does not fit its {n}-bit width"
+                ))
+            })?;
+            return Ok(bits
                 .into_iter()
                 .map(|b| {
                     if b {
@@ -862,20 +906,22 @@ impl Host {
                         LinearCombination::zero()
                     }
                 })
-                .collect();
+                .collect());
         }
         if let Some(vars) = self.b.bit_sum_shortcut(x, n) {
-            return vars.into_iter().map(LinearCombination::var).collect();
+            return Ok(vars.into_iter().map(LinearCombination::var).collect());
         }
         let key = (canonical_lc_key(x), n);
         if let Some(vars) = self.b.bit_cache.get(&key) {
-            return vars.iter().map(|&v| LinearCombination::var(v)).collect();
+            return Ok(vars.iter().map(|&v| LinearCombination::var(v)).collect());
         }
         self.b.kind_stack.push(ConstraintKind::RangeCheck);
         let vars = self.b.decompose_bits(x.clone(), n);
         self.b.kind_stack.pop();
-        self.b.bit_cache.insert(key, vars.clone());
-        vars.into_iter().map(LinearCombination::var).collect()
+        if !self.b.witness_only {
+            self.b.bit_cache.insert(key, vars.clone());
+        }
+        Ok(vars.into_iter().map(LinearCombination::var).collect())
     }
 
     fn recompose(bits: &[LinearCombination]) -> LinearCombination {
@@ -890,23 +936,29 @@ impl Host {
     }
 
     /// A wire for `lc < 2^width`, truncated to the register (`reg` bits) if wider.
-    fn int_result(&mut self, m: &mut Machine, lc: LinearCombination, width: u32, reg: u32) -> V {
+    fn int_result(
+        &mut self,
+        m: &mut Machine,
+        lc: LinearCombination,
+        width: u32,
+        reg: u32,
+    ) -> CompileResult<V> {
         if lc.is_constant()
             && let Some(v) = lc.constant.as_i64()
         {
             let v = v as u64;
-            return V::c(if reg == 32 { v as u32 as u64 } else { v });
+            return Ok(V::c(if reg == 32 { v as u32 as u64 } else { v }));
         }
         // A value whose bound (from its variables' widths, booleanity and the bounds
         // unconditional checks proved) already fits needs no truncation — e.g. a
         // pointer `8·x + base` computed in 64 bits after `x ≤ 1` was checked.
         let width = width.min(self.lc_bits(&lc).unwrap_or(width));
         if width <= reg {
-            return self.new_wire(m, lc, width);
+            return Ok(self.new_wire(m, lc, width));
         }
-        let bits = self.bits_of(&lc, width as usize);
+        let bits = self.bits_of(&lc, width as usize)?;
         let low = Self::recompose(&bits[..reg as usize]);
-        self.new_wire(m, low, reg)
+        Ok(self.new_wire(m, low, reg))
     }
 }
 
@@ -928,7 +980,7 @@ impl crate::interp::Host for Host {
         // over `k`'s low bits — a nonzero divisor, so both are total.
         if matches!(o, Bin::Shl | Bin::ShrU) && b.is_sym() {
             let lg: usize = if wide { 6 } else { 5 }; // log2(reg)
-            let kb = self.bits_of(&lb, (wb as usize).max(lg));
+            let kb = self.bits_of(&lb, (wb as usize).max(lg))?;
             let mut p = LinearCombination::one();
             for (i, bit) in kb[..lg].iter().enumerate() {
                 let f = LinearCombination::one()
@@ -946,7 +998,7 @@ impl crate::interp::Host for Host {
                 self.b.consume_pending(&la);
                 self.b.consume_pending(&p);
                 let lc = self.b.emit_mul(la, p);
-                return Ok(self.int_result(m, lc, wa + reg - 1, reg));
+                return self.int_result(m, lc, wa + reg - 1, reg);
             }
             let (q, r) = (self.b.alloc_advice(), self.b.alloc_advice());
             self.b
@@ -958,8 +1010,8 @@ impl crate::interp::Host for Host {
                     den: p.clone(),
                 }));
             let (ql, rl) = (LinearCombination::var(q), LinearCombination::var(r));
-            let _ = self.bits_of(&ql, wa.max(1) as usize);
-            let _ = self.bits_of(&rl, wa.max(1) as usize);
+            let _ = self.bits_of(&ql, wa.max(1) as usize)?;
+            let _ = self.bits_of(&rl, wa.max(1) as usize)?;
             let n = wa.max(reg) as usize;
             let lt = self.b.emit_less_than(n, rl.clone(), p.clone())?;
             self.b.emit_require_eq(lt, LinearCombination::one());
@@ -967,12 +1019,12 @@ impl crate::interp::Host for Host {
             let prod = self.b.emit_mul(ql.clone(), p);
             self.b.consume_pending(&la);
             self.b.emit_require_eq(prod + rl, la);
-            return Ok(self.int_result(m, ql, wa, reg));
+            return self.int_result(m, ql, wa, reg);
         }
         Ok(match o {
             Bin::Add => {
                 let w = wa.max(wb) + 1;
-                self.int_result(m, la + lb, w, reg)
+                self.int_result(m, la + lb, w, reg)?
             }
             Bin::Sub => {
                 if konst(b) == Some(0) {
@@ -991,12 +1043,12 @@ impl crate::interp::Host for Host {
                     self.b.consume_pending(&lb);
                     (self.b.emit_mul(la, lb), wa + wb)
                 };
-                self.int_result(m, lc, w, reg)
+                self.int_result(m, lc, w, reg)?
             }
             Bin::And | Bin::Or | Bin::Xor => {
                 let n = wa.max(wb).min(reg) as usize;
-                let ba = self.bits_of(&la, n);
-                let bb = self.bits_of(&lb, n);
+                let ba = self.bits_of(&la, n)?;
+                let bb = self.bits_of(&lb, n)?;
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
                     let (x, y) = (ba[i].clone(), bb[i].clone());
@@ -1021,47 +1073,47 @@ impl crate::interp::Host for Host {
                 let lc = Self::recompose(&out);
                 // `a & b < 2^min(wa, wb)` (a constant mask's width is its bit length).
                 let w = if o == Bin::And { wa.min(wb) } else { n as u32 };
-                self.int_result(m, lc, w, reg)
+                self.int_result(m, lc, w, reg)?
             }
             Bin::Shl => {
                 let k = shift(b)?;
                 let lc = la.scale(&FieldConst::from_bigint(BigInt::from(1u8) << k));
-                self.int_result(m, lc, wa + k, reg)
+                self.int_result(m, lc, wa + k, reg)?
             }
             Bin::ShrU | Bin::ShrS => {
                 let k = shift(b)?;
                 if o == Bin::ShrS && wa >= reg {
                     // Two's complement: the logical shift plus the sign bit copied
                     // into the top `k` bits.
-                    let bits = self.bits_of(&la, reg as usize);
+                    let bits = self.bits_of(&la, reg as usize)?;
                     let top = bits[reg as usize - 1].clone();
                     let fill = pow2(reg) - pow2(reg - k);
                     let lc = Self::recompose(&bits[k as usize..])
                         + top.scale(&FieldConst::from_bigint(fill));
-                    return Ok(self.int_result(m, lc, reg, reg));
+                    return self.int_result(m, lc, reg, reg);
                 }
                 if k >= wa {
                     return Ok(V::c(0));
                 }
-                let bits = self.bits_of(&la, wa as usize);
+                let bits = self.bits_of(&la, wa as usize)?;
                 let lc = Self::recompose(&bits[k as usize..]);
-                self.int_result(m, lc, wa - k, reg)
+                self.int_result(m, lc, wa - k, reg)?
             }
             Bin::Rotl | Bin::Rotr => {
                 let k = shift(b)?;
-                let mut bits = self.bits_of(&la, reg as usize);
+                let mut bits = self.bits_of(&la, reg as usize)?;
                 if o == Bin::Rotl {
                     bits.rotate_right(k as usize);
                 } else {
                     bits.rotate_left(k as usize);
                 }
                 let lc = Self::recompose(&bits);
-                self.int_result(m, lc, reg, reg)
+                self.int_result(m, lc, reg, reg)?
             }
             Bin::DivU | Bin::RemU => match konst(b) {
                 Some(c) if c.is_power_of_two() => {
                     let k = c.trailing_zeros();
-                    let bits = self.bits_of(&la, wa.max(k) as usize);
+                    let bits = self.bits_of(&la, wa.max(k) as usize)?;
                     let lc = if o == Bin::DivU {
                         Self::recompose(&bits[k.min(wa) as usize..])
                     } else {
@@ -1072,7 +1124,7 @@ impl crate::interp::Host for Host {
                     } else {
                         k.min(wa)
                     };
-                    self.int_result(m, lc, w, reg)
+                    self.int_result(m, lc, w, reg)?
                 }
                 Some(0) => {
                     return Err(CompileError::new("integer division by zero").diverging());
@@ -1105,8 +1157,8 @@ impl crate::interp::Host for Host {
                     self.b.pin_dead(g.as_ref(), q);
                     self.b.pin_dead(g.as_ref(), r);
                     let (ql, rl) = (LinearCombination::var(q), LinearCombination::var(r));
-                    let _ = self.bits_of(&ql, wa.max(1) as usize);
-                    let _ = self.bits_of(&rl, wb.max(1) as usize);
+                    let _ = self.bits_of(&ql, wa.max(1) as usize)?;
+                    let _ = self.bits_of(&rl, wb.max(1) as usize)?;
                     let lt = self
                         .b
                         .emit_less_than(wb.max(1) as usize, rl.clone(), lb.clone())?;
@@ -1121,9 +1173,9 @@ impl crate::interp::Host for Host {
                     self.b.consume_pending(&la);
                     self.require_gated(prod + rl.clone(), la);
                     if o == Bin::DivU {
-                        self.int_result(m, ql, wa, reg)
+                        self.int_result(m, ql, wa, reg)?
                     } else {
-                        self.int_result(m, rl, wb, reg)
+                        self.int_result(m, rl, wb, reg)?
                     }
                 }
             },
@@ -1141,6 +1193,9 @@ impl crate::interp::Host for Host {
         let reg = if wide { 64 } else { 32 };
         let (la, wa) = self.int_parts(m, a)?;
         let (lb, wb) = self.int_parts(m, b)?;
+        if let Some(v) = self.decided_cmp(o, &la, &lb) {
+            return Ok(V::i32(v as u32));
+        }
         let fact = matches!(o, Cmp::LtU | Cmp::LeU | Cmp::GtU | Cmp::GeU)
             .then(|| (o, la.clone(), lb.clone()));
         let mut n = wa.max(wb).max(1) as usize;
@@ -1172,7 +1227,10 @@ impl crate::interp::Host for Host {
             Cmp::GeU | Cmp::GeS => LinearCombination::one() - lt(self, la, lb)?,
         };
         let out = self.new_wire(m, lc, 1);
-        if let Some(f) = fact {
+        // A comparison in a witness-only region has no range proof behind it.
+        if let Some(f) = fact
+            && !self.b.witness_only
+        {
             self.cmp_facts.insert(out.s, f);
         }
         Ok(out)
@@ -1277,7 +1335,7 @@ impl crate::interp::Host for Host {
             LinearCombination::zero()
         };
         self.require_gated(c, want);
-        if self.guards.is_empty() {
+        if self.guards.is_empty() && !self.b.witness_only {
             self.learn_bound(cond, value);
         }
         Ok(())
@@ -1302,7 +1360,7 @@ impl crate::interp::Host for Host {
         probe_guard(m)?;
         self.mark_site(m);
         let (lc, w) = self.int_parts(m, v)?;
-        Ok(self.int_result(m, lc, w, bits))
+        self.int_result(m, lc, w, bits)
     }
 
     fn link(&mut self, module: &Module) -> CompileResult<()> {
@@ -1733,6 +1791,7 @@ impl crate::interp::Host for Host {
                 // are `x`'s only where the arm is taken.
                 if let Some(vars) = vars
                     && self.guards.is_empty()
+                    && !self.b.witness_only
                 {
                     self.b.bit_cache.insert((canonical_lc_key(&x), n), vars);
                 }

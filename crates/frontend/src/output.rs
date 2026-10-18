@@ -23,7 +23,7 @@ pub struct LowerOutput {
     /// Emitted to a **separate** `profile.json`; never mixed into the R1CS.
     pub profile: Vec<ConstraintProfile>,
     /// When `XARK_FUNCTION_ARTIFACT` is set and the circuit has function calls, the
-    /// complete DAG-compact `VERSION_FUNCTION` container (see [`build_function_blob`]).
+    /// complete DAG-compact `VERSION_FUNCTION` container (see `build_function_blob`).
     /// The writer uses this as `circuit.xbc` verbatim instead of `roll_loops`.
     pub function_xbc: Option<Vec<u8>>,
     /// Vars allocated inside a `witness_only` region — exempt from `check_pinning`
@@ -644,8 +644,8 @@ fn put_rolled_call_compact(buf: &mut Vec<u8>, r: &RolledCall) {
 // bodies may call other defs) + top-level item streams (rows, function calls, and
 // rolled periodic runs — see below).
 
-/// The circuit-artifact container version. Version 2 is version 1 (the MIR
-/// frontend's DAG-function container) encoded more densely — the same items, so
+/// The circuit-artifact container version. Version 2 is version 1 (the original
+/// DAG-function container) encoded more densely — the same items, so
 /// the same expansion: a constant pool after the inputs; big constants as binary
 /// (or a pool index) and powers of two as exponents; var lists delta-coded; CALL
 /// plugs delta-coded; the witness stream's CALLs referring to the constraint

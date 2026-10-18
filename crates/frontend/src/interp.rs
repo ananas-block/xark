@@ -11,8 +11,10 @@
 //! where they rejoin (the exit of the innermost block both leave), recording each
 //! path's memory writes in a journal and undoing them, then merges the two states:
 //! every value that differs becomes `Ite(cond, then, else)`. The host turns an
-//! `Ite` into a mux constraint when an intrinsic reads it. Paths must be pure — no
-//! constraints or hints — which the caller checks, mirroring the MIR frontend.
+//! `Ite` into a mux constraint when an intrinsic reads it. Each path runs under a
+//! guard (the host's `arm_begin`/`arm_end`): its requirements hold only when it is
+//! taken and its hints are pinned to 0 when it isn't (see the frontend README). An
+//! arm that can only panic is pruned by requiring the condition to the other way.
 
 use std::collections::HashMap;
 
@@ -91,7 +93,7 @@ fn ty_of(v: ValType) -> CompileResult<Ty> {
     })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct FuncType {
     params: Vec<Ty>,
     results: Vec<Ty>,
@@ -1039,10 +1041,9 @@ pub trait Host {
     fn not(&mut self, m: &mut Machine, c: V) -> CompileResult<V>;
     /// Boolean `a ∧ b`, `a ∨ b`, `a ⊕ b` on `{0,1}` values (each may be concrete).
     fn bool_op(&mut self, m: &mut Machine, op: BoolOp, a: V, b: V) -> CompileResult<V>;
-    /// How many partial constraints or hints (ones some inputs can't satisfy) have
-    /// been emitted, for the branch-purity check: a witness branch's arms run
-    /// unconditionally, so they may emit only total ones (products, `==`, `<` on
-    /// known-width integers, …), whose outputs an untaken arm simply leaves unused.
+    /// How many partial intrinsics (ones some inputs can't satisfy) ran outside a
+    /// guard, for the branch check: inside an arm every constraint and hint is
+    /// guarded, so the count moves only if an arm declares a circuit input.
     fn emitted(&self) -> usize;
     /// Describe the current source location (for diagnostics).
     fn location(&self) -> Option<String>;
@@ -1486,15 +1487,18 @@ impl Machine {
         }
         let pt = self.check(t.b as u32 as u64 + off as u64, size)?;
         let pe = self.check(e.b as u32 as u64 + off as u64, size)?;
-        let old_t = self.load(pt, size)?;
-        let old_e = self.load(pe, size)?;
-        let nt = self.ite(cond, v, old_t);
-        let ne = self.ite(cond, old_e, v);
-        self.store(pt, size, nt)?;
-        if pe != pt {
-            self.store(pe, size, ne)?;
+        if pe == pt {
+            // Both arms are the same address: the store happens either way.
+            return self.store(pt, size, v);
         }
-        Ok(())
+        // Sequential, so overlapping targets see the first store: the `else`
+        // target's old bytes are read after the `then` store.
+        let old_t = self.load(pt, size)?;
+        let nt = self.ite(cond, v, old_t);
+        self.store(pt, size, nt)?;
+        let old_e = self.load(pe, size)?;
+        let ne = self.ite(cond, old_e, v);
+        self.store(pe, size, ne)
     }
 
     /// Bytes `off..off+len` of `v` as a value.
@@ -1969,7 +1973,15 @@ impl Machine {
                             .copied()
                             .flatten()
                             .ok_or_else(|| trap("indirect call to a null table entry"))?;
-                        let _ = ty;
+                        // Wasm traps when the callee's signature isn't the expected one.
+                        let fty = if f < n_imports {
+                            module.imports[f as usize].ty
+                        } else {
+                            module.funcs[(f - n_imports) as usize].ty
+                        };
+                        if module.types[fty as usize] != module.types[*ty as usize] {
+                            return Err(trap("indirect call signature mismatch"));
+                        }
                         self.st.frames[fi].pc = pc as u32;
                         self.call(module, f, host)?;
                         if f < n_imports {
@@ -2055,7 +2067,13 @@ impl Machine {
                         self.st.stack.push(V::i32((self.mem.len() / PAGE) as u32));
                     }
                     Op::MemoryGrow => {
-                        let n = self.st.stack.pop().unwrap().b as u32;
+                        let n = self.st.stack.pop().unwrap();
+                        if n.is_sym() {
+                            return Err(CompileError::new(
+                                "a witness-dependent memory grow is not supported",
+                            ));
+                        }
+                        let n = n.b as u32;
                         let old = (self.mem.len() / PAGE) as u32;
                         if old + n > 65536 / 2 {
                             self.st.stack.push(V::i32(u32::MAX));
@@ -2477,9 +2495,10 @@ impl Machine {
         let v = self.load(addr, size)?;
         if v.is_sym() {
             return match kind {
-                Mem::I32_8S | Mem::I32_16S | Mem::I64_8S | Mem::I64_16S | Mem::I64_32S => {
-                    self.sym_sext(v, 8 * size, 0, None)
-                }
+                // `reg`: the result register's width, so a concrete arm of a select
+                // sign-extends to 32 bits for an `i32` load (not 64).
+                Mem::I32_8S | Mem::I32_16S => self.sym_sext(v, 8 * size, 32, None),
+                Mem::I64_8S | Mem::I64_16S | Mem::I64_32S => self.sym_sext(v, 8 * size, 64, None),
                 _ => Ok(v),
             };
         }
@@ -2499,20 +2518,23 @@ impl Machine {
             return Ok(());
         }
         if s.is_sym() {
-            // memcpy from a select of two pointers: per 8-byte word, select.
-            let Sym::Ite { cond, t, e } = self.syms[s.s as usize].clone() else {
+            // memcpy from a select of pointers (nested selects too): load every word
+            // through the select (`load_op` recurses into each arm), then store, so an
+            // overlapping destination can't clobber a word before it is read.
+            if !matches!(self.syms[s.s as usize], Sym::Ite { .. }) {
                 return Err(CompileError::new(
                     "a memory copy from a witness-dependent pointer is not supported",
                 ));
-            };
+            }
+            let mut words = Vec::new();
             let mut i = 0;
             while i < n {
-                let w = (n - i).min(8);
-                let tv = self.load_op(V::c(t.b + i as u64), 0, word_mem(w))?;
-                let ev = self.load_op(V::c(e.b + i as u64), 0, word_mem(w))?;
-                let v = self.ite(cond, tv, ev);
-                self.store(d + i, w, v)?;
+                let w = [8, 4, 2, 1].into_iter().find(|&w| w <= n - i).unwrap();
+                words.push((i, w, self.load_op(s, i, word_mem(w))?));
                 i += w;
+            }
+            for (i, w, v) in words {
+                self.store(d + i, w, v)?;
             }
             return Ok(());
         }
@@ -2947,6 +2969,16 @@ impl Machine {
                 .unwrap_or_else(probe_end));
         }
         self.forks += 1;
+        // Witness branches nest only when a path doesn't rejoin before the next one —
+        // in practice a loop whose exit depends on a witness, which would otherwise
+        // recurse without end.
+        if self.path_depth >= MAX_PATH_DEPTH {
+            return Err(CompileError::new(
+                "witness-dependent branches nest too deeply (a loop whose length depends on a witness?)",
+            )
+            .with_help("loops must have compile-time-constant bounds")
+            .or_location(|| host.location()));
+        }
         // The common case — `assert!`, checked arithmetic, bounds checks — is an arm
         // that goes straight to a panic, with the other arm carrying on through the
         // rest of the circuit (emitting more constraints). Find that cheaply first:
@@ -2993,20 +3025,17 @@ impl Machine {
                 return t_run.map(|_| ());
             }
             if t_emitted != before || host.emitted() != t_emitted {
-                return Err(CompileError::new(
-                    "a branch on a witness value that may panic emits a constraint before it \
-                     that can't be made conditional",
-                )
-                .or_location(|| host.location()));
+                return Err(unguardable(host));
             }
-            let (live, take_then) = if t_div {
-                (else_st, false)
-            } else {
-                (then_st, true)
-            };
-            host.require_cond(self, cond, take_then)?;
-            // Re-run the surviving arm for real (its writes were undone).
+            host.require_cond(self, cond, e_div)?;
+            // Resume the surviving arm where it paused, its writes replayed: what it
+            // emitted (guarded by the condition, now pinned) already binds.
+            let (live, writes) = if t_div { e_run? } else { t_run? };
             self.st = live;
+            for (a, byte, sb) in writes {
+                self.journal(a, 1);
+                self.put_byte(a, byte, sb);
+            }
             if self.st.ctl.len() > stop {
                 self.run(module, host, stop)?;
             }
@@ -3037,11 +3066,7 @@ impl Machine {
                 // That arm panics further on: as above, the other one is taken.
                 Err(err) if err.diverged => {
                     if host.emitted() != before {
-                        return Err(CompileError::new(
-                            "a branch on a witness value that may panic emits a constraint before it \
-                             that can't be made conditional",
-                        )
-                        .or_location(|| host.location()));
+                        return Err(unguardable(host));
                     }
                     host.require_cond(self, cond, !deeper_then)?;
                     let (live, writes) = if deeper_then { (e, ew) } else { (t, tw) };
@@ -3064,16 +3089,7 @@ impl Machine {
             }
         }
         if host.emitted() != before {
-            return Err(CompileError::new(
-                "a branch on a witness value emits a constraint inside an arm that can't be \
-                 made conditional",
-            )
-            .with_help(
-                "both arms run for every witness, and everything an arm requires applies only \
-                 when it's taken; this one doesn't support that — move it before the `if`, or \
-                 select values and constrain after it",
-            )
-            .or_location(|| host.location()));
+            return Err(unguardable(host));
         }
         self.merge(cond, t, e, tw, ew)?;
         if self.path_depth == 0 {
@@ -3247,9 +3263,20 @@ fn word_mem(w: u32) -> Mem {
         4 => Mem::I32,
         2 => Mem::I32_16U,
         1 => Mem::I32_8U,
-        _ => Mem::I64,
+        _ => unreachable!("word widths are 1, 2, 4 or 8"),
     }
 }
+
+/// An arm did something that can't run under a guard (`Host::emitted` counts it:
+/// declaring a circuit input); every constraint and hint intrinsic is guarded.
+fn unguardable(host: &dyn Host) -> CompileError {
+    CompileError::new("a branch on a witness value declares a circuit input inside an arm")
+        .with_help("read every input before branching on witness values")
+        .or_location(|| host.location())
+}
+
+/// How many witness branches may be open at once (see `fork`).
+const MAX_PATH_DEPTH: u32 = 48;
 
 fn witness_loop() -> CompileError {
     CompileError::new("a loop whose exit depends on a witness value can't be unrolled")

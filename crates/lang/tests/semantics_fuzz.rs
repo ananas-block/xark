@@ -783,4 +783,9 @@ fn circuits_match_native_rust_semantics() {
         failures.join("\n---\n")
     );
     assert!(compiled > 0, "no generated program compiled");
+    // The adversarial half must check something: at most 10% of searches undecided.
+    assert!(
+        searches > 0 && undecided * 10 <= searches,
+        "{undecided} of {searches} witness searches inconclusive"
+    );
 }

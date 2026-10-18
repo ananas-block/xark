@@ -7,8 +7,8 @@
 //! crate runs the module in an interpreter that implements those imports as the
 //! circuit builder: concrete values (constants, loop counters, indices) just execute,
 //! while witness values are tracked symbolically. A branch on a witness `bool` runs
-//! both arms and merges what differs into selects, exactly like the MIR frontend's
-//! branchless muxes.
+//! both arms (guarded: an arm's requirements bind only when it is taken) and merges
+//! what differs into selects.
 
 mod builder;
 mod debuginfo;
@@ -147,7 +147,7 @@ fn attribute(
     }
 }
 
-/// Write a lowered circuit's artifacts to `out_dir`, as the MIR driver does:
+/// Write a lowered circuit's artifacts to `out_dir`:
 /// `circuit.xbc` always; `circuit.json` / `r1cs.json` / `graph.dot` with
 /// `emit_json`; `profile.json` with `profile`.
 pub fn write_outputs(
@@ -204,8 +204,8 @@ pub fn write_outputs_in(
     std::fs::write(out_dir.join("circuit.xbc"), xbc)
 }
 
-/// Make the profile's source paths under `root` relative to it (as the MIR
-/// frontend writes them: `src/lib.rs`); others (dependencies) stay absolute.
+/// Make the profile's source paths under `root` relative to it (`src/lib.rs`);
+/// others (dependencies) stay absolute.
 pub fn relativize_profile(out: &mut LowerOutput, root: &std::path::Path) {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -291,8 +291,8 @@ pub fn build_crate_with(
             "cdylib",
             "--config",
             "profile.release.panic=\"abort\"",
-            // Checked integer arithmetic, as Rust's debug semantics (and the MIR
-            // frontend): an overflow on a witness integer becomes a constraint.
+            // Checked integer arithmetic, as Rust's debug semantics: an overflow on a
+            // witness integer becomes a constraint.
             "--config",
             "profile.release.overflow-checks=true",
             // Size-optimized: LLVM inlines less, so more gadget calls stay wasm calls

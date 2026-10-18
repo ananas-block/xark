@@ -615,7 +615,7 @@ impl Builder {
             b: b.clone(),
         }));
         // XOR / OR of `{0,1}` operands is `{0,1}` (the row pins `c` to it).
-        if self.is_boolean_lc(&a) && self.is_boolean_lc(&b) {
+        if !self.witness_only && self.is_boolean_lc(&a) && self.is_boolean_lc(&b) {
             self.boolean_vars.insert(c);
         }
         LinearCombination::var(c)
@@ -644,7 +644,7 @@ impl Builder {
             b: b.clone(),
         }));
         // XOR / OR of `{0,1}` operands is `{0,1}` (the row pins `c` to it).
-        if self.is_boolean_lc(&a) && self.is_boolean_lc(&b) {
+        if !self.witness_only && self.is_boolean_lc(&a) && self.is_boolean_lc(&b) {
             self.boolean_vars.insert(c);
         }
         LinearCombination::var(c)
@@ -698,6 +698,10 @@ impl Builder {
     }
 
     pub(crate) fn emit_require_eq(&mut self, lhs: LinearCombination, rhs: LinearCombination) {
+        // Witness-only region: no row, and no rewrite of a row emitted before it.
+        if self.witness_only {
+            return;
+        }
         // Merge `t = a * b; require_eq(t, target)` into `a * b = target` — but never
         // when `target` is a witness-only var: it already has a witness-gen op, so
         // rewriting a constraint to output it would doubly-define it (the value
@@ -959,7 +963,10 @@ impl Builder {
             ConstraintKind::RangeCheck,
             R1csConstraint::general(id, lc.clone(), lc.clone(), lc, note),
         );
-        self.boolean_vars.insert(v);
+        // A witness-only region emits no row, so `v` is not proven boolean.
+        if !self.witness_only {
+            self.boolean_vars.insert(v);
+        }
     }
 
     /// Wrapping `uN` subtraction (`a − b mod 2^N`). Bit `N` of `a − b + 2^N` is `1` iff
