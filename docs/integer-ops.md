@@ -115,7 +115,7 @@ When an op needs `to_bits::<N>(x)`: **miss** → decompose, store bit vars under
 * **v1 granularity:** cache per exact `(LC, N)`. A later refinement can answer a narrower request
   from a wider cached split (reuse low bits of a 64-bit decomposition for a 32-bit op).
 * **Scope:** the automatic, general form of what `xark-bits` does by hand (threading `[Field; 32]`).
-  Self-contained pass in `lower_mir`; no IR or surface changes.
+  Self-contained lowering pass; no IR or surface changes.
 * **Not the solver:** caching in the witness solver would save prover *time* only; the constraint-
   count win is entirely at lowering.
 
