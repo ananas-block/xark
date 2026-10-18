@@ -1,4 +1,13 @@
-//! Decoder for the DAG-compact `XBC` (version 1) circuit artifact.
+//! Decoder for the DAG-compact `XBC` circuit artifact (versions 1 and 2).
+//!
+//! Version 2 (the stable frontend's) is version 1's container encoded more
+//! densely: a constant pool after the signature inputs (constant tag `3` = pool
+//! index, `2` = binary big constant, `4`/`5` = ±2^k); var lists and LC term vars
+//! zigzag-delta-coded; item tags `5` (CALL, delta-coded plugs), `6` (rolled CALL
+//! block, same), `7` (rolled run with varint integers, constants pooled), `8` (a
+//! row / witness op whose LCs may be `6` + an index into the scope's table of
+//! row LCs), and in a witness stream `4` (the next CALLs of the scope's
+//! constraint stream). Template bodies may contain CALLs (nested templates).
 //!
 //! Decode half of `lower_mir::build_function_blob`; lives in `xark-ir` so both the
 //! `xark` CLI and the compiler can reach it. Parses the container (function defs +
@@ -32,31 +41,70 @@ fn get_iv(b: &[u8], p: &mut usize) -> i64 {
     ((u >> 1) as i64) ^ -((u & 1) as i64)
 }
 fn get_fc(b: &[u8], p: &mut usize) -> FieldConst {
-    if b[*p] == 0 {
-        *p += 1;
-        FieldConst::from_i64(get_iv(b, p))
+    let tag = b[*p];
+    *p += 1;
+    match tag {
+        0 => FieldConst::from_i64(get_iv(b, p)),
+        1 => {
+            let n = get_uv(b, p) as usize;
+            let s = std::str::from_utf8(&b[*p..*p + n]).unwrap();
+            *p += n;
+            FieldConst::from_decimal(s).unwrap()
+        }
+        // Version 2: a big constant as sign (1 = +, 2 = −) + length + LE magnitude.
+        2 => {
+            let sign = match b[*p] {
+                1 => num_bigint::Sign::Plus,
+                2 => num_bigint::Sign::Minus,
+                t => panic!("bad constant sign {t}"),
+            };
+            *p += 1;
+            let n = get_uv(b, p) as usize;
+            let v = num_bigint::BigInt::from_bytes_le(sign, &b[*p..*p + n]);
+            *p += n;
+            FieldConst::from_bigint(v)
+        }
+        // Version 2: an entry of the container's constant pool.
+        3 => {
+            let i = get_uv(b, p) as usize;
+            POOL.with(|pool| pool.borrow()[i].clone())
+        }
+        // Version 2: ±2^k.
+        4 | 5 => {
+            let k = get_uv(b, p);
+            assert!(k < 4096, "bad exponent");
+            let v = num_bigint::BigInt::from(1) << k;
+            FieldConst::from_bigint(if tag == 5 { -v } else { v })
+        }
+        t => panic!("bad constant tag {t}"),
+    }
+}
+/// A var id in an LC or id list: absolute (version 1) or a zigzag delta from the
+/// previous one in the same list (version 2).
+fn get_var(b: &[u8], p: &mut usize, prev: &mut i64) -> u32 {
+    if V2.with(|v| v.get()) {
+        *prev += get_iv(b, p);
+        *prev as u32
     } else {
-        *p += 1;
-        let n = get_uv(b, p) as usize;
-        let s = std::str::from_utf8(&b[*p..*p + n]).unwrap();
-        *p += n;
-        FieldConst::from_decimal(s).unwrap()
+        get_uv(b, p) as u32
     }
 }
 fn get_lc(b: &[u8], p: &mut usize) -> LinearCombination {
     let constant = get_fc(b, p);
     let n = get_uv(b, p) as usize;
-    let mut terms = Vec::with_capacity(n);
+    let mut terms = Vec::with_capacity(n.min(1 << 20));
+    let mut prev = 0i64;
     for _ in 0..n {
         let coeff = get_fc(b, p);
-        let var = get_uv(b, p) as u32;
+        let var = get_var(b, p, &mut prev);
         terms.push(Term { coeff, var });
     }
     LinearCombination { constant, terms }
 }
 fn get_ids(b: &[u8], p: &mut usize) -> Vec<VarId> {
     let n = get_uv(b, p) as usize;
-    (0..n).map(|_| get_uv(b, p) as u32).collect()
+    let mut prev = 0i64;
+    (0..n).map(|_| get_var(b, p, &mut prev)).collect()
 }
 fn get_lcs(b: &[u8], p: &mut usize) -> Vec<LinearCombination> {
     let n = get_uv(b, p) as usize;
@@ -76,72 +124,86 @@ fn byte_role(b: u8) -> VarRole {
     }
 }
 fn get_witness(b: &[u8], p: &mut usize) -> WitnessGen {
+    get_witness_with(b, p, &mut get_lc)
+}
+/// [`get_witness`] with every LC read by `lc` (a back-reference reader for tag
+/// `8` ops).
+fn get_witness_with(
+    b: &[u8],
+    p: &mut usize,
+    lc: &mut dyn FnMut(&[u8], &mut usize) -> LinearCombination,
+) -> WitnessGen {
+    let lcs =
+        |b: &[u8], p: &mut usize, lc: &mut dyn FnMut(&[u8], &mut usize) -> LinearCombination| {
+            let n = get_uv(b, p) as usize;
+            (0..n).map(|_| lc(b, p)).collect::<Vec<_>>()
+        };
     let tag = b[*p];
     *p += 1;
     match tag {
         0 => WitnessGen::Product {
             out: get_uv(b, p) as u32,
-            left: get_lc(b, p),
-            right: get_lc(b, p),
+            left: lc(b, p),
+            right: lc(b, p),
         },
         1 => WitnessGen::Linear {
             out: get_uv(b, p) as u32,
-            lc: get_lc(b, p),
+            lc: lc(b, p),
         },
         2 => WitnessGen::Xor {
             out: get_uv(b, p) as u32,
-            a: get_lc(b, p),
-            b: get_lc(b, p),
+            a: lc(b, p),
+            b: lc(b, p),
         },
         3 => WitnessGen::Or {
             out: get_uv(b, p) as u32,
-            a: get_lc(b, p),
-            b: get_lc(b, p),
+            a: lc(b, p),
+            b: lc(b, p),
         },
         4 => WitnessGen::Inverse {
             out: get_uv(b, p) as u32,
-            input: get_lc(b, p),
+            input: lc(b, p),
         },
         5 => WitnessGen::InverseOrZero {
             out: get_uv(b, p) as u32,
-            input: get_lc(b, p),
+            input: lc(b, p),
         },
         6 => WitnessGen::Bit {
             out: get_uv(b, p) as u32,
-            input: get_lc(b, p),
+            input: lc(b, p),
             index: get_uv(b, p) as u32,
         },
         7 => WitnessGen::Bits {
             outs: get_ids(b, p),
-            input: get_lc(b, p),
+            input: lc(b, p),
         },
         8 => WitnessGen::DivRem {
             q: get_uv(b, p) as u32,
             r: get_uv(b, p) as u32,
-            num: get_lc(b, p),
-            den: get_lc(b, p),
+            num: lc(b, p),
+            den: lc(b, p),
         },
         9 => WitnessGen::MulModDivMod {
             q: get_ids(b, p),
             r: get_ids(b, p),
-            a: get_lcs(b, p),
-            b: get_lcs(b, p),
-            modulus: get_lcs(b, p),
+            a: lcs(b, p, lc),
+            b: lcs(b, p, lc),
+            modulus: lcs(b, p, lc),
             limb_bits: get_uv(b, p) as u32,
         },
         10 => WitnessGen::ModInverse {
             out: get_ids(b, p),
-            a: get_lcs(b, p),
-            modulus: get_lcs(b, p),
+            a: lcs(b, p, lc),
+            modulus: lcs(b, p, lc),
             limb_bits: get_uv(b, p) as u32,
         },
         11 => WitnessGen::Sub2 {
             qabs: get_uv(b, p) as u32,
             r: get_ids(b, p),
-            a: get_lcs(b, p),
-            b: get_lcs(b, p),
-            c: get_lcs(b, p),
-            modulus: get_lcs(b, p),
+            a: lcs(b, p, lc),
+            b: lcs(b, p, lc),
+            c: lcs(b, p, lc),
+            modulus: lcs(b, p, lc),
             limb_bits: get_uv(b, p) as u32,
         },
         _ => unreachable!("bad witness tag {tag}"),
@@ -433,12 +495,185 @@ fn parse_rolled_calls(b: &[u8], p: &mut usize) -> Vec<(u32, u32, Vec<LinearCombi
     }
     out
 }
-fn parse_c_items(b: &[u8], p: &mut usize) -> Vec<CItem> {
+/// A CALL's plug LCs, version-2 form (tag `5`): each plug is a varint header —
+/// even: a bare variable (`1·v`), `v` = previous bare plug (initially `base`) +
+/// zigzag(header / 2); `1`: a general LC follows.
+fn get_plugs_compact(b: &[u8], p: &mut usize, base: u32) -> Vec<LinearCombination> {
     let n = get_uv(b, p) as usize;
+    let mut prev = i64::from(base);
     let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let h = get_uv(b, p);
+        if h & 1 == 0 {
+            let u = h >> 1;
+            prev += ((u >> 1) as i64) ^ -((u & 1) as i64);
+            out.push(LinearCombination::var(prev as u32));
+        } else {
+            out.push(get_lc(b, p));
+        }
+    }
+    out
+}
+/// Version-2 rolled-CALL block (tag `6`): [`parse_rolled_calls`] with bare-var
+/// plugs delta-coded as in [`get_plugs_compact`] (each followed by its step).
+fn parse_rolled_calls_compact(b: &[u8], p: &mut usize) -> Vec<(u32, u32, Vec<LinearCombination>)> {
+    let count = get_uv(b, p) as i64;
+    let period = get_uv(b, p) as usize;
+    #[allow(clippy::type_complexity)]
+    let mut body: Vec<(
+        u32,
+        i64,
+        i64,
+        Vec<(FieldConst, Vec<(FieldConst, i64, i64)>)>,
+    )> = Vec::with_capacity(period);
+    for _ in 0..period {
+        let def = get_uv(b, p) as u32;
+        let base0 = get_uv(b, p) as i64;
+        let base_step = get_iv(b, p);
+        let nplugs = get_uv(b, p) as usize;
+        let mut prev = base0;
+        let mut plugs = Vec::with_capacity(nplugs);
+        for _ in 0..nplugs {
+            let h = get_uv(b, p);
+            if h & 1 == 0 {
+                let u = h >> 1;
+                prev += ((u >> 1) as i64) ^ -((u & 1) as i64);
+                let step = get_iv(b, p);
+                plugs.push((FieldConst::zero(), vec![(FieldConst::one(), prev, step)]));
+            } else {
+                let constant = get_fc(b, p);
+                let nterms = get_uv(b, p) as usize;
+                let mut terms = Vec::with_capacity(nterms);
+                for _ in 0..nterms {
+                    let coeff = get_fc(b, p);
+                    let var0 = get_uv(b, p) as i64;
+                    let step = get_iv(b, p);
+                    terms.push((coeff, var0, step));
+                }
+                plugs.push((constant, terms));
+            }
+        }
+        body.push((def, base0, base_step, plugs));
+    }
+    let mut out = Vec::with_capacity(count.max(0) as usize * period);
+    for k in 0..count {
+        for (def, base0, base_step, plugs) in &body {
+            let lcs = plugs
+                .iter()
+                .map(|(c, terms)| LinearCombination {
+                    constant: c.clone(),
+                    terms: terms
+                        .iter()
+                        .map(|(coeff, var0, step)| Term {
+                            coeff: coeff.clone(),
+                            var: (var0 + k * step) as u32,
+                        })
+                        .collect(),
+                })
+                .collect();
+            out.push((*def, (base0 + k * base_step) as u32, lcs));
+        }
+    }
+    out
+}
+/// A scope's row LCs of ≥ 2 terms, in stream order (version 2): what a tag-`8`
+/// row or witness op refers back to (`6` + index in place of an LC). An entry
+/// names the LC by position — `item` in the parsed stream (`PENDING`: the row
+/// being parsed), `sub` row of a rolled item, `which` of a/b/c — so the table
+/// costs no LC copies.
+#[derive(Clone, Copy)]
+struct LcRef {
+    item: u32,
+    sub: u32,
+    which: u8,
+}
+const PENDING: u32 = u32::MAX;
+
+fn row_lc(r: &R1csRow, which: u8) -> &LinearCombination {
+    match which {
+        0 => &r.a,
+        1 => &r.b,
+        _ => &r.c,
+    }
+}
+fn resolve_ref(items: &[CItem], e: LcRef) -> &LinearCombination {
+    match &items[e.item as usize] {
+        CItem::Row(r) => row_lc(r, e.which),
+        CItem::Rolled(rows) => row_lc(&rows[e.sub as usize], e.which),
+        CItem::Call(..) => panic!("LC reference to a call"),
+    }
+}
+/// Append the table entries of the last parsed item (rows only).
+fn push_refs(items: &[CItem], table: &mut Vec<LcRef>) {
+    let item = items.len() - 1;
+    let rows: &[R1csRow] = match &items[item] {
+        CItem::Row(r) => std::slice::from_ref(r),
+        CItem::Rolled(rows) => rows,
+        CItem::Call(..) => return,
+    };
+    for (sub, r) in rows.iter().enumerate() {
+        for which in 0..3u8 {
+            if row_lc(r, which).terms.len() >= 2 {
+                table.push(LcRef {
+                    item: item as u32,
+                    sub: sub as u32,
+                    which,
+                });
+            }
+        }
+    }
+}
+
+/// Parse a constraint item stream, and (version 2) its LC table.
+fn parse_c_items(b: &[u8], p: &mut usize) -> (Vec<CItem>, Vec<LcRef>) {
+    let v2 = V2.with(|v| v.get());
+    let n = get_uv(b, p) as usize;
+    let mut out = Vec::with_capacity(n.min(1 << 20));
+    let mut table: Vec<LcRef> = Vec::new();
     for _ in 0..n {
         let tag = b[*p];
         *p += 1;
+        if tag == 8 {
+            {
+                // A row whose LCs may be references (`6` + index), possibly to
+                // this row's own earlier LCs.
+                let mut lcs: [LinearCombination; 3] =
+                    std::array::from_fn(|_| LinearCombination::zero());
+                let first = table.len();
+                for which in 0..3u8 {
+                    let l = if b[*p] == 6 {
+                        *p += 1;
+                        let e = table[get_uv(b, p) as usize];
+                        if e.item == PENDING {
+                            lcs[e.which as usize].clone()
+                        } else {
+                            resolve_ref(&out, e).clone()
+                        }
+                    } else {
+                        get_lc(b, p)
+                    };
+                    if l.terms.len() >= 2 {
+                        table.push(LcRef {
+                            item: PENDING,
+                            sub: 0,
+                            which,
+                        });
+                    }
+                    lcs[which as usize] = l;
+                }
+                for e in &mut table[first..] {
+                    e.item = out.len() as u32;
+                }
+                let [a, bb, c] = lcs;
+                out.push(CItem::Row(R1csRow {
+                    a,
+                    b: bb,
+                    c,
+                    note: None,
+                }));
+                continue;
+            }
+        }
         match tag {
             0 => out.push(CItem::Row(R1csRow {
                 a: get_lc(b, p),
@@ -456,6 +691,24 @@ fn parse_c_items(b: &[u8], p: &mut usize) -> Vec<CItem> {
                     out.push(CItem::Call(d, base, plugs));
                 }
             }
+            5 => {
+                let d = get_uv(b, p) as u32;
+                let base = get_uv(b, p) as u32;
+                out.push(CItem::Call(d, base, get_plugs_compact(b, p, base)));
+            }
+            6 => {
+                for (d, base, plugs) in parse_rolled_calls_compact(b, p) {
+                    out.push(CItem::Call(d, base, plugs));
+                }
+            }
+            7 => {
+                let len = get_uv(b, p) as usize;
+                let blob = &b[*p..*p + len];
+                *p += len;
+                let (rows, _) = crate::bytecode::decode_and_expand_ops_compact(blob, &pool())
+                    .unwrap_or_default();
+                out.push(CItem::Rolled(rows));
+            }
             _ => {
                 let len = get_uv(b, p) as usize;
                 let blob = &b[*p..*p + len];
@@ -464,17 +717,34 @@ fn parse_c_items(b: &[u8], p: &mut usize) -> Vec<CItem> {
                 out.push(CItem::Rolled(rows));
             }
         }
+        if v2 {
+            push_refs(&out, &mut table);
+        }
     }
-    out
+    (out, table)
 }
-fn parse_w_items(b: &[u8], p: &mut usize) -> Vec<WItem> {
+/// Parse a witness item stream. `c_items` is the same scope's constraint stream:
+/// a version-2 tag `4` reuses its CALLs (in order) instead of repeating them.
+fn parse_w_items(b: &[u8], p: &mut usize, c_items: &[CItem], table: &[LcRef]) -> Vec<WItem> {
     let n = get_uv(b, p) as usize;
     let mut out = Vec::with_capacity(n);
+    let mut c_calls = c_items.iter().filter_map(|it| match it {
+        CItem::Call(d, base, plugs) => Some((*d, *base, plugs)),
+        _ => None,
+    });
     for _ in 0..n {
         let tag = b[*p];
         *p += 1;
         match tag {
             0 => out.push(WItem::Row(get_witness(b, p))),
+            8 => out.push(WItem::Row(get_witness_with(b, p, &mut |b, p| {
+                if b[*p] == 6 {
+                    *p += 1;
+                    resolve_ref(c_items, table[get_uv(b, p) as usize]).clone()
+                } else {
+                    get_lc(b, p)
+                }
+            }))),
             1 => {
                 let d = get_uv(b, p) as u32;
                 let base = get_uv(b, p) as u32;
@@ -484,6 +754,35 @@ fn parse_w_items(b: &[u8], p: &mut usize) -> Vec<WItem> {
                 for (d, base, plugs) in parse_rolled_calls(b, p) {
                     out.push(WItem::Call(d, base, plugs));
                 }
+            }
+            4 => {
+                let skip = get_uv(b, p) as usize;
+                let n = get_uv(b, p) as usize;
+                if skip > 0 {
+                    c_calls.nth(skip - 1);
+                }
+                for _ in 0..n {
+                    let (d, base, plugs) = c_calls.next().expect("CALL reference in range");
+                    out.push(WItem::Call(d, base, plugs.clone()));
+                }
+            }
+            5 => {
+                let d = get_uv(b, p) as u32;
+                let base = get_uv(b, p) as u32;
+                out.push(WItem::Call(d, base, get_plugs_compact(b, p, base)));
+            }
+            6 => {
+                for (d, base, plugs) in parse_rolled_calls_compact(b, p) {
+                    out.push(WItem::Call(d, base, plugs));
+                }
+            }
+            7 => {
+                let len = get_uv(b, p) as usize;
+                let blob = &b[*p..*p + len];
+                *p += len;
+                let (_, wits) = crate::bytecode::decode_and_expand_ops_compact(blob, &pool())
+                    .unwrap_or_default();
+                out.push(WItem::Rolled(wits));
             }
             _ => {
                 let len = get_uv(b, p) as usize;
@@ -496,7 +795,6 @@ fn parse_w_items(b: &[u8], p: &mut usize) -> Vec<WItem> {
     }
     out
 }
-
 
 /// Expand the top-level constraint stream, optionally in parallel.
 ///
@@ -557,12 +855,7 @@ fn expand_w_top(defs: &[GDef], items: &[WItem], parallel: bool) -> Vec<WitnessGe
 /// Streaming twin of [`expand_c`]: emits each expanded R1CS row to `emit`
 /// instead of collecting into a `Vec`, so a consumer never materializes the flat
 /// system.
-fn expand_c_visit(
-    defs: &[GDef],
-    items: &[CItem],
-    subst: &Subst,
-    emit: &mut dyn FnMut(R1csRow),
-) {
+fn expand_c_visit(defs: &[GDef], items: &[CItem], subst: &Subst, emit: &mut dyn FnMut(R1csRow)) {
     for it in items {
         match it {
             CItem::Row(r) => emit(R1csRow {
@@ -647,16 +940,56 @@ fn decode_header(b: &[u8]) -> (FieldSpec, usize, Vec<Var>, usize) {
     )
 }
 
-fn decode_core(b: &[u8]) -> CompactCore {
-    let (field, num_vars, inputs, mut p) = decode_header(b);
+thread_local! {
+    /// Whether the container being parsed is version 2 (delta-coded var lists).
+    static V2: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The container's constant pool while its body is being parsed (version 2).
+    static POOL: std::cell::RefCell<std::rc::Rc<Vec<FieldConst>>> =
+        std::cell::RefCell::new(std::rc::Rc::new(Vec::new()));
+}
+
+/// The pool `get_fc` resolves tag-3 references against.
+fn pool() -> std::rc::Rc<Vec<FieldConst>> {
+    POOL.with(|p| p.borrow().clone())
+}
+
+/// Everything after the header's signature inputs: (version 2) the constant pool,
+/// the function defs, the top-level streams and the keep-set exceptions.
+#[allow(clippy::type_complexity)]
+fn parse_body(
+    b: &[u8],
+    mut p: usize,
+) -> (
+    Vec<GDef>,
+    Vec<CItem>,
+    Vec<WItem>,
+    std::collections::BTreeSet<u32>,
+) {
+    let version = u16::from_le_bytes([b[4], b[5]]);
+    let pool: Vec<FieldConst> = if version >= 2 {
+        let n = get_uv(b, &mut p) as usize;
+        (0..n).map(|_| get_fc(b, &mut p)).collect()
+    } else {
+        Vec::new()
+    };
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            POOL.with(|p| *p.borrow_mut() = std::rc::Rc::new(Vec::new()));
+            V2.with(|v| v.set(false));
+        }
+    }
+    POOL.with(|p| *p.borrow_mut() = std::rc::Rc::new(pool));
+    V2.with(|v| v.set(version >= 2));
+    let _reset = Reset;
     let n_defs = get_uv(b, &mut p) as usize;
-    let mut defs = Vec::with_capacity(n_defs);
+    let mut defs = Vec::with_capacity(n_defs.min(1 << 20));
     for _ in 0..n_defs {
         let base_var = get_uv(b, &mut p) as u32;
         let plugs = get_ids(b, &mut p);
         let outputs = get_ids(b, &mut p);
-        let c_items = parse_c_items(b, &mut p);
-        let w_items = parse_w_items(b, &mut p);
+        let (c_items, table) = parse_c_items(b, &mut p);
+        let w_items = parse_w_items(b, &mut p, &c_items, &table);
         defs.push(GDef {
             base_var,
             plugs,
@@ -665,9 +998,15 @@ fn decode_core(b: &[u8]) -> CompactCore {
             w_items,
         });
     }
-    let top_c = parse_c_items(b, &mut p);
-    let top_w = parse_w_items(b, &mut p);
+    let (top_c, table) = parse_c_items(b, &mut p);
+    let top_w = parse_w_items(b, &mut p, &top_c, &table);
     let keep_extra: std::collections::BTreeSet<u32> = get_ids(b, &mut p).into_iter().collect();
+    (defs, top_c, top_w, keep_extra)
+}
+
+fn decode_core(b: &[u8]) -> CompactCore {
+    let (field, num_vars, inputs, p) = decode_header(b);
+    let (defs, top_c, top_w, keep_extra) = parse_body(b, p);
     CompactCore {
         field,
         num_vars,
@@ -1142,12 +1481,9 @@ pub fn stream_count_constraints(b: &[u8]) -> usize {
         .par_iter()
         .map(|item| {
             let mut n = 0usize;
-            expand_c_visit(
-                &defs,
-                std::slice::from_ref(item),
-                &IDENTITY,
-                &mut |_row| n += 1,
-            );
+            expand_c_visit(&defs, std::slice::from_ref(item), &IDENTITY, &mut |_row| {
+                n += 1
+            });
             n
         })
         .sum()
@@ -1366,12 +1702,7 @@ pub fn verify_blob_matches(
     Ok((ci, wi, vi))
 }
 
-fn expand_c(
-    defs: &[GDef],
-    items: &[CItem],
-    subst: &Subst,
-    out: &mut Vec<R1csRow>,
-) {
+fn expand_c(defs: &[GDef], items: &[CItem], subst: &Subst, out: &mut Vec<R1csRow>) {
     for it in items {
         match it {
             CItem::Row(r) => out.push(R1csRow {
@@ -1402,12 +1733,7 @@ fn expand_c(
         }
     }
 }
-fn expand_w(
-    defs: &[GDef],
-    items: &[WItem],
-    subst: &Subst,
-    out: &mut Vec<WitnessGen>,
-) {
+fn expand_w(defs: &[GDef], items: &[WItem], subst: &Subst, out: &mut Vec<WitnessGen>) {
     for it in items {
         match it {
             WItem::Row(w) => {
@@ -1439,12 +1765,7 @@ fn expand_w(
 /// whole `Vec<WitnessGen>`. Lets the solver consume ops in bounded batches so the
 /// fully-expanded hint program (the dominant footprint on heavy non-native EC
 /// circuits — GBs of substituted `LinearCombination`s) is never materialized.
-fn expand_w_visit(
-    defs: &[GDef],
-    items: &[WItem],
-    subst: &Subst,
-    emit: &mut dyn FnMut(WitnessGen),
-) {
+fn expand_w_visit(defs: &[GDef], items: &[WItem], subst: &Subst, emit: &mut dyn FnMut(WitnessGen)) {
     for it in items {
         match it {
             WItem::Row(w) => {
@@ -1489,8 +1810,8 @@ fn solve_streamed(
     .map_err(|e| format!("solve: {e:?}"))
 }
 
-/// Parse an `XBC` (version 1) container and expand it to a full `CircuitProgram`.
-/// The 6-byte header (`XBC` + `0x0001`) is assumed already dispatched on.
+/// Parse an `XBC` (version 1 or 2) container and expand it to a full `CircuitProgram`.
+/// The 6-byte header (`XBC` + version) is assumed already dispatched on.
 ///
 /// Total: a `circuit.xbc` may be foreign or corrupted, so this must never crash the
 /// process — it catches the inner parser's bounds/utf8/tag panics and returns a clean
@@ -1527,25 +1848,7 @@ fn expand_function_blob_inner(b: &[u8]) -> CircuitProgram {
         p += 1;
         names[id] = Some(get_str(b, &mut p));
     }
-    let n_defs = get_uv(b, &mut p) as usize;
-    let mut defs = Vec::with_capacity(n_defs);
-    for _ in 0..n_defs {
-        let base_var = get_uv(b, &mut p) as u32;
-        let plugs = get_ids(b, &mut p);
-        let outputs = get_ids(b, &mut p);
-        let c_items = parse_c_items(b, &mut p);
-        let w_items = parse_w_items(b, &mut p);
-        defs.push(GDef {
-            base_var,
-            plugs,
-            outputs,
-            c_items,
-            w_items,
-        });
-    }
-    let top_c = parse_c_items(b, &mut p);
-    let top_w = parse_w_items(b, &mut p);
-    let keep_extra: std::collections::BTreeSet<u32> = get_ids(b, &mut p).into_iter().collect();
+    let (defs, top_c, top_w, keep_extra) = parse_body(b, p);
 
     // Constraints and witness are independent; expand across a rayon `join`.
     // Byte-identical to the serial monotonic walk — see `expand_c_top`.
@@ -1593,9 +1896,46 @@ fn expand_function_blob_inner(b: &[u8]) -> CircuitProgram {
 /// else is eliminated. Returns reduced `Row`s then the unchanged `Call`s. Per-template
 /// reduction: each template's internal redundancy is removed once, here, avoiding
 /// materializing and pruning the full flat R1CS.
+/// Inline the nested calls of every def the top stream calls, so each such def
+/// is minimized over its whole body — as when templates didn't nest — rather
+/// than per nesting level (a call boundary pins its interface, which would keep
+/// rows the flat body can eliminate). Defs only called from inside others are
+/// left as they are (no longer reached).
+fn flatten_nested(defs: &mut [GDef], top: &[CItem]) {
+    let mut used = vec![false; defs.len()];
+    for it in top {
+        if let CItem::Call(d, ..) = it {
+            used[*d as usize] = true;
+        }
+    }
+    for d in 0..defs.len() {
+        if !used[d]
+            || !defs[d]
+                .c_items
+                .iter()
+                .any(|it| matches!(it, CItem::Call(..)))
+        {
+            continue;
+        }
+        // The body is in its own (first call's) coordinates, so the identity
+        // substitution expands its calls in place.
+        let mut rows = Vec::new();
+        expand_c(defs, &defs[d].c_items, &IDENTITY, &mut rows);
+        defs[d].c_items = vec![CItem::Rolled(rows)];
+    }
+}
+
+/// Each def's `(base_var, outputs)`: what a caller must pin around its calls.
+fn call_interfaces(defs: &[GDef]) -> Vec<(u32, Vec<u32>)> {
+    defs.iter()
+        .map(|d| (d.base_var, d.outputs.clone()))
+        .collect()
+}
+
 fn minimize_items(
     items: &[CItem],
     base_pins: &BTreeMap<u32, ()>,
+    iface: &[(u32, Vec<u32>)],
     name: &str,
     modulus: &str,
 ) -> Vec<CItem> {
@@ -1624,6 +1964,16 @@ fn minimize_items(
                 for lc in plugs {
                     pins.extend(lc.terms.iter().map(|t| t.var));
                 }
+                // The call's outputs, as this stream sees them: rows here that read
+                // one must keep it (eliminating it here would cut it loose from the
+                // call body that defines it).
+                let (dbase, outs) = &iface[*d as usize];
+                // (An output naming a plug is already pinned through the plug LC.)
+                pins.extend(
+                    outs.iter()
+                        .filter(|&&o| o >= *dbase)
+                        .map(|&o| base + (o - dbase)),
+                );
                 calls.push(CItem::Call(*d, *base, plugs.clone()));
             }
         }
@@ -1683,7 +2033,31 @@ pub fn expand_function_blob_reduced(b: &[u8]) -> Result<CircuitProgram, String> 
     std::panic::set_hook(Box::new(|_| {}));
     let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| expand_reduced_inner(b)));
     std::panic::set_hook(prev);
-    out.map_err(|_| "malformed function artifact (XBC reduced decode failed)".to_string())
+    let prog =
+        out.map_err(|_| "malformed function artifact (XBC reduced decode failed)".to_string())?;
+    // Every public input is pinned by a constraint at build time (the compiler's
+    // pinning check), so a reduction that leaves one unreferenced has cut it loose
+    // — any value would verify. Refuse rather than key such a circuit.
+    let mut used = vec![false; prog.vars.len()];
+    for r in &prog.constraints {
+        for lc in [&r.a, &r.b, &r.c] {
+            for t in &lc.terms {
+                if let Some(u) = used.get_mut(t.var as usize) {
+                    *u = true;
+                }
+            }
+        }
+    }
+    if let Some(v) = prog.vars.iter().find(|v| {
+        v.role == VarRole::PublicInput && !used.get(v.id as usize).copied().unwrap_or(false)
+    }) {
+        return Err(format!(
+            "internal error: reducing the circuit left public input `{}` unconstrained \
+             (please report)",
+            v.name
+        ));
+    }
+    Ok(prog)
 }
 
 fn expand_reduced_inner(b: &[u8]) -> CircuitProgram {
@@ -1699,28 +2073,12 @@ fn expand_reduced_inner(b: &[u8]) -> CircuitProgram {
         p += 1;
         names[id] = Some(get_str(b, &mut p));
     }
-    let n_defs = get_uv(b, &mut p) as usize;
-    let mut defs: Vec<GDef> = Vec::with_capacity(n_defs);
-    for _ in 0..n_defs {
-        let base_var = get_uv(b, &mut p) as u32;
-        let plugs = get_ids(b, &mut p);
-        let outputs = get_ids(b, &mut p);
-        let c_items = parse_c_items(b, &mut p);
-        let w_items = parse_w_items(b, &mut p);
-        defs.push(GDef {
-            base_var,
-            plugs,
-            outputs,
-            c_items,
-            w_items,
-        });
-    }
-    let top_c = parse_c_items(b, &mut p);
-    let _top_w = parse_w_items(b, &mut p);
-    let keep_extra: std::collections::BTreeSet<u32> = get_ids(b, &mut p).into_iter().collect();
+    let (mut defs, top_c, _top_w, keep_extra) = parse_body(b, p);
 
     // Reduce each template body (plugs + outputs pinned) and the top stream (inputs
     // pinned); `expand_c` on the reduced defs then yields the minimized R1CS.
+    flatten_nested(&mut defs, &top_c);
+    let iface = call_interfaces(&defs);
     for def in &mut defs {
         let base_pins: BTreeMap<u32, ()> = def
             .plugs
@@ -1728,18 +2086,13 @@ fn expand_reduced_inner(b: &[u8]) -> CircuitProgram {
             .chain(def.outputs.iter())
             .map(|&v| (v, ()))
             .collect();
-        def.c_items = minimize_items(&def.c_items, &base_pins, &name, &modulus_decimal);
+        def.c_items = minimize_items(&def.c_items, &base_pins, &iface, &name, &modulus_decimal);
     }
     let input_pins: BTreeMap<u32, ()> = (0..num_inputs as u32).map(|v| (v, ())).collect();
-    let top_reduced = minimize_items(&top_c, &input_pins, &name, &modulus_decimal);
+    let top_reduced = minimize_items(&top_c, &input_pins, &iface, &name, &modulus_decimal);
 
     let mut constraints = Vec::new();
-    expand_c(
-        &defs,
-        &top_reduced,
-        &IDENTITY,
-        &mut constraints,
-    );
+    expand_c(&defs, &top_reduced, &IDENTITY, &mut constraints);
     if crate::dbg_flag("XARK_BUILD_TIME") {
         eprintln!(
             "TEMPLATE-MINIMIZE: reduced R1CS = {} constraints",
@@ -1825,6 +2178,8 @@ impl ReducedRowStream {
             ..
         } = decode_core(b);
         let num_inputs = inputs.len();
+        flatten_nested(&mut defs, &top_c);
+        let iface = call_interfaces(&defs);
         for def in &mut defs {
             let base_pins: BTreeMap<u32, ()> = def
                 .plugs
@@ -1835,12 +2190,19 @@ impl ReducedRowStream {
             def.c_items = minimize_items(
                 &def.c_items,
                 &base_pins,
+                &iface,
                 &field.name,
                 &field.modulus_decimal,
             );
         }
         let input_pins: BTreeMap<u32, ()> = (0..num_inputs as u32).map(|v| (v, ())).collect();
-        let top = minimize_items(&top_c, &input_pins, &field.name, &field.modulus_decimal);
+        let top = minimize_items(
+            &top_c,
+            &input_pins,
+            &iface,
+            &field.name,
+            &field.modulus_decimal,
+        );
 
         // One streaming pass: rows per item + referenced vars (atomic bitset).
         let words: Vec<AtomicU64> = (0..num_vars.div_ceil(64))

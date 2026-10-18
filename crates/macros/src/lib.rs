@@ -129,6 +129,39 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
         }
     };
 
+    // Stable-frontend entry (`--cfg xark` on `wasm32`): bind every input leaf through
+    // the compiler's input import — in parameter order, each in structural-flatten
+    // order — then run the body. The compiler executes this export.
+    let wasm_binds = params.iter().map(|p| {
+        let (name, cty) = (&p.name, &p.circuit_ty);
+        let name_lit = LitStr::new(&name.to_string(), name.span());
+        let public = p.wrapper == "Public";
+        quote! {
+            let #name: #cty = ::xark::wasm::input(&mut __name, #name_lit, #public);
+        }
+    });
+    let wasm_args = params.iter().map(|p| &p.name);
+    let entry_name = fn_ident.to_string();
+    let entry_len = entry_name.len();
+    let entry_bytes = syn::LitByteStr::new(entry_name.as_bytes(), fn_ident.span());
+    let wasm_main = quote! {
+        // The circuit's name, for the compiler (a custom wasm section).
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        #[unsafe(link_section = "xark.entry")]
+        #[used]
+        static __XARK_ENTRY: [u8; #entry_len] = *#entry_bytes;
+
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        #[doc(hidden)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __xark_main() {
+            let mut __name = ::xark::wasm::NameBuf::new();
+            #(#wasm_binds)*
+            ::xark::wasm::inputs_done();
+            #entry_ident(#(#wasm_args),*);
+        }
+    };
+
     let struct_name = format_ident!("{}Inputs", to_pascal(&fn_ident.to_string()));
     let field_defs = params.iter().map(|p| {
         let (name, nty) = (&p.name, &p.native_ty);
@@ -190,6 +223,8 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
 
     Ok(quote! {
         #entry
+
+        #wasm_main
 
         /// Native-typed validator for this circuit, carrying the name you gave the `#[circuit]`
         /// fn. In host/test builds this *is* `<fn>` (the real `Field` body lives under a hidden
@@ -299,9 +334,15 @@ fn unwrap_visibility(ty: &Type) -> syn::Result<(syn::Ident, Type)> {
     {
         return Ok((seg.ident.clone(), inner.clone()));
     }
+    let t = quote::quote!(#ty).to_string().replace(' ', "");
     Err(syn::Error::new_spanned(
         ty,
-        "#[circuit] parameters must be wrapped in `Private<..>` or `Public<..>`",
+        format!(
+            "unsupported circuit parameter type `{t}`: #[circuit] parameters must be \
+             wrapped in `Private<..>` or `Public<..>`\n\
+             help: declare its visibility, e.g. `Private<{t}>` (a witness) or \
+             `Public<{t}>` (a public input)"
+        ),
     ))
 }
 
@@ -568,7 +609,10 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
     }
     let name_lit = LitStr::new(&name.to_string(), name.span());
 
+    let wasm_input = wasm_input_impl(name, data);
     Ok(quote! {
+        #wasm_input
+
         #[automatically_derived]
         impl #name {
             /// Number of `Field` leaves this input flattens to — maintained by
@@ -630,6 +674,40 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         };
     })
+}
+
+/// The stable-frontend input binding for a `Field`-composed struct (`--cfg xark` on
+/// `wasm32`): each field bound in declaration order under `<prefix>.<field>`, the
+/// compiler's structural-flatten names.
+fn wasm_input_impl(name: &syn::Ident, data: &DataStruct) -> TokenStream2 {
+    let binds = data.fields.iter().enumerate().map(|(i, f)| {
+        let fname = match &f.ident {
+            Some(id) => id.to_string(),
+            None => i.to_string(),
+        };
+        let lit = LitStr::new(&fname, name.span());
+        let value = quote! { ::xark::wasm::input_field(__name, #lit, __vis) };
+        match &f.ident {
+            Some(id) => quote! { #id: #value },
+            None => value,
+        }
+    });
+    let ty_lit = LitStr::new(&name.to_string(), name.span());
+    let ctor = match &data.fields {
+        syn::Fields::Named(_) => quote! { #name { #( #binds ),* } },
+        syn::Fields::Unnamed(_) => quote! { #name ( #( #binds ),* ) },
+        syn::Fields::Unit => quote! { #name },
+    };
+    quote! {
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        #[automatically_derived]
+        impl ::xark::wasm::Input for #name {
+            fn input(__name: &mut ::xark::wasm::NameBuf, __vis: u32) -> Self {
+                ::xark::wasm::input_struct(__name, #ty_lit);
+                #ctor
+            }
+        }
+    }
 }
 
 /// Emit the flatten statements for one field/element `access` of type `ty`, returning
@@ -851,9 +929,12 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
         )
     };
 
+    let wasm_input = wasm_input_impl(name, data);
     // `NativeInput` lives in `xark_prover` (a `std` crate) but a gadget crate is
     // `#![no_std]`, so bring `std` in inside an anonymous const (hygienic-derive pattern).
     Ok(quote! {
+        #wasm_input
+
         #[cfg(not(xark))]
         const _: () = {
             extern crate std;

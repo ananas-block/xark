@@ -478,7 +478,7 @@ pub fn blake2s<const N_BYTES: usize>(msg: [Field; N_BYTES]) -> [[Field; 32]; 8] 
             N_BYTES
         };
         let t_low = Field::from((t_total & 0xFFFFFFFFusize) as u64).to_bits::<32>();
-        let t_high = Field::from((t_total >> 32) as u64).to_bits::<32>();
+        let t_high = Field::from((t_total as u64) >> 32).to_bits::<32>();
 
         // Final-block flag: all-ones (0xFFFFFFFF) on the last block, else 0.
         let f_word = if blk + 1usize == n_blocks {

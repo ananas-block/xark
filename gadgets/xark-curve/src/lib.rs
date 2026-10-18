@@ -89,6 +89,16 @@ macro_rules! weierstrass {
             pub x: Fp,
             pub y: Fp,
         }
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        impl xark::wasm::Input for Point {
+            fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+                xark::wasm::input_struct(n, "Point");
+                Point {
+                    x: xark::wasm::input_field(n, "x", vis),
+                    y: xark::wasm::input_field(n, "y", vis),
+                }
+            }
+        }
         /// A scalar-field (`Fq`) element — an ECDSA multiplier `u1`/`u2`, `r`, `s`, `e`.
         pub type Scalar = Fq;
 
@@ -322,6 +332,16 @@ macro_rules! edwards {
         pub struct Point {
             pub x: Fp,
             pub y: Fp,
+        }
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        impl xark::wasm::Input for Point {
+            fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+                xark::wasm::input_struct(n, "Point");
+                Point {
+                    x: xark::wasm::input_field(n, "x", vis),
+                    y: xark::wasm::input_field(n, "y", vis),
+                }
+            }
         }
         /// A scalar-field (`Fq`) element.
         pub type Scalar = Fq;

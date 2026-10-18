@@ -155,6 +155,38 @@ BN254 base-field moduli (Lean's kernel can't `decide` 254/256-bit primality;
 each is documented at its declaration site). No `sorry`. CI checks this with
 `#print axioms`.
 
+[`Formal/Rewrites.lean`](Formal/Rewrites.lean) — **the stable frontend's
+constraint-reducing rewrites preserve the circuit.** The theorems above are stated
+over the rows a gadget emits; the stable frontend (`crates/frontend`) emits fewer
+rows than the MIR frontend for the same program, and each saving is one of these
+rewrites. Over an explicit R1CS model (linear combinations, rows `a · b = c`, and
+syntactic substitution), each is proven *exact*: the rewritten rows' solutions are
+precisely the original solutions with the eliminated variable forgotten — nothing
+gained for a forger, nothing lost for an honest prover. So every gadget theorem,
+and the public-input relation the proof checks, carries over unchanged.
+
+| Theorem | Mirrors | Statement |
+|---------|---------|-----------|
+| `eval_subst` | substituting an LC for a variable | evaluating `l[v := e]` at `τ` is evaluating `l` at `τ[v ↦ e(τ)]` |
+| `elim_sound` | the common core | if the rows force `v = e` (`e` free of `v`), `Sat S[v := e] τ ↔ ∃ x, Sat S τ[v ↦ x]` |
+| `cse_sound` | `builder.rs::emit_mul_var` product reuse | with `A · B = x` a row, the MIR rows `A · B = y` + uses of `y` ≡ the stable rows using `x` |
+| `inline_sound` | `builder.rs::materialize` (MIR names operands over 8 terms) | the MIR `L · 1 = t` + uses of `t` ≡ the stable rows using `L` in place |
+| `fold_sound` | `host.rs` `mul` with an operand constant in the field (e.g. after mod-`p` reduction zeroes a coefficient) | a row `A · B = t` whose product equals a linear form `e` + uses of `t` ≡ `e` in place |
+| `const_mul_sound` | `host.rs` constant `pow` folding | a row `a · b = t` of constants + uses of `t` ≡ the constant `a·b` in place |
+| `gated_sat` | `host.rs::require_gated` (a `require` in a witness-branch arm) | for a `{0,1}` guard `G`, the row `G · D = 0` holds iff `G = 1 → D = 0` |
+| `guard_mul` | nested arms' guards (`host.rs::guard`) | a product of `{0,1}` values is `{0,1}`, and `1` iff both are |
+| `pin_dead` | `builder.rs::gate_input` / `pin_dead` (hints in an arm) | a hint reads `g·x` and is pinned by `(1 − g)·h = 0`: `x` and no pin where taken, `0` and `h = 0` where not |
+| `select_taken` / `select_untaken` | `interp.rs::merge` | the select `e + c·(t − e)` is `t` at `c = 1` and `e` at `c = 0`, whatever the other arm holds |
+
+The last three are why a `require` may sit in a branch arm: both arms run, but the
+untaken arm's requirements are vacuous and its values never reach the result.
+
+Reducing constants modulo `p` needs no theorem: the rows are over `ZMod p`, where
+`c` and `c mod p` are one element. The R1CS bridge tests in
+`crates/lang/tests/snapshot.rs` pin both frontends' gate counts and name the rewrite
+behind each difference (SHA-256 `Maj` reusing the previous round's `a ∧ b`, a
+3-limb square's repeated cross products, Poseidon's constant capacity-lane S-box).
+
 ## Building
 
 Requires [`elan`](https://github.com/leanprover/elan) (the Lean toolchain

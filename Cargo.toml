@@ -4,6 +4,7 @@ members = [
     "crates/backend",
     "crates/verifier",
     "crates/groth16",
+    "crates/frontend",
     "gadgets/tests",
     "gadgets/xark-aes",
     "gadgets/xark-bits",
@@ -47,7 +48,9 @@ version = "0.2.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/blueshift-gg/xark"
-rust-version = "1.85"
+# 1.88: let-chains (the `xark` circuit library uses them; circuits build with any
+# stable rustc from here on — see tests/stable-digests.txt).
+rust-version = "1.88"
 
 [workspace.dependencies]
 ark-bn254 = { version = "0.6", default-features = false, features = ["curve"] }

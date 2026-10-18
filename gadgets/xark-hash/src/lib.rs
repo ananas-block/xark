@@ -23,6 +23,17 @@ pub struct Hash {
     lo: Field,
 }
 
+#[cfg(all(xark, target_arch = "wasm32"))]
+impl xark::wasm::Input for Hash {
+    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+        xark::wasm::input_struct(n, "Hash");
+        Hash {
+            hi: xark::wasm::input_field(n, "hi", vis),
+            lo: xark::wasm::input_field(n, "lo", vis),
+        }
+    }
+}
+
 impl Hash {
     /// Recompose 256 weighted bits into the packed pair `hi · 2¹²⁸ + lo`: `bits[i]`
     /// is bit `i` of the hash as a big-endian integer (weight `2ⁱ`), so bits

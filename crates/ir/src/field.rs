@@ -113,6 +113,23 @@ impl FieldConst {
         }
     }
 
+    /// The value as a borrowed `BigInt` when it is outside `i64` range (`None` for
+    /// a small value) — for callers that only inspect it.
+    pub fn as_big(&self) -> Option<&BigInt> {
+        match &self.repr {
+            Repr::Small(_) => None,
+            Repr::Big(b) => Some(&b.value),
+        }
+    }
+
+    /// The value as a `BigInt`, borrowed when already big (no clone).
+    fn big_cow(&self) -> std::borrow::Cow<'_, BigInt> {
+        match &self.repr {
+            Repr::Small(i) => std::borrow::Cow::Owned(BigInt::from(*i)),
+            Repr::Big(b) => std::borrow::Cow::Borrowed(&b.value),
+        }
+    }
+
     pub fn from_bigint(value: BigInt) -> Self {
         FieldConst { repr: norm(value) }
     }
@@ -189,7 +206,7 @@ impl FieldConst {
                 repr: Repr::Small(s),
             };
         }
-        FieldConst::from_bigint(self.big() + other.big())
+        FieldConst::from_bigint(&*self.big_cow() + &*other.big_cow())
     }
 
     pub fn mul(&self, other: &FieldConst) -> FieldConst {
@@ -200,7 +217,7 @@ impl FieldConst {
                 repr: Repr::Small(p),
             };
         }
-        FieldConst::from_bigint(self.big() * other.big())
+        FieldConst::from_bigint(&*self.big_cow() * &*other.big_cow())
     }
 
     pub fn neg(&self) -> FieldConst {
@@ -211,7 +228,7 @@ impl FieldConst {
                 repr: Repr::Small(n),
             };
         }
-        FieldConst::from_bigint(-self.big())
+        FieldConst::from_bigint(-&*self.big_cow())
     }
 
     /// If this constant fits in `n` bits (non-negative, `< 2^n`), return its

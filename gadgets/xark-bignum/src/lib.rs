@@ -46,6 +46,21 @@ pub struct Bignum<const LIMBS: usize, const BITS: usize> {
     pub limbs: [Field; LIMBS],
 }
 
+/// Stable-frontend input binding (`<prefix>.limbs[i]`); re-exported for `fp!`.
+#[cfg(all(xark, target_arch = "wasm32"))]
+#[doc(hidden)]
+pub use xark::wasm as __wasm;
+
+#[cfg(all(xark, target_arch = "wasm32"))]
+impl<const LIMBS: usize, const BITS: usize> xark::wasm::Input for Bignum<LIMBS, BITS> {
+    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+        xark::wasm::input_struct(n, "Bignum");
+        Bignum {
+            limbs: xark::wasm::input_field(n, "limbs", vis),
+        }
+    }
+}
+
 // Host-side `NativeInput`: a `Bignum` circuit input is one whole number, taken as
 // a decimal (or `0x`-hex) string and split into its `LIMBS` little-endian `BITS`-bit
 // limbs — callers pass the value, never hand-decompose. Distinct from the
@@ -286,6 +301,13 @@ macro_rules! fp {
         #[derive(Clone, Copy)]
         $vis struct $name {
             pub limbs: [$crate::Field; $limbs],
+        }
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        impl $crate::__wasm::Input for $name {
+            fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
+                $crate::__wasm::input_struct(n, stringify!($name));
+                Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
+            }
         }
         #[allow(dead_code)]
         impl $name {

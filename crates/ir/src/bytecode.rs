@@ -155,11 +155,29 @@ const FC_NEG_ONE: u8 = 2;
 const FC_SMALL_POS: u8 = 3; // + varint value (fits u64)
 const FC_SMALL_NEG: u8 = 4; // + varint |value| (fits u64)
 const FC_BIG: u8 = 5; // + sign byte + varint len + LE magnitude
+const FC_POOL: u8 = 6; // + varint index into the container's constant pool (compact blobs)
+const FC_POW2: u8 = 7; // + varint k: 2^k (compact blobs)
+const FC_NEG_POW2: u8 = 8; // + varint k: −2^k (compact blobs)
+
+thread_local! {
+    /// While a compact blob is being encoded: the container's constant pool, so
+    /// [`put_fieldconst`] can write a pooled big constant as an index.
+    static ENC_POOL: std::cell::RefCell<Option<std::sync::Arc<BTreeMap<FieldConst, u32>>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Encode a field constant with a leading tag: `0`/`1`/`-1` in a single byte,
 /// other u64-sized values as tag + varint, and full field-sized values as
 /// tag + sign + varint length + LE magnitude.
 fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
+    if fc.as_i64().is_none() {
+        let hit = ENC_POOL.with(|p| p.borrow().as_ref().and_then(|m| m.get(fc).copied()));
+        if let Some(i) = hit {
+            buf.push(FC_POOL);
+            put_vu32(buf, i);
+            return;
+        }
+    }
     let b: BigInt = fc.big();
     if b.sign() == Sign::NoSign {
         buf.push(FC_ZERO);
@@ -174,6 +192,19 @@ fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
         return;
     }
     let (sign, mag) = b.to_bytes_le();
+    // Compact blobs: a power of two (bit-sum coefficients) as its exponent.
+    if compact() {
+        let m = b.magnitude();
+        if m.count_ones() == 1 {
+            buf.push(if sign == Sign::Minus {
+                FC_NEG_POW2
+            } else {
+                FC_POW2
+            });
+            put_varint(buf, m.trailing_zeros().unwrap_or(0));
+            return;
+        }
+    }
     // Small path: magnitude fits in a u64 → tag + varint.
     if mag.len() <= 8 {
         let mut v = 0u64;
@@ -194,9 +225,25 @@ fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
     buf.extend_from_slice(&mag);
 }
 
+/// Whether a compact blob is being written (vars delta-coded, pooled constants).
+fn compact() -> bool {
+    ENC_POOL.with(|p| p.borrow().is_some())
+}
+
 fn put_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
     put_fieldconst(buf, &lc.constant);
     put_varint(buf, lc.terms.len() as u64);
+    if compact() {
+        // Each var as a zigzag delta from the previous one (terms are usually
+        // ascending, so mostly one byte).
+        let mut prev = 0i64;
+        for t in &lc.terms {
+            put_fieldconst(buf, &t.coeff);
+            put_ivarint(buf, i64::from(t.var) - prev);
+            prev = i64::from(t.var);
+        }
+        return;
+    }
     for t in &lc.terms {
         put_fieldconst(buf, &t.coeff);
         put_vu32(buf, t.var);
@@ -205,6 +252,14 @@ fn put_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
 
 fn put_var_ids(buf: &mut Vec<u8>, ids: &[VarId]) {
     put_varint(buf, ids.len() as u64);
+    if compact() {
+        let mut prev = 0i64;
+        for &id in ids {
+            put_ivarint(buf, i64::from(id) - prev);
+            prev = i64::from(id);
+        }
+        return;
+    }
     for &id in ids {
         put_vu32(buf, id);
     }
@@ -360,11 +415,20 @@ fn put_opcode(stream: &mut Vec<u8>, op: &Opcode) {
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
+    /// Constant pool for [`FC_POOL`] references (compact blobs only).
+    pool: &'a [FieldConst],
+    /// A compact blob: vars delta-coded (see [`put_lc`]).
+    compact: bool,
 }
 
 impl<'a> Cursor<'a> {
     fn new(buf: &'a [u8]) -> Self {
-        Cursor { buf, pos: 0 }
+        Cursor {
+            buf,
+            pos: 0,
+            pool: &[],
+            compact: false,
+        }
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], BytecodeError> {
@@ -423,12 +487,12 @@ impl<'a> Cursor<'a> {
         }
     }
     fn fieldconst(&mut self) -> Result<FieldConst, BytecodeError> {
-        let decimal = match self.u8()? {
-            FC_ZERO => "0".to_string(),
-            FC_ONE => "1".to_string(),
-            FC_NEG_ONE => "-1".to_string(),
-            FC_SMALL_POS => self.varint()?.to_string(),
-            FC_SMALL_NEG => format!("-{}", self.varint()?),
+        Ok(match self.u8()? {
+            FC_ZERO => FieldConst::zero(),
+            FC_ONE => FieldConst::one(),
+            FC_NEG_ONE => FieldConst::from_i64(-1),
+            FC_SMALL_POS => FieldConst::from_bigint(BigInt::from(self.varint()?)),
+            FC_SMALL_NEG => FieldConst::from_bigint(-BigInt::from(self.varint()?)),
             FC_BIG => {
                 let sign = match self.u8()? {
                     1 => Sign::Plus,
@@ -437,28 +501,52 @@ impl<'a> Cursor<'a> {
                 };
                 let len = self.varint()? as usize;
                 let mag = self.take(len)?;
-                BigInt::from_bytes_le(sign, mag).to_string()
+                FieldConst::from_bigint(BigInt::from_bytes_le(sign, mag))
+            }
+            FC_POOL => {
+                let i = self.varint()? as usize;
+                self.pool.get(i).cloned().ok_or(BytecodeError::Truncated)?
+            }
+            FC_POW2 | FC_NEG_POW2 => {
+                let neg = self.buf[self.pos - 1] == FC_NEG_POW2;
+                let k = self.varint()?;
+                if k > 4096 {
+                    return Err(BytecodeError::Truncated);
+                }
+                let v = BigInt::from(1) << k;
+                FieldConst::from_bigint(if neg { -v } else { v })
             }
             t => return Err(BytecodeError::BadTag(t)),
-        };
-        Ok(FieldConst::from(decimal))
+        })
     }
     fn lc(&mut self) -> Result<LinearCombination, BytecodeError> {
         let constant = self.fieldconst()?;
         let n = self.varint()? as usize;
-        let mut terms = Vec::with_capacity(n);
+        let mut terms = Vec::with_capacity(n.min(1 << 20));
+        let mut prev = 0i64;
         for _ in 0..n {
             let coeff = self.fieldconst()?;
-            let var = self.vu32()?;
+            let var = if self.compact {
+                prev += self.ivarint()?;
+                prev as u32
+            } else {
+                self.vu32()?
+            };
             terms.push(Term { coeff, var });
         }
         Ok(LinearCombination { constant, terms })
     }
     fn var_ids(&mut self) -> Result<Vec<VarId>, BytecodeError> {
         let n = self.varint()? as usize;
-        let mut ids = Vec::with_capacity(n);
+        let mut ids = Vec::with_capacity(n.min(1 << 20));
+        let mut prev = 0i64;
         for _ in 0..n {
-            ids.push(self.vu32()?);
+            ids.push(if self.compact {
+                prev += self.ivarint()?;
+                prev as u32
+            } else {
+                self.vu32()?
+            });
         }
         Ok(ids)
     }
@@ -1402,6 +1490,98 @@ pub fn roll_and_encode_ops(ops: Vec<Opcode>) -> Vec<u8> {
     buf
 }
 
+/// [`roll_and_encode_ops`] with every count, length and step as a (zigzag)
+/// varint instead of fixed-width `u32`/`i64`, and a body whose notes all stay
+/// unchanged (the usual case) flagged in one byte. Same rolling, same items —
+/// only the integer encoding differs. Round-trips via
+/// [`decode_and_expand_ops_compact`].
+///
+/// Big constants found in `pool` (the container's constant pool: value → index)
+/// are written as an index.
+pub fn roll_and_encode_ops_compact(
+    ops: Vec<Opcode>,
+    pool: &std::sync::Arc<BTreeMap<FieldConst, u32>>,
+) -> Vec<u8> {
+    let items = roll_stream(ops);
+    let mut buf = Vec::new();
+    put_varint(&mut buf, items.len() as u64);
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ENC_POOL.with(|p| *p.borrow_mut() = None);
+        }
+    }
+    ENC_POOL.with(|p| *p.borrow_mut() = Some(pool.clone()));
+    let _reset = Reset;
+    for it in &items {
+        put_item_compact(&mut buf, it);
+    }
+    buf
+}
+
+/// Inverse of [`roll_and_encode_ops_compact`] (`pool`: the container's constant
+/// pool, by index).
+pub fn decode_and_expand_ops_compact(
+    bytes: &[u8],
+    pool: &[FieldConst],
+) -> Result<(Vec<R1csRow>, Vec<WitnessGen>), BytecodeError> {
+    let mut c = Cursor::new(bytes);
+    c.pool = pool;
+    c.compact = true;
+    let n = c.varint()? as usize;
+    let mut cons = Vec::new();
+    let mut wit = Vec::new();
+    for _ in 0..n {
+        let it = c.item_compact()?;
+        emit_item(&it, &mut cons, &mut wit);
+    }
+    Ok((cons, wit))
+}
+
+fn put_ivarint(buf: &mut Vec<u8>, v: i64) {
+    put_varint(buf, ((v << 1) ^ (v >> 63)) as u64);
+}
+
+fn put_item_compact(buf: &mut Vec<u8>, item: &Item) {
+    match item {
+        Item::Op(op) => {
+            buf.push(ITEM_OP);
+            put_opcode(buf, op);
+        }
+        Item::Repeat(r) => {
+            buf.push(ITEM_REPEAT);
+            put_varint(buf, u64::from(r.count));
+            put_varint(buf, r.body.len() as u64);
+            for it in &r.body {
+                put_item_compact(buf, it);
+            }
+            put_varint(buf, r.steps.len() as u64);
+            for s in &r.steps {
+                put_ivarint(buf, *s);
+            }
+            put_varint(buf, r.notes.len() as u64);
+            if r.notes.iter().all(|n| *n == NoteRule::NoChange) {
+                buf.push(0);
+            } else {
+                buf.push(1);
+                for nr in &r.notes {
+                    match nr {
+                        NoteRule::NoChange => buf.push(NOTE_NOCHANGE),
+                        NoteRule::Template(runs) => {
+                            buf.push(NOTE_TEMPLATE);
+                            put_varint(buf, runs.len() as u64);
+                            for (ri, st) in runs {
+                                put_varint(buf, u64::from(*ri));
+                                put_ivarint(buf, *st);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Inverse of [`roll_and_encode_ops`]: decode a rolled-op blob back to flat
 /// constraints and/or witness ops. A homogeneous blob fills only one vector.
 pub fn decode_and_expand_ops(
@@ -1487,6 +1667,64 @@ impl Cursor<'_> {
                         t => return Err(BytecodeError::BadTag(t)),
                     });
                 }
+                Ok(Item::Repeat(Repeat {
+                    count,
+                    body,
+                    steps,
+                    notes,
+                }))
+            }
+            t => Err(BytecodeError::BadTag(t)),
+        }
+    }
+}
+
+impl Cursor<'_> {
+    fn ivarint(&mut self) -> Result<i64, BytecodeError> {
+        let u = self.varint()?;
+        Ok(((u >> 1) as i64) ^ -((u & 1) as i64))
+    }
+    /// Inverse of [`put_item_compact`].
+    fn item_compact(&mut self) -> Result<Item, BytecodeError> {
+        match self.u8()? {
+            ITEM_OP => Ok(Item::Op(self.opcode()?)),
+            ITEM_REPEAT => {
+                let count = self.vu32()?;
+                let n_body = self.varint()? as usize;
+                let mut body = Vec::with_capacity(n_body.min(1 << 16));
+                for _ in 0..n_body {
+                    body.push(self.item_compact()?);
+                }
+                let n_steps = self.varint()? as usize;
+                let mut steps = Vec::with_capacity(n_steps.min(1 << 20));
+                for _ in 0..n_steps {
+                    steps.push(self.ivarint()?);
+                }
+                let n_notes = self.varint()? as usize;
+                let notes = match self.u8()? {
+                    0 => vec![NoteRule::NoChange; n_notes],
+                    1 => {
+                        let mut notes = Vec::with_capacity(n_notes.min(1 << 20));
+                        for _ in 0..n_notes {
+                            notes.push(match self.u8()? {
+                                NOTE_NOCHANGE => NoteRule::NoChange,
+                                NOTE_TEMPLATE => {
+                                    let nr = self.varint()? as usize;
+                                    let mut runs = Vec::with_capacity(nr.min(1 << 16));
+                                    for _ in 0..nr {
+                                        let ri = self.vu32()?;
+                                        let st = self.ivarint()?;
+                                        runs.push((ri, st));
+                                    }
+                                    NoteRule::Template(runs)
+                                }
+                                t => return Err(BytecodeError::BadTag(t)),
+                            });
+                        }
+                        notes
+                    }
+                    t => return Err(BytecodeError::BadTag(t)),
+                };
                 Ok(Item::Repeat(Repeat {
                     count,
                     body,

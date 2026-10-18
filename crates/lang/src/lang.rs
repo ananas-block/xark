@@ -39,6 +39,7 @@ use crate::intrinsics::*;
 /// canonical `[0, r)` representative needs a width, so it must come from the RHS
 /// type or the `::<N>`. See `docs/integer-ops.md`.
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Field {
     /// Little-endian 4×64-bit value of a *compile-time-constant* field element.
     /// Meaningful only for constants (`Field::from`/`Field::constant` `const fn`s):
@@ -184,7 +185,7 @@ impl Field {
             let b = bytes[i];
             assert!(
                 b'0' <= b && b <= b'9',
-                "Field::constant expects a decimal string"
+                "Field::constant expects a decimal string (non-numeric character)"
             );
             // limbs = limbs * 10 + (b - '0'), 256-bit little-endian.
             let mut carry = (b - b'0') as u128;
@@ -273,6 +274,13 @@ impl Field {
                 "to_bits::<N>: N must be <= 253 (BN254 field capacity)"
             )
         };
+        // Stable frontend: the compiler's decomposition memo (a constant's bits, a sum
+        // of proven bits, or an earlier `to_bits::<N>` of the same value) — what the
+        // MIR frontend does when it reaches this call.
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        if let Some(bits) = crate::wasm::to_bits_lookup::<N>(&self) {
+            return bits;
+        }
         let mut bits = [Field::from(0u8); N];
         let mut i = 0usize;
         while i < N {
@@ -293,6 +301,8 @@ impl Field {
             i += 1;
         }
         __xark_require_eq_scalar(acc, self); // recomposition pins the bits to `self` (⇒ self < 2^N)
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        crate::wasm::to_bits_record::<N>(&self, &bits);
         bits
     }
 
@@ -858,12 +868,18 @@ pub fn require_ne(a: impl Into<Field>, b: impl Into<Field>) {
 /// value that must be trusted has to be pinned afterwards. A marker — never executes.
 #[inline(never)]
 pub fn witness_begin() {
+    #[cfg(all(xark, target_arch = "wasm32"))]
+    crate::wasm::witness_begin();
+    #[cfg(not(all(xark, target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 
 /// Close a [`witness_begin`] region — subsequent ops emit constraints again.
 #[inline(never)]
 pub fn witness_end() {
+    #[cfg(all(xark, target_arch = "wasm32"))]
+    crate::wasm::witness_end();
+    #[cfg(not(all(xark, target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 
@@ -927,6 +943,9 @@ pub fn bytes_to_fields<const N: usize>(bytes: [u8; N]) -> [Field; N] {
 #[doc(hidden)]
 #[inline(never)]
 pub fn __xark_require_eq_scalar<L: Into<Field>, R: Into<Field>>(_lhs: L, _rhs: R) {
+    #[cfg(all(xark, target_arch = "wasm32"))]
+    crate::wasm::require_eq(_lhs.into(), _rhs.into());
+    #[cfg(not(all(xark, target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 

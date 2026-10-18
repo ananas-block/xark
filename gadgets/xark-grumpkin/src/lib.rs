@@ -230,6 +230,17 @@ pub struct Affine {
     pub y: Field,
 }
 
+#[cfg(all(xark, target_arch = "wasm32"))]
+impl xark::wasm::Input for Affine {
+    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+        xark::wasm::input_struct(n, "Affine");
+        Affine {
+            x: xark::wasm::input_field(n, "x", vis),
+            y: xark::wasm::input_field(n, "y", vis),
+        }
+    }
+}
+
 /// Host-side `NativeInput` for [`Affine`], behind the `host` feature: the two
 /// coordinates are full field elements, taken as decimal (or `0x`-hex) strings.
 #[cfg(not(xark))]

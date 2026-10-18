@@ -107,11 +107,56 @@ impl LinearCombination {
     }
 }
 
+/// Strictly increasing variables and no zero coefficients — `simplified`'s form.
+fn is_canonical(terms: &[Term]) -> bool {
+    terms.windows(2).all(|w| w[0].var < w[1].var) && !terms.iter().any(|t| t.coeff.is_zero())
+}
+
 impl std::ops::Add for LinearCombination {
     type Output = LinearCombination;
 
     fn add(mut self, rhs: Self) -> Self {
         self.constant = self.constant.add(&rhs.constant);
+        // Both sides canonical (the usual case): a sorted merge gives the same
+        // canonical result as concatenate-then-`simplified`, without the sort.
+        if is_canonical(&self.terms) && is_canonical(&rhs.terms) {
+            match (self.terms.last(), rhs.terms.first()) {
+                (_, None) => return self,
+                (None, _) => {
+                    self.terms = rhs.terms;
+                    return self;
+                }
+                (Some(l), Some(f)) if l.var < f.var => {
+                    self.terms.extend(rhs.terms);
+                    return self;
+                }
+                _ => {}
+            }
+            let mut out: Vec<Term> = Vec::with_capacity(self.terms.len() + rhs.terms.len());
+            let mut a = std::mem::take(&mut self.terms).into_iter().peekable();
+            let mut b = rhs.terms.into_iter().peekable();
+            loop {
+                let next = match (a.peek(), b.peek()) {
+                    (Some(x), Some(y)) if x.var == y.var => {
+                        let mut x = a.next().unwrap();
+                        let y = b.next().unwrap();
+                        x.coeff = x.coeff.add(&y.coeff);
+                        if x.coeff.is_zero() {
+                            continue;
+                        }
+                        x
+                    }
+                    (Some(x), Some(y)) if x.var < y.var => a.next().unwrap(),
+                    (Some(_), Some(_)) => b.next().unwrap(),
+                    (Some(_), None) => a.next().unwrap(),
+                    (None, Some(_)) => b.next().unwrap(),
+                    (None, None) => break,
+                };
+                out.push(next);
+            }
+            self.terms = out;
+            return self;
+        }
         self.terms.extend(rhs.terms);
         self.simplified()
     }

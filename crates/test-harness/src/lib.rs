@@ -383,7 +383,201 @@ pub fn compile_file_json(src: &Path, out_name: &str, field: &str) -> Compiled {
     compile_file_inner(src, out_name, field, true)
 }
 
+/// Use the stable frontend (the default): stable `rustc` compiles the source to
+/// wasm32 and `xark-frontend` lowers it. `XARK_TEST_FRONTEND=mir` selects the
+/// deprecated MIR frontend (the pinned-nightly `xark-rustc` driver).
+pub fn stable_frontend() -> bool {
+    std::env::var("XARK_TEST_FRONTEND").as_deref() != Ok("mir")
+}
+
+/// The gadget crates (`gadgets/xark-*`) plus the `xark` lib, built once for wasm32
+/// with `--cfg xark`; returns `(wasm deps dir, host deps dir)` (the proc macros
+/// are host artifacts).
+fn built_wasm() -> &'static (PathBuf, PathBuf) {
+    static BUILT: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+    BUILT.get_or_init(|| {
+        let root = workspace_root();
+        let target = root.join("target/xark-compile-wasm");
+        let mut args: Vec<String> = [
+            "build",
+            "--release",
+            "--target",
+            "wasm32-unknown-unknown",
+            "-p",
+            "xark",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let mut names: Vec<String> = std::fs::read_dir(root.join("gadgets"))
+            .expect("read gadgets/")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("xark-"))
+            .collect();
+        names.sort();
+        for n in names {
+            args.push("-p".into());
+            args.push(n);
+        }
+        let ok = Command::new("cargo")
+            .args(&args)
+            .env("RUSTFLAGS", "--cfg xark --allow=unexpected_cfgs")
+            .env("CARGO_TARGET_DIR", &target)
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .current_dir(&root)
+            .status()
+            .expect("run cargo build (wasm gadgets)")
+            .success();
+        assert!(ok, "building wasm gadget rlibs failed");
+        (
+            target.join("wasm32-unknown-unknown/release/deps"),
+            target.join("release/deps"),
+        )
+    })
+}
+
+fn compile_file_stable(src: &Path, out_name: &str, field: &str, emit_json: bool) -> Compiled {
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (deps, host_deps) = built_wasm();
+    let root = workspace_root();
+    let out_dir = root.join("target/test-out").join(out_name);
+    let _ = std::fs::remove_dir_all(&out_dir);
+    std::fs::create_dir_all(&out_dir).expect("create out dir");
+    let wasm = out_dir.join("circuit.wasm");
+    // The stable frontend's entry is the `#[circuit]` fn. An older-style source (a
+    // bare `pub fn` whose params are all `Private<…>`/`Public<…>`, which the MIR
+    // driver finds by signature) gets the attribute added here.
+    let text = std::fs::read_to_string(src).expect("read circuit source");
+    let src_path = if text.contains("circuit]") {
+        src.to_path_buf()
+    } else {
+        let annotated = annotate_entry(&text);
+        let p = out_dir.join("annotated.rs");
+        std::fs::write(&p, annotated).expect("write annotated source");
+        p
+    };
+    let src = src_path.as_path();
+    let mut cmd = Command::new("rustc");
+    cmd.env_remove("RUSTUP_TOOLCHAIN").args([
+        "--crate-type=cdylib",
+        "--edition=2021",
+        "--target=wasm32-unknown-unknown",
+        "--cfg=xark",
+        "--allow=unexpected_cfgs",
+        "-Copt-level=s",
+        "-Cpanic=abort",
+        "-Coverflow-checks=on",
+    ]);
+    for e in externs(deps) {
+        cmd.arg("--extern").arg(e);
+    }
+    cmd.arg("-L")
+        .arg(format!("dependency={}", deps.display()))
+        .arg("-L")
+        .arg(format!("dependency={}", host_deps.display()));
+    let output = cmd
+        .arg(src)
+        .arg("-o")
+        .arg(&wasm)
+        .current_dir(&root)
+        .output()
+        .expect("run rustc");
+    if !output.status.success() {
+        return Compiled {
+            status_success: false,
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            out_dir,
+        };
+    }
+    let bytes = std::fs::read(&wasm).expect("read circuit.wasm");
+    let spec = if field == "unknown" {
+        xark_ir::FieldSpec::unknown()
+    } else {
+        xark_ir::FieldSpec::named(field)
+    };
+    match xark_frontend::lower_module(&bytes, spec, false, true) {
+        Ok(l) => {
+            xark_frontend::write_outputs(&out_dir, &l.output, emit_json, false)
+                .expect("write outputs");
+            if let Some(entry) = &l.entry {
+                let _ = std::fs::write(out_dir.join("entry"), entry);
+            }
+            let _ = std::fs::write(
+                out_dir.join("schema.json"),
+                serde_json::to_string_pretty(&l.schema).unwrap_or_default() + "\n",
+            );
+            Compiled {
+                status_success: true,
+                stderr: String::new(),
+                out_dir,
+            }
+        }
+        Err(e) => Compiled {
+            status_success: false,
+            stderr: format!("error: {e}"),
+            out_dir,
+        },
+    }
+}
+
+/// Add `#[::xark::circuit]` before the first top-level `pub fn` whose parameters
+/// all use the `Private<…>`/`Public<…>` markers.
+fn annotate_entry(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut done = false;
+    let mut rest = text;
+    while let Some(i) = rest.find("pub fn ") {
+        let (head, tail) = rest.split_at(i);
+        out.push_str(head);
+        let sig_end = tail.find('{').unwrap_or(tail.len());
+        let sig = &tail[..sig_end];
+        let params = sig
+            .split_once('(')
+            .and_then(|(_, p)| p.rsplit_once(')'))
+            .map(|(p, _)| p)
+            .unwrap_or("");
+        let at_line_start = head.is_empty() || head.ends_with('\n');
+        let all_marked = !params.trim().is_empty()
+            && params
+                .split(',')
+                .filter(|a| a.contains(':'))
+                .all(|a| a.contains("Private<") || a.contains("Public<"));
+        // Failing that, a `pub fn circuit(…)` with unmarked params: annotate it so
+        // `#[circuit]` rejects the params (as the MIR driver does).
+        let fallback = !text_has_marked_entry(text) && sig.starts_with("pub fn circuit(");
+        if !done && at_line_start && (all_marked || fallback) {
+            out.push_str("#[::xark::circuit]\n");
+            done = true;
+        }
+        out.push_str("pub fn ");
+        rest = &tail["pub fn ".len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether some top-level `pub fn` has only `Private<…>`/`Public<…>` params.
+fn text_has_marked_entry(text: &str) -> bool {
+    text.split("pub fn ").skip(1).any(|f| {
+        let sig = &f[..f.find('{').unwrap_or(f.len())];
+        let params = sig
+            .split_once('(')
+            .and_then(|(_, p)| p.rsplit_once(')'))
+            .map(|(p, _)| p)
+            .unwrap_or("");
+        !params.trim().is_empty()
+            && params
+                .split(',')
+                .filter(|a| a.contains(':'))
+                .all(|a| a.contains("Private<") || a.contains("Public<"))
+    })
+}
+
 fn compile_file_inner(src: &Path, out_name: &str, field: &str, emit_json: bool) -> Compiled {
+    if stable_frontend() {
+        return compile_file_stable(src, out_name, field, emit_json);
+    }
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (bin, deps) = built();
     let root = workspace_root();

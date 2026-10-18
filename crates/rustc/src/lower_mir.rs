@@ -2183,8 +2183,9 @@ impl<'tcx> LoweringEnv<'tcx> {
     }
 
     /// Equality-to-zero function: a `{0,1}` lc that is `1` iff `input == 0`.
-    /// `out = 1 − input·inv` with `input·out == 0` (the inverse-or-zero hint
-    /// yields `0` when `input == 0`). Backs `==` on `Field`.
+    /// `out = 1 − input·inv` with `input·out == 0` and `inv·out == 0` (the
+    /// inverse-or-zero hint yields `0` when `input == 0`, and the last row makes
+    /// that the only choice). Backs `==` on `Field`.
     fn emit_is_zero(&mut self, input: LinearCombination) -> LinearCombination {
         let inv = self.alloc_advice();
         self.witness_gen.push(Some(WitnessGen::InverseOrZero {
@@ -2195,6 +2196,14 @@ impl<'tcx> LoweringEnv<'tcx> {
         let out = LinearCombination::one() - prod;
         let input_out = self.emit_mul(input, out.clone());
         self.emit_require_eq(input_out, LinearCombination::zero());
+        // `inv · out = 0`: when `input == 0` (`out = 1`) the hint's `inv = 0` is the
+        // only value, rather than free — else the under-constraint gate `xark prove`
+        // runs rejects every witness where the compared values are equal.
+        // (`out` references the pending `input·inv` product: use it as a value
+        // first, so that row isn't folded into a later `require_eq`.)
+        self.consume_pending(&out);
+        let inv_out = self.emit_mul(LinearCombination::var(inv), out.clone());
+        self.emit_require_eq(inv_out, LinearCombination::zero());
         out
     }
 
@@ -4329,7 +4338,9 @@ fn function_is_pure(
 /// R1CS-neutral (the artifact expands byte-identically, so vks/proofs are
 /// unchanged) while cutting build time and artifact size.
 fn compact_enabled() -> bool {
-    true
+    // `XARK_FLAT=1` (debug builds only) inlines every function — the flat lowering
+    // the stable (wasm) frontend produces, for comparing the two.
+    !crate::dbg_flag("XARK_FLAT")
 }
 fn call_memo_enabled() -> bool {
     compact_enabled()

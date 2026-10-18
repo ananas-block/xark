@@ -76,12 +76,18 @@ struct Outer {
 #[test]
 fn circuit_input_uints_and_nesting_leaves() {
     let o = Outer {
-        inner: Inner { a: u64::MAX, b: Field::from(20u8) },
+        inner: Inner {
+            a: u64::MAX,
+            b: Field::from(20u8),
+        },
         tag: [1, 2],
         c: 3,
     };
     let leaves = <Outer as NativeInput>::leaves(&o, "o");
-    let got: Vec<(&str, &str)> = leaves.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let got: Vec<(&str, &str)> = leaves
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     assert_eq!(
         got,
         vec![

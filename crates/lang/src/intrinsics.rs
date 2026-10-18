@@ -24,6 +24,23 @@
 
 use crate::lang::Field;
 
+/// An intrinsic's body: in the stable-frontend build (`xark` on `wasm32`) the call to
+/// its `xark.*` import; otherwise the marker (never run in a MIR build, an
+/// explanatory panic on the host). The non-wasm arm drops the expression unexpanded,
+/// so `crate::wasm` only has to exist in the wasm build.
+#[cfg(all(xark, target_arch = "wasm32"))]
+macro_rules! circuit_op {
+    ($e:expr) => {
+        $e
+    };
+}
+#[cfg(not(all(xark, target_arch = "wasm32")))]
+macro_rules! circuit_op {
+    ($e:expr) => {
+        __xark_marker()
+    };
+}
+
 /// The body of every marker. In a circuit build (`cfg(xark)`) it is never executed: the
 /// compiler replaces each call by name, so `loop {}` is just a placeholder. In a host
 /// build these functions *can* be reached (calling a circuit helper from a test or a
@@ -54,7 +71,7 @@ pub fn __xark_marker() -> ! {
 /// Field addition `a + b`; lowers to the linear combination `a + b`, no constraint.
 #[inline(never)]
 pub fn __xark_add(_lhs: Field, _rhs: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::add(_lhs, _rhs))
 }
 
 /// Field subtraction `a - b`. Maps to [`KnownCall::Sub`]; lowers to the linear
@@ -63,7 +80,7 @@ pub fn __xark_add(_lhs: Field, _rhs: Field) -> Field {
 /// [`KnownCall::Sub`]: crate::lower_mir::KnownCall::Sub
 #[inline(never)]
 pub fn __xark_sub(_lhs: Field, _rhs: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::sub(_lhs, _rhs))
 }
 
 /// Field multiplication `a · b`. Maps to [`KnownCall::Mul`]. Emits **one** R1CS
@@ -74,7 +91,7 @@ pub fn __xark_sub(_lhs: Field, _rhs: Field) -> Field {
 /// [`KnownCall::Mul`]: crate::lower_mir::KnownCall::Mul
 #[inline(never)]
 pub fn __xark_mul(_lhs: Field, _rhs: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::mul(_lhs, _rhs))
 }
 
 /// Field negation `-a`. Maps to [`KnownCall::Neg`]; lowers to the linear
@@ -83,7 +100,7 @@ pub fn __xark_mul(_lhs: Field, _rhs: Field) -> Field {
 /// [`KnownCall::Neg`]: crate::lower_mir::KnownCall::Neg
 #[inline(never)]
 pub fn __xark_neg(_value: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::neg(_value))
 }
 
 /// Exponentiation `base.pow(n)` for a compile-time `n`. Maps to
@@ -95,7 +112,7 @@ pub fn __xark_neg(_value: Field) -> Field {
 /// [`KnownCall::PowU64`]: crate::lower_mir::KnownCall::PowU64
 #[inline(never)]
 pub fn __xark_pow_u64(_base: Field, _exponent: u64) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::pow_u64(_base, _exponent))
 }
 
 /// Boolean XOR for `a, b ∈ {0, 1}`. Maps to [`KnownCall::Xor`]; lowers to a
@@ -105,7 +122,7 @@ pub fn __xark_pow_u64(_base: Field, _exponent: u64) -> Field {
 /// [`KnownCall::Xor`]: crate::lower_mir::KnownCall::Xor
 #[inline(never)]
 pub fn __xark_xor(_a: Field, _b: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::xor(_a, _b))
 }
 
 /// Boolean OR for `a, b ∈ {0, 1}`. Maps to [`KnownCall::Or`]; lowers to a single
@@ -115,7 +132,7 @@ pub fn __xark_xor(_a: Field, _b: Field) -> Field {
 /// [`KnownCall::Or`]: crate::lower_mir::KnownCall::Or
 #[inline(never)]
 pub fn __xark_or(_a: Field, _b: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::or(_a, _b))
 }
 
 /// Field equality: returns a `bool` (`{0,1}` wire) that is `1` iff `a == b`.
@@ -127,7 +144,7 @@ pub fn __xark_or(_a: Field, _b: Field) -> Field {
 /// [`KnownCall::Eq`]: crate::lower_mir::KnownCall::Eq
 #[inline(never)]
 pub fn __xark_eq(_a: Field, _b: Field) -> bool {
-    __xark_marker()
+    circuit_op!(crate::wasm::eq(_a, _b))
 }
 
 /// Unsigned less-than: `a < b` for `a, b ∈ [0, 2^N)`, as a `bool` (`{0,1}` wire).
@@ -140,7 +157,7 @@ pub fn __xark_eq(_a: Field, _b: Field) -> bool {
 /// [`KnownCall::ULt`]: crate::lower_mir::KnownCall::ULt
 #[inline(never)]
 pub fn __xark_ult<const N: usize>(_a: Field, _b: Field) -> bool {
-    __xark_marker()
+    circuit_op!(crate::wasm::ult::<N>(_a, _b))
 }
 
 /// Reinterpret a `bool` (`{0,1}`) wire as a `Field` wire. Maps to
@@ -151,7 +168,7 @@ pub fn __xark_ult<const N: usize>(_a: Field, _b: Field) -> bool {
 /// [`KnownCall::BoolToField`]: crate::lower_mir::KnownCall::BoolToField
 #[inline(never)]
 pub fn __xark_bool_to_field(_b: bool) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::bool_to_field(_b))
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +184,7 @@ pub fn __xark_bool_to_field(_b: bool) -> Field {
 /// [`KnownCall::Advice`]: crate::lower_mir::KnownCall::Advice
 #[inline(never)]
 pub fn __xark_advice() -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::advice())
 }
 
 /// Advice hint: the solver computes `x⁻¹` (mapping `0 → 0`). Maps to
@@ -177,7 +194,7 @@ pub fn __xark_advice() -> Field {
 /// [`KnownCall::HintInverse`]: crate::lower_mir::KnownCall::HintInverse
 #[inline(never)]
 pub fn __xark_hint_inverse(_x: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_inverse(_x))
 }
 
 /// Advice hint: `x⁻¹` if `x != 0`, else `0`. Maps to
@@ -188,7 +205,7 @@ pub fn __xark_hint_inverse(_x: Field) -> Field {
 /// [`KnownCall::HintInverseOrZero`]: crate::lower_mir::KnownCall::HintInverseOrZero
 #[inline(never)]
 pub fn __xark_hint_inverse_or_zero(_x: Field) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_inverse_or_zero(_x))
 }
 
 /// Advice hint: the solver extracts bit `index` of `x`. Maps to
@@ -199,7 +216,7 @@ pub fn __xark_hint_inverse_or_zero(_x: Field) -> Field {
 /// [`KnownCall::HintBit`]: crate::lower_mir::KnownCall::HintBit
 #[inline(never)]
 pub fn __xark_hint_bit(_x: Field, _index: usize) -> Field {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_bit(_x, _index))
 }
 
 /// Advice hint: integer division `[q, r]` with `a = b·q + r`, `0 ≤ r < b`. Maps
@@ -211,7 +228,7 @@ pub fn __xark_hint_bit(_x: Field, _index: usize) -> Field {
 /// [`KnownCall::HintDivRem`]: crate::lower_mir::KnownCall::HintDivRem
 #[inline(never)]
 pub fn __xark_hint_div_rem(_a: Field, _b: Field) -> [Field; 2] {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_div_rem(_a, _b))
 }
 
 /// Non-native multiply-reduce hint over `N` little-endian `bits`-bit limbs (the
@@ -230,7 +247,7 @@ pub fn __xark_hint_mulmod_divmod<const N: usize>(
     _m: [Field; N],
     _bits: usize,
 ) -> ([Field; N], [Field; N]) {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_mulmod_divmod::<N>(_a, _b, _m, _bits))
 }
 
 /// Non-native modular-inverse hint (`N` × `bits`-bit limbs). Maps to
@@ -246,7 +263,7 @@ pub fn __xark_hint_mod_inverse<const N: usize>(
     _m: [Field; N],
     _bits: usize,
 ) -> [Field; N] {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_mod_inverse::<N>(_a, _m, _bits))
 }
 
 /// Non-native fused-subtract borrow hint (`N` × `bits`-bit limbs), for
@@ -266,5 +283,5 @@ pub fn __xark_hint_sub2<const N: usize>(
     _m: [Field; N],
     _bits: usize,
 ) -> (Field, [Field; N]) {
-    __xark_marker()
+    circuit_op!(crate::wasm::hint_sub2::<N>(_a, _b, _c, _m, _bits))
 }

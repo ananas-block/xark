@@ -8,6 +8,9 @@ description = "Write zero-knowledge circuits in Rust — the language prelude (n
 keywords = ["zero-knowledge", "zk", "cryptography", "circuit", "groth16"]
 categories = ["cryptography"]
 readme = "README.md"
+# Oldest rustc that compiles a circuit (let-chains); CI checks every example
+# circuit is identical on it, stable and beta (`scripts/stable-digests.sh`).
+rust-version = "1.88"
 
 # The language: `use xark::prelude::*;` in a circuit (no_std, stable).
 [lib]
@@ -35,3 +38,10 @@ serde_json = "1"
 # lint (1.80+) stays quiet.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }
+
+# The stable frontend runs inside the test process (`XARK_TEST_FRONTEND=wasm`):
+# optimize it even in test builds.
+[profile.dev.package.xark-frontend]
+opt-level = 3
+[profile.dev.package.xark-ir]
+opt-level = 3

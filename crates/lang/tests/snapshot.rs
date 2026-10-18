@@ -28,9 +28,125 @@ fn compile_with_field(src: &Path, out_name: &str, field: &str) -> Compiled {
     xark_test_harness::compile_file_json(src, out_name, field)
 }
 
+/// Whether the compiled circuit accepts the named inputs (solve + check every row).
+fn accepts(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)]) -> bool {
+    let program = xark_ir::primitive::from_json(
+        &std::fs::read_to_string(c.out_dir.join("circuit.json")).unwrap(),
+    )
+    .expect("valid circuit.json");
+    let ids = inputs
+        .iter()
+        .map(|(n, v)| {
+            let id = program.vars.iter().find(|x| x.name == *n).unwrap().id;
+            (id, v.to_string())
+        })
+        .collect();
+    xark_ir::solver::solve_and_check(&program, &ids).is_ok()
+}
+
+/// Whether *any* witness proves these inputs, decided by exhaustive witness search
+/// (the adversary, not the honest solver): `true` when exactly one does, `false`
+/// when none does. Panics when two witnesses exist (an under-constrained circuit),
+/// the search can't decide, or the honest solver can't find the one witness.
+fn accepts_exactly(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)]) -> bool {
+    use xark_ir::witness_search::{WitnessSearch, search_witnesses};
+    let program = c.program();
+    let ids: std::collections::BTreeMap<_, _> = inputs
+        .iter()
+        .map(|(n, v)| {
+            let id = program.vars.iter().find(|x| x.name == *n).unwrap().id;
+            (id, v.to_string())
+        })
+        .collect();
+    match search_witnesses(&program, &ids, 1 << 14).unwrap() {
+        WitnessSearch::Unique(_) => {
+            if let Err(e) = xark_ir::solver::solve_and_check(&program, &ids) {
+                panic!("{inputs:?}: a witness exists, but the hint program fails: {e}");
+            }
+            true
+        }
+        WitnessSearch::None => false,
+        other => panic!("{inputs:?}: {other:?}"),
+    }
+}
+
+/// [`accepts_exactly`] without the honest-solver cross-check, for circuits whose
+/// witness the hint program doesn't fully compute (bare `advice`).
+fn accepts_exactly_constraints(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)]) -> bool {
+    use xark_ir::witness_search::{WitnessSearch, search_witnesses};
+    let program = c.program();
+    let ids: std::collections::BTreeMap<_, _> = inputs
+        .iter()
+        .map(|(n, v)| {
+            let id = program.vars.iter().find(|x| x.name == *n).unwrap().id;
+            (id, v.to_string())
+        })
+        .collect();
+    match search_witnesses(&program, &ids, 1 << 14).unwrap() {
+        WitnessSearch::Unique(_) => true,
+        WitnessSearch::None => false,
+        other => panic!("{inputs:?}: {other:?}"),
+    }
+}
+
+/// [`accepts_exactly`] where the search decides, else the honest solver plus the
+/// local under-constraint analyzer (non-native arithmetic, whose modular identities
+/// the search's interval reasoning can't always pin).
+fn accepts_best_effort(c: &xark_test_harness::Compiled, inputs: &[(&str, &str)]) -> bool {
+    use xark_ir::solver;
+    use xark_ir::witness_search::{WitnessSearch, search_witnesses};
+    let program = c.program();
+    let ids: std::collections::BTreeMap<_, _> = inputs
+        .iter()
+        .map(|(n, v)| {
+            let id = program.vars.iter().find(|x| x.name == *n).unwrap().id;
+            (id, v.to_string())
+        })
+        .collect();
+    let honest = solver::solve_and_check(&program, &ids);
+    match search_witnesses(&program, &ids, 1 << 12).unwrap() {
+        WitnessSearch::Unique(_) => {
+            assert!(
+                honest.is_ok(),
+                "{inputs:?}: a witness exists, but the hint program fails"
+            );
+            true
+        }
+        WitnessSearch::None => false,
+        WitnessSearch::Multiple { name, .. } => panic!("{inputs:?}: two witnesses (`{name}`)"),
+        WitnessSearch::Inconclusive(_) => match honest {
+            Ok(assign) => {
+                let holes: Vec<_> = solver::analyze_underconstrained(&program, &assign)
+                    .into_iter()
+                    .filter(|u| u.reason != "no constraint references this variable")
+                    .collect();
+                assert!(holes.is_empty(), "{inputs:?}: under-constrained {holes:?}");
+                true
+            }
+            Err(_) => false,
+        },
+    }
+}
+
 fn check_snapshot(snapshot_rel: &str, actual: &str) {
     let root = workspace_root();
-    let path = root.join("tests/snapshots").join(snapshot_rel);
+    // Where the stable frontend's lowering differs (inline sums, reused products,
+    // folded constants) it keeps its own snapshot under `snapshots/wasm/`; the
+    // rest are shared. `UPDATE_SNAPSHOTS` in stable mode writes `wasm/` only when
+    // the shared one doesn't already match.
+    let shared = root.join("tests/snapshots").join(snapshot_rel);
+    let wasm = root.join("tests/snapshots/wasm").join(snapshot_rel);
+    let path = if !xark_test_harness::stable_frontend() {
+        shared
+    } else if wasm.exists()
+        || (std::env::var("UPDATE_SNAPSHOTS").is_ok()
+            && std::fs::read_to_string(&shared).ok().as_deref() != Some(actual))
+    {
+        let _ = std::fs::create_dir_all(wasm.parent().unwrap());
+        wasm
+    } else {
+        shared
+    };
     if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
         std::fs::write(&path, actual).expect("write snapshot");
         return;
@@ -552,8 +668,15 @@ fn poseidon_gadget() {
     // Real HorizenLabs BN256 instance: R_F=8 full (3 S-boxes each) + R_P=56 partial
     // (1 S-box each) = 80 S-boxes × 3 gates (`x^2, x^4, x^5`) = 240 S-box gates,
     // plus 1 final `require_eq` equality = 241 constraints. ARK/MDS fold for free.
+    // Stable frontend: 3 fewer — `hash2` seeds the capacity lane with the constant
+    // 0, so the first round's lane-0 S-box is `rc⁵`, a constant (folded).
+    let sbox = if xark_test_harness::stable_frontend() {
+        237
+    } else {
+        240
+    };
     let r1cs = xark_ir::json::from_json(&json).unwrap();
-    assert_eq!(r1cs.constraints.len(), 241);
+    assert_eq!(r1cs.constraints.len(), sbox + 1);
     // The only equality is the `(out) * 1 = 0` output binding; ARK/MDS are free.
     let equalities = r1cs
         .constraints
@@ -566,8 +689,8 @@ fn poseidon_gadget() {
     );
     assert_eq!(
         r1cs.constraints.len() - equalities,
-        240,
-        "expected exactly 240 S-box multiplication gates"
+        sbox,
+        "expected exactly {sbox} S-box multiplication gates"
     );
 }
 
@@ -589,13 +712,22 @@ fn merkle_membership_gadget() {
     // make it ~40 MB — the count + nonzero pins below catch a lowering change, and
     // `xark-merkle`'s `vec` KAT covers the values. The gadget's cost is linear in
     // depth: exactly 4× the single-`hash2` `poseidon` circuit, no LC blow-up.)
-    assert_eq!(r1cs.constraints.len(), 977);
+    //
+    // Stable frontend: 961 = 977 − 16. Per level, Poseidon's constant capacity lane
+    // folds its first S-box (3 rows: `rc⁵` is a constant) and the `hash2` output
+    // binding stays an inline sum (1 row); see `merkle_matches_lean_model`.
+    let (want, want_nz) = if xark_test_harness::stable_frontend() {
+        (961, 25_254)
+    } else {
+        (977, 25_330)
+    };
+    assert_eq!(r1cs.constraints.len(), want);
     let nonzeros: usize = r1cs
         .constraints
         .iter()
         .map(|k| k.a.terms.len() + k.b.terms.len() + k.c.terms.len())
         .sum();
-    assert_eq!(nonzeros, 25_330, "depth-4 Poseidon Merkle nonzero count");
+    assert_eq!(nonzeros, want_nz, "depth-4 Poseidon Merkle nonzero count");
 }
 
 /// **R1CS ↔ Lean bridge (Merkle membership).**
@@ -623,9 +755,20 @@ fn merkle_matches_lean_model() {
     // 4 levels × (240 Poseidon S-box muls + 1 booleanity + 2 select muxes) = 972.
     // The shape `merkle_level_swap_sound` + `poseidon_permutation_determined` are
     // stated over. If this fails, reconcile the gadget with the Lean model.
+    //
+    // Stable frontend: 4 × (237 + 1 + 2) = 960. `hash2` seeds the capacity lane
+    // with the constant 0, so the first round's lane-0 S-box is `rc⁵` — a constant,
+    // folded (`Xark.R1cs.const_mul_sound`) instead of emitted as 3 rows whose
+    // operands are all constants. The 79 S-boxes on witness values and the
+    // swap/booleanity rows are exactly the modelled ones.
+    let want = if xark_test_harness::stable_frontend() {
+        960
+    } else {
+        972
+    };
     assert_eq!(
-        mul_gates, 972,
-        "depth-4 Merkle must emit 972 multiplication gates (matches \
+        mul_gates, want,
+        "depth-4 Merkle must emit {want} multiplication gates (matches \
          Xark.merkle_level_swap_sound ∘ poseidon compression); got {mul_gates}"
     );
 }
@@ -914,10 +1057,18 @@ fn sha256_compiles() {
     // cache-all flat value; minimized/proving mul = 34934 (== the 37066-era
     // inlined optimum, so this is flat-only and proving-neutral). TODO:
     // nested-DAG plug-materialization sharing recovers the 37066 inlined flat.
-    assert_eq!(constraints, 39018, "SHA-256 constraint count changed");
+    //
+    // Stable frontend (flat, like the minimized MIR circuit): the 1952 `Maj` ANDs
+    // reuse the previous round's `a ∧ b` rows (see `sha256_matches_lean_model`).
+    let (want, want_w) = if xark_test_harness::stable_frontend() {
+        (35114, 6568)
+    } else {
+        (39018, 6568)
+    };
+    assert_eq!(constraints, want, "SHA-256 constraint count changed");
     assert_eq!(
         json.matches("\"name\": \"w").count(),
-        6568,
+        want_w,
         "advice bit count changed"
     );
 }
@@ -1805,6 +1956,31 @@ fn for_over_unsupported_iterator_is_rejected() {
         )
     };
 
+    // The stable frontend runs the iterator (it's concrete) and so supports both:
+    // check they compute what Rust says.
+    if xark_test_harness::stable_frontend() {
+        let rev = compile_with_field(
+            &mk(
+                "for_reject_rev",
+                "for _i in (0..2).rev() { acc = acc * a; }",
+            ),
+            "for_reject_rev",
+            "bn254",
+        );
+        assert!(rev.status_success, "{}", rev.stderr);
+        assert!(accepts(&rev, &[("a", "2"), ("c", "8")]));
+        assert!(!accepts(&rev, &[("a", "2"), ("c", "9")]));
+        let it = compile_with_field(
+            &mk("for_reject_iter", "for x in arr.iter() { acc = acc + *x; }"),
+            "for_reject_iter",
+            "bn254",
+        );
+        assert!(it.status_success, "{}", it.stderr);
+        assert!(accepts(&it, &[("a", "5"), ("c", "15")]));
+        assert!(!accepts(&it, &[("a", "5"), ("c", "10")]));
+        return;
+    }
+
     // `.rev()` reaches our range modeling and gets the specific message.
     let rev = compile(
         &mk(
@@ -1939,8 +2115,19 @@ fn sha256_matches_lean_model() {
     // booleanity is folded away by the minimizer the prover runs, so what is
     // proven still matches the Sha256.lean model). TODO: nested-DAG plug-
     // materialization sharing recovers the 34934 inlined flat.
+    //
+    // Stable frontend: 34934 (the flat value above) − 1952 = 32982. Each round's
+    // `Maj(a, b, c)` ANDs `b ∧ c`, which is the previous round's `a ∧ b` on the same
+    // bit wires (the state shifts `a → b → c`): 61 rounds × 32 bits reuse that row
+    // (`Xark.R1cs.cse_sound`) instead of re-emitting `bᵢ · cᵢ = t`. The reused
+    // output satisfies the very `and_sound` row the model is stated over.
+    let want = if xark_test_harness::stable_frontend() {
+        32982
+    } else {
+        35158
+    };
     assert_eq!(
-        mul, 35158,
+        mul, want,
         "SHA-256 multiplication-gate count pins the Sha256.lean bit-soundness model; got {mul}"
     );
 }
@@ -2023,7 +2210,9 @@ fn aes_matches_lean_model() {
     assert!(c.status_success, "aes gadget compiles: {}", c.stderr);
     // Mult-gate count, streamed from `circuit.xbc` (no r1cs.json materialization).
     let mul = c.mul_gate_count();
-    assert_eq!(mul, 145816, "AES-128 mult-gate count; got {mul}");
+    // 145816 for the block + 384 booleanity rows range-checking the example's 48
+    // `u8` inputs (8 bits each; the inputs became `[u8; 16]` in c0b63cd).
+    assert_eq!(mul, 146200, "AES-128 mult-gate count; got {mul}");
 }
 
 /// **R1CS ↔ Lean bridge (AES-256).** The AES-256 block reuses the exact round-step
@@ -2099,7 +2288,15 @@ fn aes_gcm_matches_lean_model() {
     assert!(c.status_success, "aes_gcm gadget compiles: {}", c.stderr);
     // Mult-gate count, streamed from `circuit.xbc` (no r1cs.json materialization).
     let mul = c.mul_gate_count();
-    assert_eq!(mul, 715240, "AES-128-GCM mult-gate count; got {mul}");
+    // 715240 for the mode + 776 booleanity rows range-checking the example's 97
+    // `u8` inputs. The stable frontend lowers flat (no templates), as the MIR
+    // frontend's `XARK_FLAT=1` build does — 32 fewer.
+    let want = if xark_test_harness::stable_frontend() {
+        715984
+    } else {
+        716016
+    };
+    assert_eq!(mul, want, "AES-128-GCM mult-gate count; got {mul}");
 }
 
 /// **R1CS ↔ Lean bridge (secp256k1 non-native field multiply).**
@@ -2132,8 +2329,18 @@ fn ec_incomplete_matches_lean_model() {
     assert!(c.status_success, "ec_incomplete compiles: {}", c.stderr);
     // Mult-gate count, streamed from `circuit.xbc` (no r1cs.json materialization).
     let mul = c.mul_gate_count();
+    // Stable frontend: 15369 − 9. Squaring a 3-limb element (`y²`, `λ²`, the
+    // on-curve check) forms each cross product `xᵢ·xⱼ` twice in the schoolbook
+    // column sums; the second reuses the first's row (`Xark.R1cs.cse_sound`), so
+    // every column sum — what `mul_mod_via_limbwise_constraints` is stated over —
+    // has the same value.
+    let want = if xark_test_harness::stable_frontend() {
+        15360
+    } else {
+        15369
+    };
     assert_eq!(
-        mul, 15369,
+        mul, want,
         "ec_incomplete mult-gate count pins ec_add_incomplete_secp256k1_sound; got {mul}"
     );
 }
@@ -2150,8 +2357,15 @@ fn ec_incomplete_r1_matches_lean_model() {
     assert!(c.status_success, "ec_incomplete_r1 compiles: {}", c.stderr);
     // Mult-gate count, streamed from `circuit.xbc` (no r1cs.json materialization).
     let mul = c.mul_gate_count();
+    // Stable frontend: 15891 − 9 (the 3-limb square's repeated cross products; see
+    // `ec_incomplete_matches_lean_model`).
+    let want = if xark_test_harness::stable_frontend() {
+        15882
+    } else {
+        15891
+    };
     assert_eq!(
-        mul, 15891,
+        mul, want,
         "ec_incomplete_r1 mult-gate count pins ec_add_incomplete_secp256r1_sound; got {mul}"
     );
 }
@@ -2240,7 +2454,10 @@ fn rejects_non_numeric_field_string() {
     let c = compile(&src, "reject_bad_str");
     assert!(!c.status_success);
     assert!(
-        c.stderr.contains("non-numeric character 'a'"),
+        c.stderr.contains("non-numeric character 'a'")
+            // Stable: the `const fn` parser's panic (no formatting in a const panic).
+            || (xark_test_harness::stable_frontend()
+                && c.stderr.contains("non-numeric character")),
         "{}",
         c.stderr
     );
@@ -2757,6 +2974,23 @@ fn rejects_compound_assign() {
          \x20   require_eq(acc, b);\n\
          }\n",
     );
+    // The stable frontend supports `+=` (`Field: AddAssign`).
+    if xark_test_harness::stable_frontend() {
+        let src = write_case(
+            "field_assign_ok",
+            "#![no_std]\nuse xark::{require_eq, Field, Private, Public};\n\
+             pub fn circuit(a: Private<Field>, b: Public<Field>, c: Public<Field>) {\n\
+             \x20   let mut acc = a;\n\
+             \x20   acc += b;\n\
+             \x20   require_eq(acc, c);\n\
+             }\n",
+        );
+        let c = compile_with_field(&src, "field_assign_ok", "bn254");
+        assert!(c.status_success, "{}", c.stderr);
+        assert!(accepts(&c, &[("a", "2"), ("b", "3"), ("c", "5")]));
+        assert!(!accepts(&c, &[("a", "2"), ("b", "3"), ("c", "6")]));
+        return;
+    }
     let c = compile(&src, "reject_assign");
     assert!(
         !c.status_success,
@@ -2769,8 +3003,9 @@ fn rejects_compound_assign() {
     );
 }
 
-/// `==` on `Field` is now a circuit operation (yields a `bool` wire); what is
-/// rejected is branching on that witness-dependent bool.
+/// `==` on `Field` is now a circuit operation (yields a `bool` wire); the MIR
+/// frontend rejects branching on that witness-dependent bool, the stable one makes
+/// the arm's `require` conditional on it.
 #[test]
 fn rejects_field_comparison() {
     let src = write_case(
@@ -2780,6 +3015,13 @@ fn rejects_field_comparison() {
          \x20   if a == b { require_eq(a, b); }\n\
          }\n",
     );
+    if xark_test_harness::stable_frontend() {
+        let c = compile_with_field(&src, "field_cmp_ok", "bn254");
+        assert!(c.status_success, "{}", c.stderr);
+        assert!(accepts(&c, &[("a", "3"), ("b", "3")]));
+        assert!(accepts(&c, &[("a", "3"), ("b", "4")]));
+        return;
+    }
     let c = compile(&src, "reject_cmp");
     assert!(
         !c.status_success,
@@ -2787,10 +3029,373 @@ fn rejects_field_comparison() {
     );
     assert!(
         c.stderr.contains("conditional arm ends with")
-            || c.stderr.contains("unsupported operation"),
+            || c.stderr.contains("unsupported operation")
+            || c.stderr.contains("a branch on a witness value can't"),
         "unexpected error: {}",
         c.stderr
     );
+}
+
+/// Stable frontend: `assert!`, `require_eq` and integer division inside a witness
+/// branch bind only when the arm is taken (nested arms too); a division by zero in
+/// an untaken arm is fine.
+#[test]
+fn conditional_requires() {
+    if !xark_test_harness::stable_frontend() {
+        return;
+    }
+    let src = write_case(
+        "cond_req",
+        "#![no_std]\nuse xark::prelude::*;\n\
+         pub fn circuit(mode: Private<u8>, a: Private<u32>, b: Private<u32>, x: Private<Field>, out: Public<Field>) {\n\
+         \x20   if mode == 1 { assert!(a < b); }\n\
+         \x20   if mode == 2 { require_eq(x, Field::from(a)); }\n\
+         \x20   if mode >= 4 { if a > b { require_eq(x, Field::from(b)); } }\n\
+         \x20   let q = if mode == 3 { a / b } else { a };\n\
+         \x20   require_eq(Field::from(q), out);\n\
+         }\n",
+    );
+    let c = compile_with_field(&src, "cond_req", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let case = |mode: &str, a: &str, b: &str, x: &str, out: &str| {
+        accepts_exactly(
+            &c,
+            &[("mode", mode), ("a", a), ("b", b), ("x", x), ("out", out)],
+        )
+    };
+    assert!(case("0", "5", "0", "9", "5"));
+    assert!(case("1", "3", "5", "9", "3"));
+    assert!(!case("1", "5", "3", "9", "5"));
+    assert!(case("2", "7", "0", "7", "7"));
+    assert!(!case("2", "7", "0", "8", "7"));
+    assert!(case("3", "7", "2", "0", "3"));
+    assert!(!case("3", "7", "2", "0", "7"));
+    assert!(!case("3", "7", "0", "0", "7"));
+    assert!(case("4", "5", "3", "3", "5"));
+    assert!(!case("4", "5", "3", "4", "5"));
+    assert!(case("4", "1", "3", "4", "1"));
+}
+
+/// Stable frontend: gadget hints (`hint_div_rem`, the bignum mul/inverse/sub hints)
+/// and `advice` inside a witness branch — inputs gated by the arm's guard, outputs
+/// pinned where it isn't taken, every pin of theirs guarded.
+#[test]
+fn conditional_gadget_hints() {
+    if !xark_test_harness::stable_frontend() {
+        return;
+    }
+    let src = write_case(
+        "cond_hints",
+        "#![no_std]\nuse xark::prelude::*;\n\
+         pub fn circuit(mode: Private<u8>, x: Private<Field>, m: Private<Field>, out: Public<Field>) {\n\
+         \x20   let r = if mode == 1 {\n\
+         \x20       let [q, r] = Field::hint_div_rem(x, m);\n\
+         \x20       require_eq(q * m + r, x);\n\
+         \x20       let _ = q.to_bits::<8>();\n\
+         \x20       require(r.lt::<8>(m));\n\
+         \x20       r\n\
+         \x20   } else if mode == 2 {\n\
+         \x20       let w = Field::advice();\n\
+         \x20       require_eq(w * m, x);\n\
+         \x20       w\n\
+         \x20   } else {\n\
+         \x20       x + m\n\
+         \x20   };\n\
+         \x20   require_eq(r, out);\n\
+         }\n",
+    );
+    let c = compile_with_field(&src, "cond_hints", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    // Bare `advice` has no hint, so mode 2's witness is checked by search alone; the
+    // other modes' by search and the honest solver.
+    let case = |mode: &str, x: &str, m: &str, out: &str| {
+        let inputs = [("mode", mode), ("x", x), ("m", m), ("out", out)];
+        if mode == "2" {
+            accepts_exactly_constraints(&c, &inputs)
+        } else {
+            accepts_exactly(&c, &inputs)
+        }
+    };
+    // mode 0: `m = 0` is fine where the division isn't taken.
+    assert!(case("0", "17", "0", "17"));
+    assert!(!case("0", "17", "0", "18"));
+    // mode 1: 17 = 3·5 + 2.
+    assert!(case("1", "17", "5", "2"));
+    assert!(!case("1", "17", "5", "7"));
+    assert!(!case("1", "17", "0", "0"));
+    assert!(!case("1", "17", "0", "17"));
+    // mode 2: `w = x / m` (field division), pinned by the guarded `w·m = x`.
+    assert!(case("2", "12", "4", "3"));
+    assert!(!case("2", "12", "4", "4"));
+
+    // Non-native field ops (mulmod, mod-inverse, sub2 hints) in arms.
+    let src = write_case(
+        "cond_bignum",
+        "#![no_std]\nuse xark::prelude::*;\n\
+         xark_bignum::fp!(El, \"57896044618658097711785492504343953926634992332820282019728792003956564819949\");\n\
+         #[circuit]\n\
+         pub fn circuit(mode: Private<u8>, a: Private<El>, b: Private<El>, out: Public<Field>) {\n\
+         \x20   let r = if mode == 1 { a * b } else if mode == 2 { a.inverse() } \
+         else if mode == 3 { a.sub2(b, b) } else { a + b };\n\
+         \x20   require_eq(r.limbs[0], out);\n\
+         }\n",
+    );
+    let c = compile_with_field(&src, "cond_bignum", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let case = |mode: &str, a: &str, b: &str, out: &str| {
+        accepts_best_effort(
+            &c,
+            &[
+                ("mode", mode),
+                ("a.limbs[0]", a),
+                ("a.limbs[1]", "0"),
+                ("a.limbs[2]", "0"),
+                ("b.limbs[0]", b),
+                ("b.limbs[1]", "0"),
+                ("b.limbs[2]", "0"),
+                ("out", out),
+            ],
+        )
+    };
+    // mode 0: `a = 0` has no inverse, fine where `inverse` isn't taken.
+    assert!(case("0", "0", "0", "0"));
+    assert!(case("0", "2", "3", "5"));
+    assert!(case("1", "2", "3", "6"));
+    assert!(!case("1", "2", "3", "5"));
+    // 2⁻¹ mod p = (p + 1) / 2 (p = 2²⁵⁵ − 19), low 86-bit limb.
+    assert!(case("2", "2", "3", "77371252455336267181195255"));
+    assert!(!case("2", "2", "3", "1"));
+    assert!(!case("2", "0", "3", "0"));
+    // 2 − 3 − 3 mod p = p − 4, low limb.
+    assert!(case("3", "2", "3", "77371252455336267181195241"));
+    assert!(!case("3", "2", "3", "0"));
+}
+
+/// Stable frontend: an arm that can only panic is pruned, and the condition pinned to
+/// the other arm. Shapes the fuzzer found reaching each pruning path (an arm that
+/// touches witness data before it panics; one that panics past the rejoin point).
+/// Every input is decided by exhaustive witness search against native Rust.
+#[test]
+fn pruned_arms_constrain_the_condition() {
+    if !xark_test_harness::stable_frontend() {
+        return;
+    }
+    type Native = fn(&[u64]) -> Option<u64>;
+    let cases: [(&str, &str, usize, Native); 4] = [
+        (
+            "prune_touch",
+            "pub fn circuit(x0: Private<u16>, x1: Private<u16>, x2: Private<u16>, out: Public<Field>) {\n\
+             \x20   let v0: u16 = if x0 == x2 { x0 - x2 } else { (x1 + x1).wrapping_mul(65534u16 + 2u16) };\n\
+             \x20   if v0 == x1 { assert!(v0 <= x1); }\n\
+             \x20   require_eq(Field::from(v0), out);\n\
+             }\n",
+            3,
+            |x| {
+                let (x0, x1, x2) = (x[0] as u16, x[1] as u16, x[2] as u16);
+                if x0 == x2 {
+                    Some(0)
+                } else {
+                    let _ = x1.checked_add(x1)?;
+                    None // `65534u16 + 2u16` overflows
+                }
+            },
+        ),
+        (
+            "prune_mod_zero",
+            "pub fn circuit(x0: Private<u64>, x1: Private<u64>, out: Public<Field>) {\n\
+             \x20   let v1: u64 = if x0 < x1 { (x1 ^ x1) & (x1 % 0u64) } else { (x1 / x1) + x1 };\n\
+             \x20   require_eq(Field::from(v1), out);\n\
+             }\n",
+            2,
+            |x| {
+                let (x0, x1) = (x[0], x[1]);
+                if x0 < x1 {
+                    None
+                } else {
+                    (x1.checked_div(x1)?).checked_add(x1)
+                }
+            },
+        ),
+        (
+            "prune_merged",
+            "pub fn circuit(x0: Private<u32>, x1: Private<u32>, out: Public<Field>) {\n\
+             \x20   let v0: u32 = x1 + x1;\n\
+             \x20   let v1: u32 = if v0 == x0 { v0 } else { x0 };\n\
+             \x20   let v2: u32 = if x0 != v0 { v1 - v1 } else { 7u32 * (x0 + 4294967294u32) };\n\
+             \x20   require_eq(Field::from(v1 + v2), out);\n\
+             }\n",
+            2,
+            |x| {
+                let (x0, x1) = (x[0] as u32, x[1] as u32);
+                let v0 = x1.checked_add(x1)?;
+                let v1 = if v0 == x0 { v0 } else { x0 };
+                let v2 = if x0 != v0 {
+                    0
+                } else {
+                    7u32.checked_mul(x0.checked_add(4294967294)?)?
+                };
+                Some(v1.checked_add(v2)? as u64)
+            },
+        ),
+        (
+            "prune_rejoin",
+            "pub fn circuit(x0: Private<u8>, x1: Private<u8>, out: Public<Field>) {\n\
+             \x20   let v0: u8 = if x1 < x1 { x1 } else { x0 };\n\
+             \x20   let v1: u8 = match x0 as u8 { 0 => 148, 6 => 113, 2 => 230, _ => 26 };\n\
+             \x20   let v2: u8 = if v0 == v1 { v0.wrapping_add(x0) << 6 } else { !v0 };\n\
+             \x20   let v4: u8 = v2 * ((x1 - v1) - (x0 % v0));\n\
+             \x20   require_eq(Field::from(v4), out);\n\
+             }\n",
+            2,
+            |x| {
+                let (x0, x1) = (x[0] as u8, x[1] as u8);
+                let v0 = x0;
+                let v1 = match x0 {
+                    0 => 148,
+                    6 => 113,
+                    2 => 230,
+                    _ => 26,
+                };
+                let v2 = if v0 == v1 {
+                    v0.wrapping_add(x0) << 6
+                } else {
+                    !v0
+                };
+                let d = x1.checked_sub(v1)?.checked_sub(x0.checked_rem(v0)?)?;
+                Some(v2.checked_mul(d)? as u64)
+            },
+        ),
+    ];
+    let samples = [
+        0u64,
+        1,
+        2,
+        3,
+        6,
+        26,
+        27,
+        113,
+        148,
+        230,
+        0x7fff,
+        0xfffe,
+        0xffff,
+        0x7fff_ffff,
+        0xffff_fffe,
+        u64::MAX,
+    ];
+    for (name, body, n, native) in cases {
+        let src = write_case(
+            name,
+            &format!(
+                "#![no_std]\n#![allow(unconditional_panic, arithmetic_overflow)]\nuse xark::prelude::*;\n{body}"
+            ),
+        );
+        let c = compile_with_field(&src, name, "bn254");
+        assert!(c.status_success, "{name}: {}", c.stderr);
+        let width = match name {
+            "prune_touch" => 16,
+            "prune_merged" => 32,
+            "prune_rejoin" => 8,
+            _ => 64,
+        };
+        let mask = if width == 64 {
+            u64::MAX
+        } else {
+            (1u64 << width) - 1
+        };
+        let mut grid: Vec<Vec<u64>> = vec![vec![]];
+        for _ in 0..n {
+            grid = grid
+                .into_iter()
+                .flat_map(|xs| {
+                    samples
+                        .iter()
+                        .map(move |&v| [xs.clone(), vec![v & mask]].concat())
+                })
+                .collect();
+        }
+        grid.sort();
+        grid.dedup();
+        for xs in grid {
+            let names: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+            let vals: Vec<String> = xs.iter().map(|v| v.to_string()).collect();
+            let run = |out: u64| {
+                let out = out.to_string();
+                let mut inputs: Vec<(&str, &str)> = names
+                    .iter()
+                    .map(String::as_str)
+                    .zip(vals.iter().map(String::as_str))
+                    .collect();
+                inputs.push(("out", &out));
+                accepts_exactly(&c, &inputs)
+            };
+            match native(&xs) {
+                Some(v) => {
+                    assert!(run(v), "{name} {xs:?}: Rust gives {v}, circuit rejects");
+                    assert!(!run(v + 1), "{name} {xs:?}: accepts {v} + 1");
+                }
+                None => {
+                    for out in [0, 1, xs[0]] {
+                        assert!(
+                            !run(out),
+                            "{name} {xs:?}: Rust panics, circuit accepts {out}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Stable frontend: `Field` range checks (`to_bits`), comparisons (`lt`) and
+/// inverses inside a witness branch bind only when the arm is taken — an untaken
+/// arm may see an out-of-range value or a zero.
+#[test]
+fn conditional_field_ops() {
+    if !xark_test_harness::stable_frontend() {
+        return;
+    }
+    let src = write_case(
+        "cond_field",
+        "#![no_std]\nuse xark::prelude::*;\n\
+         pub fn circuit(mode: Private<u8>, x: Private<Field>, y: Private<Field>, out: Public<Field>) {\n\
+         \x20   let r = if mode == 1 {\n\
+         \x20       let b = x.to_bits::<8>();\n\
+         \x20       b[0] + b[7]\n\
+         \x20   } else if mode == 2 {\n\
+         \x20       x.inv()\n\
+         \x20   } else if mode == 3 {\n\
+         \x20       if x.lt::<8>(y) { Field::from(1u8) } else { Field::from(2u8) }\n\
+         \x20   } else {\n\
+         \x20       x + y\n\
+         \x20   };\n\
+         \x20   require_eq(r, out);\n\
+         }\n",
+    );
+    let c = compile_with_field(&src, "cond_field", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let case = |mode: &str, x: &str, y: &str, out: &str| {
+        accepts_exactly(&c, &[("mode", mode), ("x", x), ("y", y), ("out", out)])
+    };
+    // mode 0: an out-of-range / zero `x` is fine in the untaken arms.
+    assert!(case("0", "0", "5", "5"));
+    assert!(case("0", "100000", "1", "100001"));
+    assert!(!case("0", "1", "1", "3"));
+    // mode 1: `x < 2^8`, out = bit0 + bit7.
+    assert!(case("1", "129", "0", "2"));
+    assert!(case("1", "2", "0", "0"));
+    assert!(!case("1", "129", "0", "1"));
+    assert!(!case("1", "256", "0", "0"));
+    // mode 2: `x ≠ 0`, out = 1/x.
+    assert!(case("2", "1", "0", "1"));
+    assert!(!case("2", "0", "0", "0"));
+    assert!(!case("2", "2", "0", "2"));
+    // mode 3: `x, y < 2^8`.
+    assert!(case("3", "3", "4", "1"));
+    assert!(case("3", "4", "3", "2"));
+    assert!(!case("3", "4", "3", "1"));
+    assert!(!case("3", "300", "3", "2"));
 }
 
 /// `==` on `Field`, `<` via `Field::lt::<N>` + `require`, and witness mux via
@@ -3810,6 +4415,15 @@ fn rejects_narrowing_witness_cast() {
         let x = a as u8;\n\
         require_eq(Field::from(x), b);\n}\n";
     let c = compile_with_field(&write_case("narrow_cast", src), "narrow_cast", "bn254");
+    // The stable frontend lowers `as u8` as Rust defines it: truncation, pinned by
+    // the decomposition of `a` (0x1234 → 0x34).
+    if xark_test_harness::stable_frontend() {
+        assert!(c.status_success, "{}", c.stderr);
+        assert!(accepts(&c, &[("a", "4660"), ("b", "52")]));
+        assert!(!accepts(&c, &[("a", "4660"), ("b", "4660")]));
+        assert!(!accepts(&c, &[("a", "4660"), ("b", "53")]));
+        return;
+    }
     assert!(!c.status_success, "narrowing a witness must not compile");
     assert!(c.stderr.contains("narrowing cast"), "{}", c.stderr);
 }

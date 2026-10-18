@@ -240,6 +240,17 @@ jobs:
           #print axioms mul_mod_via_Fr_limbwise_constraints
           #print axioms ec_add_incomplete_secp256k1_sound
           #print axioms ec_add_incomplete_secp256r1_sound
+          -- constraint-reducing rewrites (stable frontend)
+          #print axioms Xark.R1cs.elim_sound
+          #print axioms Xark.R1cs.cse_sound
+          #print axioms Xark.R1cs.inline_sound
+          #print axioms Xark.R1cs.fold_sound
+          #print axioms Xark.R1cs.const_mul_sound
+          #print axioms Xark.R1cs.gated_sat
+          #print axioms Xark.R1cs.guard_mul
+          #print axioms Xark.R1cs.pin_dead
+          #print axioms Xark.R1cs.select_taken
+          #print axioms Xark.R1cs.select_untaken
           EOF
           # Capture stdout+stderr separately from the exit code; under bash -e
           # `out=$(cmd)` exits the whole script if `cmd` returns non-zero,

@@ -1,0 +1,357 @@
+//! xark's stable-Rust frontend.
+//!
+//! A circuit crate is compiled by stock **stable** `rustc` to `wasm32-unknown-unknown`
+//! with `--cfg xark`. In that build every circuit operation (`Field` arithmetic,
+//! comparisons, hints, `require_eq`, input binding) is a call to an opaque `xark.*`
+//! wasm import, so the compiler can neither drop, duplicate nor reorder them. This
+//! crate runs the module in an interpreter that implements those imports as the
+//! circuit builder: concrete values (constants, loop counters, indices) just execute,
+//! while witness values are tracked symbolically. A branch on a witness `bool` runs
+//! both arms and merges what differs into selects, exactly like the MIR frontend's
+//! branchless muxes.
+
+mod builder;
+mod debuginfo;
+mod error;
+mod host;
+mod interp;
+mod output;
+mod schema;
+mod templates;
+
+pub use error::{CompileError, CompileResult, ErrorSite};
+pub use output::LowerOutput;
+
+/// A lowered circuit and the name of its `#[circuit]` fn.
+pub struct Lowered {
+    pub output: LowerOutput,
+    pub entry: Option<String>,
+    /// The input interface (`schema.json`).
+    pub schema: serde_json::Value,
+}
+
+/// Lower a circuit module (`wasm32`, built with `--cfg xark`) to a circuit.
+pub fn lower_wasm(
+    wasm: &[u8],
+    field: xark_ir::FieldSpec,
+    profile: bool,
+) -> CompileResult<LowerOutput> {
+    lower_module(wasm, field, profile, true).map(|l| l.output)
+}
+
+/// [`lower_wasm`], also returning the circuit's name. `notes`: build the
+/// constraints' debug notes and internal variable names (only the JSON views show
+/// them; `circuit.xbc` is identical either way).
+pub fn lower_module(
+    wasm: &[u8],
+    field: xark_ir::FieldSpec,
+    profile: bool,
+    notes: bool,
+) -> CompileResult<Lowered> {
+    let timing = std::env::var_os("XARK_FRONTEND_TIME").is_some();
+    let t = std::time::Instant::now();
+    let mut host = host::Host::new(profile, notes, field.modulus_decimal.as_deref());
+    let module = interp::Module::parse(wasm)?;
+    let mut machine = interp::Machine::new(&module)?;
+    machine
+        .run_export(&module, "__xark_main", &mut host)
+        .map_err(|e| locate(&module, e))?;
+    if timing {
+        eprintln!(
+            "FRONTEND_TIME: run    = {:?} ({} wasm instructions)",
+            t.elapsed(),
+            machine.steps()
+        );
+        eprintln!(
+            "FRONTEND_TIME: host calls = {:.3}s, mem {} MB",
+            machine.host_ns as f64 / 1e9,
+            machine.mem.len() >> 20
+        );
+        eprintln!("FRONTEND_TIME: forks {}", machine.forks);
+    }
+    let schema = host.schema(module.entry.as_deref().unwrap_or("circuit"));
+    let sites = std::mem::take(&mut host.sites);
+    let t = std::time::Instant::now();
+    let mut output = host.finish(field).map_err(|e| locate(&module, e))?;
+    if profile {
+        attribute(&module, &sites, &mut output.profile);
+    }
+    if timing {
+        eprintln!("FRONTEND_TIME: finish = {:?}", t.elapsed());
+    }
+    Ok(Lowered {
+        output,
+        entry: module.entry.clone(),
+        schema,
+    })
+}
+
+/// Map an error's wasm call stack to the user source line it happened at.
+fn locate(module: &interp::Module, mut e: CompileError) -> CompileError {
+    let Some(site) = e.site.as_ref().map(|s| s.stack.clone()) else {
+        return e;
+    };
+    let site = &site[..];
+    let mut r = debuginfo::Resolver::new(module);
+    let (at, inner) = r.error_location(site);
+    if let Some((file, line, col)) = at {
+        if e.location.is_none() {
+            e.location = Some(format!("{file}:{line}:{col}"));
+            if let Some(inner) = inner {
+                e.notes.push(inner);
+            }
+        }
+        if let Some(s) = e.site.as_mut() {
+            s.span = Some((file, line, col));
+        }
+    }
+    if !r.has_lines() {
+        // No line tables: name the wasm functions instead.
+        let chain: Vec<String> = r
+            .stack(site)
+            .iter()
+            .map(|f| debuginfo::short_name(&f.function).to_string())
+            .filter(|n| !n.starts_with("__xark") && !n.starts_with("xark_"))
+            .collect();
+        if !chain.is_empty() && e.location.is_none() {
+            e.notes.push(format!("in {}", chain.join(" → ")));
+        }
+    }
+    e
+}
+
+/// Resolve each profiled constraint's site (its interned id, carried in `line`)
+/// to the source attribution.
+fn attribute(
+    module: &interp::Module,
+    sites: &[Vec<(u32, u32)>],
+    profile: &mut [xark_ir::profile::ConstraintProfile],
+) {
+    use xark_ir::profile::ConstraintKind;
+    let mut r = debuginfo::Resolver::new(module);
+    let resolved: Vec<debuginfo::Attribution> = sites.iter().map(|s| r.attribute(s)).collect();
+    for p in profile.iter_mut() {
+        let Some(a) = resolved.get(p.line as usize) else {
+            p.line = 0;
+            continue;
+        };
+        p.file = a.file.clone();
+        p.line = a.line;
+        p.col = a.col;
+        p.chain = a.chain.clone();
+        if let Some(k) = a.kind_hint
+            && matches!(p.kind, ConstraintKind::Mul | ConstraintKind::Other)
+        {
+            p.kind = k;
+        }
+    }
+}
+
+/// Write a lowered circuit's artifacts to `out_dir`, as the MIR driver does:
+/// `circuit.xbc` always; `circuit.json` / `r1cs.json` / `graph.dot` with
+/// `emit_json`; `profile.json` with `profile`.
+pub fn write_outputs(
+    out_dir: &std::path::Path,
+    out: &LowerOutput,
+    emit_json: bool,
+    profile: bool,
+) -> std::io::Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    write_outputs_in(out_dir, out, emit_json, profile, &cwd)
+}
+
+/// [`write_outputs`], with `profile.json`'s relative source paths resolving
+/// against `source_root` (the circuit crate's directory; see [`relativize_profile`]).
+pub fn write_outputs_in(
+    out_dir: &std::path::Path,
+    out: &LowerOutput,
+    emit_json: bool,
+    profile: bool,
+    source_root: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(out_dir)?;
+    if emit_json {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(out_dir.join("circuit.json"))?);
+        xark_ir::primitive::write_json(&out.primitive, &mut w)?;
+        w.write_all(b"\n")?;
+        drop(w);
+        const DEBUG_R1CS_MAX_CONSTRAINTS: usize = 1_000_000;
+        let mut w = std::io::BufWriter::new(std::fs::File::create(out_dir.join("r1cs.json"))?);
+        if out.r1cs.constraints.len() <= DEBUG_R1CS_MAX_CONSTRAINTS {
+            xark_ir::json::write_json_pretty(&out.r1cs, &mut w)?;
+            w.write_all(b"\n")?;
+            std::fs::write(out_dir.join("graph.dot"), xark_ir::to_dot(&out.r1cs))?;
+        } else {
+            xark_ir::json::write_json(&out.r1cs, &mut w)?;
+            w.write_all(b"\n")?;
+        }
+    }
+    if profile {
+        let prof = xark_ir::ProfileProgram {
+            source_root: source_root.display().to_string(),
+            constraints: out.profile.clone(),
+        };
+        std::fs::write(
+            out_dir.join("profile.json"),
+            format!("{}\n", xark_ir::profile::to_json_pretty(&prof)),
+        )?;
+    }
+    let xbc = out
+        .function_xbc
+        .as_ref()
+        .expect("the DAG-function artifact is built for every circuit");
+    std::fs::write(out_dir.join("circuit.xbc"), xbc)
+}
+
+/// Make the profile's source paths under `root` relative to it (as the MIR
+/// frontend writes them: `src/lib.rs`); others (dependencies) stay absolute.
+pub fn relativize_profile(out: &mut LowerOutput, root: &std::path::Path) {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let mut cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for p in &mut out.profile {
+        if p.file.is_empty() {
+            continue;
+        }
+        let rel = cache.entry(p.file.clone()).or_insert_with(|| {
+            let path = std::path::Path::new(&p.file);
+            let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            path.strip_prefix(&root)
+                .map(|r| r.display().to_string())
+                .unwrap_or_else(|_| p.file.clone())
+        });
+        p.file = rel.clone();
+    }
+}
+
+/// Build a circuit crate for the stable frontend: `cargo rustc --lib` for
+/// `wasm32-unknown-unknown` with `--cfg xark`, as a `cdylib` (so the `#[circuit]`
+/// export and everything it reaches are linked), with `panic = "abort"`. Returns the
+/// module's bytes. `cargo` is whatever toolchain is ambient (stable is enough).
+pub fn build_crate(
+    crate_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<Vec<u8>, String> {
+    build_crate_with(crate_dir, target_dir, &BuildOptions::default())
+}
+
+/// Options for [`build_crate_with`].
+#[derive(Clone, Debug)]
+pub struct BuildOptions {
+    /// Build with DWARF line tables (`debug = "line-tables-only"`; the default), so
+    /// lowering can attribute constraints and errors to source lines. The circuit
+    /// and the lowering time are identical either way, and the compile time is the
+    /// same within noise (Ed25519: 2.8 s cold with, 3.2 s without); only the
+    /// `.wasm` grows (49 KB → 0.9 MB). A cache built without them is rebuilt.
+    pub line_tables: bool,
+    /// Pass `--message-format=json` to cargo (its diagnostics go to stdout as
+    /// JSON, for editors).
+    pub json_diagnostics: bool,
+}
+
+impl Default for BuildOptions {
+    fn default() -> Self {
+        BuildOptions {
+            line_tables: true,
+            json_diagnostics: false,
+        }
+    }
+}
+
+/// [`build_crate`] with [`BuildOptions`].
+pub fn build_crate_with(
+    crate_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+    opts: &BuildOptions,
+) -> Result<Vec<u8>, String> {
+    let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml"))
+        .map_err(|e| format!("reading {}/Cargo.toml: {e}", crate_dir.display()))?;
+    let name = manifest
+        .lines()
+        .skip_while(|l| l.trim() != "[package]")
+        .find_map(|l| {
+            let l = l.trim();
+            let v = l.strip_prefix("name")?.trim_start().strip_prefix('=')?;
+            Some(v.trim().trim_matches('"').to_string())
+        })
+        .ok_or("no package name in Cargo.toml")?;
+    ensure_wasm_target(crate_dir)?;
+    let mut cmd = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()));
+    cmd.current_dir(crate_dir)
+        .env("RUSTFLAGS", "--cfg xark")
+        .env("CARGO_TARGET_DIR", target_dir)
+        .args([
+            "rustc",
+            "--quiet",
+            "--release",
+            "--lib",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--crate-type",
+            "cdylib",
+            "--config",
+            "profile.release.panic=\"abort\"",
+            // Checked integer arithmetic, as Rust's debug semantics (and the MIR
+            // frontend): an overflow on a witness integer becomes a constraint.
+            "--config",
+            "profile.release.overflow-checks=true",
+            // Size-optimized: LLVM inlines less, so more gadget calls stay wasm calls
+            // and template (Ed25519's `circuit.xbc`: 2.5 MB at `3` → 0.78 MB). The
+            // circuit itself is the same at every level.
+            "--config",
+            "profile.release.opt-level=\"s\"",
+        ]);
+    if opts.line_tables {
+        cmd.args([
+            "--config",
+            "profile.release.debug=\"line-tables-only\"",
+            "--config",
+            "profile.release.strip=\"none\"",
+        ]);
+    }
+    if opts.json_diagnostics {
+        cmd.arg("--message-format=json-diagnostic-rendered-ansi");
+    }
+    let status = cmd.status().map_err(|e| format!("running cargo: {e}"))?;
+    if !status.success() {
+        return Err("cargo build of the circuit failed".into());
+    }
+    let wasm = target_dir
+        .join("wasm32-unknown-unknown/release")
+        .join(format!("{}.wasm", name.replace('-', "_")));
+    std::fs::read(&wasm).map_err(|e| format!("reading {}: {e}", wasm.display()))
+}
+
+/// Make sure the ambient toolchain has the `wasm32-unknown-unknown` standard library,
+/// adding it with `rustup` when it's missing (the one toolchain piece the stable
+/// frontend needs).
+fn ensure_wasm_target(crate_dir: &std::path::Path) -> Result<(), String> {
+    let sysroot = std::process::Command::new("rustc")
+        .current_dir(crate_dir)
+        .args(["--print", "sysroot"])
+        .output()
+        .map_err(|e| format!("running rustc: {e}"))?;
+    let sysroot = String::from_utf8_lossy(&sysroot.stdout).trim().to_string();
+    if std::path::Path::new(&sysroot)
+        .join("lib/rustlib/wasm32-unknown-unknown")
+        .exists()
+    {
+        return Ok(());
+    }
+    eprintln!("xark: installing the wasm32-unknown-unknown target (one-time)");
+    let ok = std::process::Command::new("rustup")
+        .current_dir(crate_dir)
+        .args(["target", "add", "wasm32-unknown-unknown"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(
+            "the wasm32-unknown-unknown target is missing; install it with \
+             `rustup target add wasm32-unknown-unknown`"
+                .into(),
+        )
+    }
+}

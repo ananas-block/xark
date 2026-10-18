@@ -105,6 +105,17 @@ pub struct PointL {
     pub y: FpL,
 }
 
+#[cfg(all(xark, target_arch = "wasm32"))]
+impl xark::wasm::Input for PointL {
+    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
+        xark::wasm::input_struct(n, "PointL");
+        PointL {
+            x: xark::wasm::input_field(n, "x", vis),
+            y: xark::wasm::input_field(n, "y", vis),
+        }
+    }
+}
+
 const BX85: L3 = modulus_limbs::<3, 85>(
     "15112221349535400772501151409588531511454012693041857206046113283949847762202",
 );

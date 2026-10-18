@@ -41,6 +41,12 @@ pub mod lang;
 /// `Field` impls; circuit authors use the `Field` methods, not these directly.
 pub mod intrinsics;
 
+/// The stable-frontend circuit build (`--cfg xark` on `wasm32`): the `xark.*` imports
+/// the intrinsics call, input binding for the `#[circuit]` entry, and the runtime.
+#[cfg(all(xark, target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod wasm;
+
 /// The everyday circuit-author surface. `use xark::prelude::*;`.
 pub mod prelude {
     pub use crate::lang::{

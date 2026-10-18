@@ -10,3 +10,5 @@ edition = "2024"
 [dependencies]
 num-bigint = "0.4"
 xark-ir = { path = "../ir", version = "0.2.1" }
+xark-frontend = { path = "../frontend", version = "0.2.1" }
+serde_json = "1"

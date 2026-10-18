@@ -1,0 +1,475 @@
+//! The circuit build for the stable frontend (`--cfg xark`, `wasm32`): every circuit
+//! operation is a call to an `xark.*` wasm import, which the compiler implements as
+//! the constraint builder while it runs the module. The imports are opaque to
+//! `rustc`/LLVM, so optimization can't drop, duplicate or reorder them, and every
+//! witness value only ever exists inside them.
+//!
+//! The ABI (pointers are wasm `i32`s; a `Field` is 4 `u64` limbs passed by pointer)
+//! must match `xark-frontend`'s `host.rs`.
+
+use core::mem::MaybeUninit;
+
+use crate::lang::Field;
+
+mod ffi {
+    use crate::lang::Field;
+
+    #[cfg_attr(target_arch = "wasm32", link(wasm_import_module = "xark"))]
+    unsafe extern "C" {
+        #[cfg_attr(target_arch = "wasm32", link_name = "add")]
+        pub fn xark_add(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "sub")]
+        pub fn xark_sub(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "mul")]
+        pub fn xark_mul(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "neg")]
+        pub fn xark_neg(out: *mut Field, a: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "pow")]
+        pub fn xark_pow(out: *mut Field, a: *const Field, exp: u64);
+        #[cfg_attr(target_arch = "wasm32", link_name = "xor")]
+        pub fn xark_xor(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "or")]
+        pub fn xark_or(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "eq")]
+        pub fn xark_eq(a: *const Field, b: *const Field) -> bool;
+        #[cfg_attr(target_arch = "wasm32", link_name = "ult")]
+        pub fn xark_ult(a: *const Field, b: *const Field, n: u32) -> bool;
+        #[cfg_attr(target_arch = "wasm32", link_name = "bool_to_field")]
+        pub fn xark_bool_to_field(out: *mut Field, b: bool);
+        #[cfg_attr(target_arch = "wasm32", link_name = "advice")]
+        pub fn xark_advice(out: *mut Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_inverse")]
+        pub fn xark_hint_inverse(out: *mut Field, x: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_inverse_or_zero")]
+        pub fn xark_hint_inverse_or_zero(out: *mut Field, x: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_bit")]
+        pub fn xark_hint_bit(out: *mut Field, x: *const Field, index: u32);
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_div_rem")]
+        pub fn xark_hint_div_rem(out: *mut Field, a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_mulmod_divmod")]
+        pub fn xark_hint_mulmod_divmod(
+            q: *mut Field,
+            r: *mut Field,
+            a: *const Field,
+            b: *const Field,
+            m: *const Field,
+            n: u32,
+            bits: u32,
+        );
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_mod_inverse")]
+        pub fn xark_hint_mod_inverse(
+            out: *mut Field,
+            a: *const Field,
+            m: *const Field,
+            n: u32,
+            bits: u32,
+        );
+        #[cfg_attr(target_arch = "wasm32", link_name = "hint_sub2")]
+        pub fn xark_hint_sub2(
+            qabs: *mut Field,
+            r: *mut Field,
+            a: *const Field,
+            b: *const Field,
+            c: *const Field,
+            m: *const Field,
+            n: u32,
+            bits: u32,
+        );
+        #[cfg_attr(target_arch = "wasm32", link_name = "require_eq")]
+        pub fn xark_require_eq(a: *const Field, b: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "witness_begin")]
+        pub fn xark_witness_begin();
+        #[cfg_attr(target_arch = "wasm32", link_name = "witness_end")]
+        pub fn xark_witness_end();
+        #[cfg_attr(target_arch = "wasm32", link_name = "to_bits_lookup")]
+        pub fn xark_to_bits_lookup(x: *const Field, n: u32, out: *mut Field) -> bool;
+        #[cfg_attr(target_arch = "wasm32", link_name = "to_bits_record")]
+        pub fn xark_to_bits_record(x: *const Field, n: u32, bits: *const Field);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_field")]
+        pub fn xark_input_field(out: *mut Field, name: *const u8, len: usize, vis: u32);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_uint")]
+        pub fn xark_input_uint(name: *const u8, len: usize, vis: u32, width: u32) -> u64;
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_struct")]
+        pub fn xark_input_struct(path: *const u8, path_len: usize, ty: *const u8, ty_len: usize);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_uint_hi")]
+        pub fn xark_input_uint_hi() -> u64;
+        #[cfg_attr(target_arch = "wasm32", link_name = "inputs_done")]
+        pub fn xark_inputs_done();
+        #[cfg_attr(target_arch = "wasm32", link_name = "panic")]
+        pub fn xark_panic(
+            msg: *const u8,
+            len: usize,
+            file: *const u8,
+            file_len: usize,
+            line: u32,
+            col: u32,
+        );
+    }
+}
+
+#[inline(always)]
+fn out1(f: impl FnOnce(*mut Field)) -> Field {
+    let mut o = MaybeUninit::<Field>::uninit();
+    f(o.as_mut_ptr());
+    // SAFETY: the host writes the whole `Field` before returning.
+    unsafe { o.assume_init() }
+}
+
+#[inline(always)]
+fn out_n<const N: usize>(f: impl FnOnce(*mut Field)) -> [Field; N] {
+    let mut o = MaybeUninit::<[Field; N]>::uninit();
+    f(o.as_mut_ptr().cast());
+    // SAFETY: the host writes all `N` fields before returning.
+    unsafe { o.assume_init() }
+}
+
+pub(crate) fn add(a: Field, b: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_add(o, &a, &b) })
+}
+pub(crate) fn sub(a: Field, b: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_sub(o, &a, &b) })
+}
+pub(crate) fn mul(a: Field, b: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_mul(o, &a, &b) })
+}
+pub(crate) fn neg(a: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_neg(o, &a) })
+}
+pub(crate) fn pow_u64(a: Field, exp: u64) -> Field {
+    out1(|o| unsafe { ffi::xark_pow(o, &a, exp) })
+}
+pub(crate) fn xor(a: Field, b: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_xor(o, &a, &b) })
+}
+pub(crate) fn or(a: Field, b: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_or(o, &a, &b) })
+}
+pub(crate) fn eq(a: Field, b: Field) -> bool {
+    unsafe { ffi::xark_eq(&a, &b) }
+}
+pub(crate) fn ult<const N: usize>(a: Field, b: Field) -> bool {
+    unsafe { ffi::xark_ult(&a, &b, N as u32) }
+}
+pub(crate) fn bool_to_field(b: bool) -> Field {
+    out1(|o| unsafe { ffi::xark_bool_to_field(o, b) })
+}
+pub(crate) fn advice() -> Field {
+    out1(|o| unsafe { ffi::xark_advice(o) })
+}
+pub(crate) fn hint_inverse(x: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_hint_inverse(o, &x) })
+}
+pub(crate) fn hint_inverse_or_zero(x: Field) -> Field {
+    out1(|o| unsafe { ffi::xark_hint_inverse_or_zero(o, &x) })
+}
+pub(crate) fn hint_bit(x: Field, index: usize) -> Field {
+    out1(|o| unsafe { ffi::xark_hint_bit(o, &x, index as u32) })
+}
+pub(crate) fn hint_div_rem(a: Field, b: Field) -> [Field; 2] {
+    out_n(|o| unsafe { ffi::xark_hint_div_rem(o, &a, &b) })
+}
+pub(crate) fn hint_mulmod_divmod<const N: usize>(
+    a: [Field; N],
+    b: [Field; N],
+    m: [Field; N],
+    bits: usize,
+) -> ([Field; N], [Field; N]) {
+    let mut q = MaybeUninit::<[Field; N]>::uninit();
+    let mut r = MaybeUninit::<[Field; N]>::uninit();
+    unsafe {
+        ffi::xark_hint_mulmod_divmod(
+            q.as_mut_ptr().cast(),
+            r.as_mut_ptr().cast(),
+            a.as_ptr(),
+            b.as_ptr(),
+            m.as_ptr(),
+            N as u32,
+            bits as u32,
+        );
+        (q.assume_init(), r.assume_init())
+    }
+}
+pub(crate) fn hint_mod_inverse<const N: usize>(
+    a: [Field; N],
+    m: [Field; N],
+    bits: usize,
+) -> [Field; N] {
+    out_n(|o| unsafe {
+        ffi::xark_hint_mod_inverse(o, a.as_ptr(), m.as_ptr(), N as u32, bits as u32)
+    })
+}
+pub(crate) fn hint_sub2<const N: usize>(
+    a: [Field; N],
+    b: [Field; N],
+    c: [Field; N],
+    m: [Field; N],
+    bits: usize,
+) -> (Field, [Field; N]) {
+    let mut q = MaybeUninit::<Field>::uninit();
+    let mut r = MaybeUninit::<[Field; N]>::uninit();
+    unsafe {
+        ffi::xark_hint_sub2(
+            q.as_mut_ptr(),
+            r.as_mut_ptr().cast(),
+            a.as_ptr(),
+            b.as_ptr(),
+            c.as_ptr(),
+            m.as_ptr(),
+            N as u32,
+            bits as u32,
+        );
+        (q.assume_init(), r.assume_init())
+    }
+}
+pub(crate) fn require_eq(a: Field, b: Field) {
+    unsafe { ffi::xark_require_eq(&a, &b) }
+}
+pub(crate) fn witness_begin() {
+    unsafe { ffi::xark_witness_begin() }
+}
+pub(crate) fn witness_end() {
+    unsafe { ffi::xark_witness_end() }
+}
+
+/// `to_bits::<N>` memo: `Some(bits)` when `x`'s bits are already known (a constant,
+/// a sum of proven bits, or an earlier decomposition), else `None` and the caller
+/// decomposes and then calls [`to_bits_record`].
+pub(crate) fn to_bits_lookup<const N: usize>(x: &Field) -> Option<[Field; N]> {
+    let mut o = MaybeUninit::<[Field; N]>::uninit();
+    // SAFETY: on `true` the host wrote all `N` fields.
+    unsafe { ffi::xark_to_bits_lookup(x, N as u32, o.as_mut_ptr().cast()).then(|| o.assume_init()) }
+}
+pub(crate) fn to_bits_record<const N: usize>(x: &Field, bits: &[Field; N]) {
+    unsafe { ffi::xark_to_bits_record(x, N as u32, bits.as_ptr()) }
+}
+
+// --- inputs ------------------------------------------------------------------
+
+/// A circuit input's leaf name under construction (`id.tags[1]`), built in place.
+pub struct NameBuf {
+    buf: [u8; 256],
+    len: usize,
+}
+
+impl Default for NameBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NameBuf {
+    pub const fn new() -> Self {
+        NameBuf {
+            buf: [0; 256],
+            len: 0,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn truncate(&mut self, len: usize) {
+        self.len = len;
+    }
+    pub fn push_str(&mut self, s: &str) {
+        let n = s.len().min(self.buf.len() - self.len);
+        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+    }
+    pub fn push_index(&mut self, i: usize) {
+        self.push_str("[");
+        self.push_usize(i);
+        self.push_str("]");
+    }
+    pub fn push_usize(&mut self, mut i: usize) {
+        let mut digits = [0u8; 20];
+        let mut n = 0;
+        loop {
+            digits[n] = b'0' + (i % 10) as u8;
+            n += 1;
+            i /= 10;
+            if i == 0 {
+                break;
+            }
+        }
+        while n > 0 {
+            n -= 1;
+            if self.len < self.buf.len() {
+                self.buf[self.len] = digits[n];
+                self.len += 1;
+            }
+        }
+    }
+}
+
+/// A circuit input type: bound leaf by leaf, in the compiler's structural-flatten
+/// order (fields in declaration order, arrays by index), named `name.field[i]`.
+pub trait Input: Sized {
+    fn input(name: &mut NameBuf, vis: u32) -> Self;
+}
+
+impl Input for Field {
+    fn input(name: &mut NameBuf, vis: u32) -> Self {
+        out1(|o| unsafe { ffi::xark_input_field(o, name.buf.as_ptr(), name.len, vis) })
+    }
+}
+
+macro_rules! uint_input {
+    ($($t:ty => $w:literal),*) => {$(
+        impl Input for $t {
+            fn input(name: &mut NameBuf, vis: u32) -> Self {
+                unsafe { ffi::xark_input_uint(name.buf.as_ptr(), name.len, vis, $w) as $t }
+            }
+        }
+    )*};
+}
+uint_input!(u8 => 8, u16 => 16, u32 => 32, u64 => 64);
+
+impl Input for u128 {
+    fn input(name: &mut NameBuf, vis: u32) -> Self {
+        // Two wasm registers: the low half first, then the high half of the same input.
+        let lo = unsafe { ffi::xark_input_uint(name.buf.as_ptr(), name.len, vis, 128) };
+        let hi = unsafe { ffi::xark_input_uint_hi() };
+        (hi as u128) << 64 | lo as u128
+    }
+}
+
+impl<T: Input, const N: usize> Input for [T; N] {
+    fn input(name: &mut NameBuf, vis: u32) -> Self {
+        core::array::from_fn(|i| {
+            let at = name.len();
+            name.push_index(i);
+            let v = T::input(name, vis);
+            name.truncate(at);
+            v
+        })
+    }
+}
+
+macro_rules! tuple_input {
+    ($(($($i:tt $t:ident),+))*) => {$(
+        impl<$($t: Input),+> Input for ($($t,)+) {
+            fn input(name: &mut NameBuf, vis: u32) -> Self {
+                ($({
+                    let at = name.len();
+                    name.push_str(".");
+                    name.push_usize($i);
+                    let v = $t::input(name, vis);
+                    name.truncate(at);
+                    v
+                },)+)
+            }
+        }
+    )*};
+}
+tuple_input!((0 A) (0 A, 1 B) (0 A, 1 B, 2 C) (0 A, 1 B, 2 C, 3 D));
+
+/// Bind one named entry parameter (used by the `#[circuit]` entry shim).
+pub fn input<T: Input>(name: &mut NameBuf, root: &str, public: bool) -> T {
+    name.truncate(0);
+    name.push_str(root);
+    T::input(name, public as u32)
+}
+
+/// Record that the input at the current path is the struct type `ty` (for the
+/// compiler's `schema.json`); called first by every struct's [`Input::input`].
+pub fn input_struct(name: &NameBuf, ty: &str) {
+    unsafe { ffi::xark_input_struct(name.buf.as_ptr(), name.len, ty.as_ptr(), ty.len()) }
+}
+
+/// Bind a struct field during [`Input::input`] (used by the derives).
+pub fn input_field<T: Input>(name: &mut NameBuf, field: &str, vis: u32) -> T {
+    let at = name.len();
+    name.push_str(".");
+    name.push_str(field);
+    let v = T::input(name, vis);
+    name.truncate(at);
+    v
+}
+
+/// All inputs are bound: the compiler range-checks the `uN` ones now.
+pub fn inputs_done() {
+    unsafe { ffi::xark_inputs_done() }
+}
+
+// --- runtime -----------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+struct Msg {
+    buf: [u8; 256],
+    len: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl core::fmt::Write for Msg {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let n = s.len().min(self.buf.len() - self.len);
+        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+    use core::fmt::Write;
+    let mut msg = Msg {
+        buf: [0; 256],
+        len: 0,
+    };
+    let _ = write!(msg, "{}", info.message());
+    let (file, line, col) = info
+        .location()
+        .map(|l| (l.file(), l.line(), l.column()))
+        .unwrap_or(("", 0, 0));
+    unsafe {
+        ffi::xark_panic(
+            msg.buf.as_ptr(),
+            msg.len,
+            file.as_ptr(),
+            file.len(),
+            line,
+            col,
+        );
+    }
+    core::arch::wasm32::unreachable()
+}
+
+/// A bump allocator over wasm linear memory (a circuit build is one short run).
+#[cfg(target_arch = "wasm32")]
+struct Bump;
+
+#[cfg(target_arch = "wasm32")]
+static mut NEXT: usize = 0;
+#[cfg(target_arch = "wasm32")]
+static mut END: usize = 0;
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl core::alloc::GlobalAlloc for Bump {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        unsafe {
+            let start = (NEXT + layout.align() - 1) & !(layout.align() - 1);
+            let end = start + layout.size();
+            if NEXT == 0 || end > END {
+                let pages = layout.size().div_ceil(65536) + 1;
+                let base = core::arch::wasm32::memory_grow(0, pages);
+                if base == usize::MAX {
+                    return core::ptr::null_mut();
+                }
+                NEXT = base * 65536;
+                END = NEXT + pages * 65536;
+                return self.alloc(layout);
+            }
+            NEXT = end;
+            start as *mut u8
+        }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: core::alloc::Layout) {}
+}
+
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOC: Bump = Bump;

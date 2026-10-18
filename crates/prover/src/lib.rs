@@ -289,6 +289,8 @@ impl ConstraintSynthesizer<Fr> for XarkCircuit {
         // and arkworks runs `generate_constraints` twice (setup + prove), so
         // interning by value collapses that to one conversion per distinct big
         // coeff. Small coeffs (`Repr::Small`, incl. ±1) skip the cache entirely.
+        // `FieldConst`'s `Arc` big-int cache doesn't affect its ordering.
+        #[allow(clippy::mutable_key_type)]
         let mut big_cache: BTreeMap<FieldConst, Fr> = BTreeMap::new();
         let mut fr_of = |fc: &FieldConst| -> Fr {
             if let Some(n) = fc.as_i64() {
@@ -652,6 +654,53 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
 }
 
 impl Circuit {
+    /// [`solver::solve_and_check`], recording the inputs and outcome when
+    /// `XARK_DUMP_INPUTS=<dir>` is set: one JSON file per call, `{"circuit",
+    /// "inputs": [[leaf, decimal]…], "ok"}` — a corpus of real test inputs for
+    /// differential testing of two builds of the same circuit (see
+    /// `crates/frontend/examples/difftest.rs`).
+    fn solve_and_check(
+        &self,
+        id_inputs: &BTreeMap<VarId, String>,
+    ) -> Result<BTreeMap<VarId, Fp>, solver::SolveError> {
+        let r = solver::solve_and_check(&self.prim, id_inputs);
+        if let Some(dir) = std::env::var_os("XARK_DUMP_INPUTS") {
+            let names: BTreeMap<VarId, &str> = self
+                .prim
+                .vars
+                .iter()
+                .map(|v| (v.id, v.name.as_str()))
+                .collect();
+            let leaves: Vec<(&str, &String)> = id_inputs
+                .iter()
+                .map(|(id, val)| (names.get(id).copied().unwrap_or(""), val))
+                .collect();
+            // Leaf names are paths like `a[0].x` and values decimals: `{:?}` quotes
+            // them as JSON strings.
+            let leaves: Vec<String> = leaves
+                .iter()
+                .map(|(n, v)| format!("[{n:?},{v:?}]"))
+                .collect();
+            let text = format!(
+                "{{\"circuit\":{:?},\"inputs\":[{}],\"ok\":{}}}",
+                self.name,
+                leaves.join(","),
+                r.is_ok()
+            );
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&text, &mut h);
+            let dir = std::path::Path::new(&dir);
+            let _ = std::fs::create_dir_all(dir);
+            let file = dir.join(format!(
+                "{}-{:016x}.json",
+                self.name,
+                std::hash::Hasher::finish(&h)
+            ));
+            let _ = std::fs::write(file, text);
+        }
+        r
+    }
+
     /// Resolve the typed `inputs` into `VarId → decimal` for the solver.
     ///
     /// Panics on a name that isn't a declared input, or a count mismatch — those
@@ -720,7 +769,7 @@ impl Circuit {
     /// `#[derive(CircuitInput)]`) and renders each with `Field::to_decimal`.
     pub fn check_fields(&self, decimals: Vec<String>) -> Result<(), ProveError> {
         let id_inputs = self.resolve_positional(decimals);
-        solver::solve_and_check(&self.prim, &id_inputs).map_err(|e| {
+        self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
@@ -744,7 +793,7 @@ impl Circuit {
         // An unsatisfiable witness means the stated relation is false; explain
         // *which* constraint (and its source line / function, when profiled)
         // failed, via the shared diagnostic.
-        solver::solve_and_check(&self.prim, &id_inputs).map_err(|e| {
+        self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
@@ -766,7 +815,7 @@ impl Circuit {
     /// circuit takes minutes in debug.
     pub fn prove<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
         let id_inputs = self.resolve_inputs(inputs);
-        let assign_fp = solver::solve_and_check(&self.prim, &id_inputs).map_err(|e| {
+        let assign_fp = self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
