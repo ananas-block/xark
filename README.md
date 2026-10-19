@@ -152,8 +152,8 @@ rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 Prove and verify anywhere JavaScript runs with
 [`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`prove(circuit, pk, inputs)`,
 `verify(vk, proof, publicInputs)`), or through the typed client `xark client`
-generates over it (above). `xark prove`'s `<name>-<hash>.proof.json` bundle carries
-the proof and public inputs as the bytes `verify` takes.
+generates over it (above). `xark prove` writes the same bytes `verify` takes:
+`proof.bin` and `public_inputs.bin`.
 
 ## Crates and gadgets
 

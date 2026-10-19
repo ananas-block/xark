@@ -41,12 +41,11 @@ gadgets now check more:
   `snarkjs-verification_key.json`, `xark prove` no longer writes
   `snarkjs-proof.json` / `snarkjs-public.json`, and xark-wasm drops
   `proof_to_snarkjs` (`public_inputs_to_snarkjs` becomes `decode_public_inputs`).
-  Verify in JavaScript with xark-wasm's `verify`. The proof bundle
-  (`<name>-<hash>.proof.json`) now carries `proof_bin` / `public_inputs_bin` (the
-  bytes `verify` takes) and `public_inputs` (decimals) instead of the snarkjs
-  proof and `public_signals`. It no longer carries the packed on-chain bytes
-  (`calldata`), and `xark prove` no longer prints them; the Solana verifier from
-  `xark export` builds its own instruction data.
+  Verify in JavaScript with xark-wasm's `verify`.
+- **No proof bundle.** `xark prove` no longer writes `<name>-<hash>.proof.json`
+  (it duplicated `proof.bin` / `public_inputs.bin`) or prints the proof's
+  on-chain bytes; it prints the proof's SHA-256 fingerprint. The Solana
+  verifier from `xark export` builds its own instruction data.
 - **`xark client` generates a typed TypeScript client** from `schema.json` (typed
   `prove` / `verify` through xark-wasm, no setup needed). It replaces the old
   starter scaffold, and the `xark-client` npm package (snarkjs verify) is removed:

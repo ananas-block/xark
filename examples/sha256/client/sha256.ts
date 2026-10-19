@@ -221,7 +221,7 @@ export interface Sha256Proof {
  * Typed prover/verifier for `sha256`, over the `xark-wasm` module you pass in:
  *
  * ```ts
- * import * as wasm from "xark-wasm"; // node, web (after `await init()`), or bundler build
+ * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler build
  * const circuit = new Sha256(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk });
  * const { proof, publicInputs } = circuit.prove(inputs);
  * circuit.verify(proof, publicInputs); // true

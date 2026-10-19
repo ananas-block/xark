@@ -421,7 +421,7 @@ pub fn load_circuit_program(path: &std::path::Path) -> Result<xark_ir::CircuitPr
 /// the self-contained `circuit.xbc` (deriving the R1CS from it) and falling back
 /// to `r1cs.json` — either an explicit `--r1cs <path>` override or an
 /// `--emit-json` / legacy build. Also returns the SHA-256 fingerprint of the
-/// bytes it read, used to stamp the proof bundle's `circuit_hash`.
+/// bytes it read (the key metadata's circuit hash).
 pub fn load_backend_r1cs(
     xbc_path: &std::path::Path,
     r1cs_override: Option<&std::path::Path>,

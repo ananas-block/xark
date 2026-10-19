@@ -191,7 +191,7 @@ export interface CubeProof {
  * Typed prover/verifier for `cube`, over the `xark-wasm` module you pass in:
  *
  * ```ts
- * import * as wasm from "xark-wasm"; // node, web (after `await init()`), or bundler build
+ * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler build
  * const circuit = new Cube(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk });
  * const { proof, publicInputs } = circuit.prove(inputs);
  * circuit.verify(proof, publicInputs); // true

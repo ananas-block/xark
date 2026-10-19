@@ -56,30 +56,6 @@ impl XarkProject {
         self.xark_dir.join("public_inputs.bin")
     }
 
-    /// The circuit's name — the `target/xark/<name>/` subdirectory name, which
-    /// `xark build` scopes to the crate's `[package] name`. Falls back to
-    /// `"circuit"` when the output dir has no usable file name.
-    pub fn circuit_name(&self) -> String {
-        self.xark_dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .filter(|s| !s.is_empty() && *s != "xark")
-            .unwrap_or("circuit")
-            .to_string()
-    }
-
-    /// The circuit's entry function name, from the `entry` marker `xark build`
-    /// writes beside the artifacts. Names the proof bundle and generated
-    /// `<Fn>Inputs` struct. Falls back to the crate name when the marker is
-    /// absent or the entry is the generic `circuit`.
-    pub fn entry_name(&self) -> String {
-        std::fs::read_to_string(self.xark_dir.join("entry"))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s != "circuit")
-            .unwrap_or_else(|| self.circuit_name())
-    }
-
     /// Default output directory for `xark export`'s generated verifier crate.
     pub fn export_dir(&self) -> PathBuf {
         self.xark_dir.join("verifier")

@@ -202,7 +202,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
             _ => None,
         };
         if let Some(kind) = kind {
-            let (proof, public, fingerprint) = prove_streaming(
+            let (proof, public) = prove_streaming(
                 &args,
                 &xbc,
                 &pk_path,
@@ -211,15 +211,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
                 profile.as_ref(),
                 timing,
             )?;
-            return write_outputs(
-                &args,
-                &project,
-                &proof_out,
-                &out_dir,
-                proof,
-                public,
-                &fingerprint,
-            );
+            return write_outputs(&args, &proof_out, &out_dir, proof, public);
         }
     }
 
@@ -414,15 +406,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
         );
     }
 
-    write_outputs(
-        &args,
-        &project,
-        &proof_out,
-        &out_dir,
-        proof,
-        public,
-        &circuit_fingerprint,
-    )
+    write_outputs(&args, &proof_out, &out_dir, proof, public)
 }
 
 /// The prover RNG: OS randomness, or — test fixtures only — a fixed seed (refused
@@ -474,7 +458,6 @@ enum StreamKind {
 /// program, then prove with `xark-groth16` — rows expanded window-by-window from
 /// the bytecode and the key read chunk-by-chunk, so neither the R1CS nor the key
 /// is ever resident. Self-verified against the key's `vk`.
-#[allow(clippy::type_complexity)]
 fn prove_streaming(
     args: &ProveArgs,
     xbc: &std::path::Path,
@@ -483,11 +466,7 @@ fn prove_streaming(
     inputs: &BTreeMap<String, String>,
     profile: Option<&xark_ir::profile::ProfileProgram>,
     timing: bool,
-) -> Result<(
-    ark_groth16::Proof<ark_bn254::Bn254>,
-    Vec<ark_bn254::Fr>,
-    String,
-)> {
+) -> Result<(ark_groth16::Proof<ark_bn254::Bn254>, Vec<ark_bn254::Fr>)> {
     let t = std::time::Instant::now();
     let bytes = std::fs::read(xbc).with_context(|| format!("reading {}", xbc.display()))?;
     let fingerprint = super::sha256_hex(&bytes);
@@ -604,20 +583,17 @@ fn prove_streaming(
             src.num_constraints()
         );
     }
-    Ok((proof, public, fingerprint))
+    Ok((proof, public))
 }
 
-/// Write the proof, public inputs and the self-contained bundle, and print a
-/// summary.
+/// Write the proof and public inputs, and print a summary.
 #[allow(clippy::too_many_arguments)]
 fn write_outputs(
     args: &ProveArgs,
-    project: &XarkProject,
     proof_out: &std::path::Path,
     out_dir: &std::path::Path,
     proof: ark_groth16::Proof<ark_bn254::Bn254>,
     public: Vec<ark_bn254::Fr>,
-    circuit_fingerprint: &str,
 ) -> Result<()> {
     let bundle = ProofBundle {
         proof,
@@ -632,45 +608,14 @@ fn write_outputs(
     let public_path = out_dir.join("public_inputs.bin");
     write_public_inputs(&public, &public_path)?;
 
-    // Self-contained, shareable proof bundle: the proof and public inputs as the
-    // canonical bytes `xark verify` / xark-wasm `verify` take (`proof.bin`,
-    // `public_inputs.bin`), and the public inputs as decimals, in one file.
+    // Fingerprint the proof itself (SHA-256 of `proof.bin`): a stable id for
+    // *this* proof, to reference or track it.
     let proof_bin =
         fs::read(proof_out).with_context(|| format!("reading {}", proof_out.display()))?;
-    let public_bin =
-        fs::read(&public_path).with_context(|| format!("reading {}", public_path.display()))?;
-    let public_decimal: Vec<String> = public
-        .iter()
-        .map(|x| num_bigint::BigUint::from(*x).to_string())
-        .collect();
-
-    // Fingerprint the proof itself (SHA-256 of `proof.bin`). This is a stable id
-    // for *this* proof — copy it to reference/track it, and it names the bundle
-    // file so distinct proofs never clobber each other.
     let proof_sha = super::sha256_hex(&proof_bin);
-    let proof_short = &proof_sha[..proof_sha.len().min(8)];
-    let name = project.entry_name();
-    let bundle_json = serde_json::json!({
-        "circuit": name,
-        "circuit_hash": format!("sha256:{circuit_fingerprint}"),
-        "proof_sha256": format!("0x{proof_sha}"),
-        "protocol": "groth16",
-        "curve": "bn128",
-        "public_inputs": public_decimal,
-        "proof_bin": format!("0x{}", hex::encode(&proof_bin)),
-        "public_inputs_bin": format!("0x{}", hex::encode(&public_bin)),
-    });
-    let bundle_path = out_dir.join(format!("{name}-{proof_short}.proof.json"));
-    fs::write(&bundle_path, serde_json::to_string_pretty(&bundle_json)?)
-        .with_context(|| format!("writing {}", bundle_path.display()))?;
 
     println!("Wrote {}", proof_out.display());
     println!("Wrote {}", public_path.display());
-    println!(
-        "Wrote {}  {}",
-        bundle_path.display(),
-        crate::style::dim("# self-contained: proof + public inputs")
-    );
     println!(
         "\n{}",
         crate::style::brand(&format!(
