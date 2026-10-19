@@ -22,10 +22,11 @@ gadgets now check more:
 ### Changed
 
 - **Stable Rust only.** Circuits are compiled to wasm by any stable Rust from
-  1.88 on and lowered by `xark-frontend`. The pinned-nightly MIR compiler
+  1.89 on and lowered by `xark-frontend`. The pinned-nightly MIR compiler
   (`xark-rustc`) is removed, along with `--frontend`, `XARK_FRONTEND`,
   `XARK_TEST_FRONTEND` and `XARK_MIR_COMPAT`. A circuit is identical on every
-  supported Rust version. Installing the CLI needs Rust 1.89.
+  supported Rust version. The minimum Rust is 1.89, for both the CLI and
+  circuits.
 - **What compiles** is documented from the new frontend in
   [docs/subset.md](docs/subset.md). Branches on witness values, small witness
   indices and short witness-bounded loops now work. Constructs the frontend can't
@@ -66,6 +67,10 @@ gadgets now check more:
 - `xark-groth16` is published.
 
 ### Fixed
+
+- `xark ceremony init` reads the build's `circuit.xbc` like every other command
+  (it required an `r1cs.json`, which `xark build` no longer writes by default),
+  and the ceremony has a CLI end-to-end test again.
 
 - Soundness fixes in the new frontend before release: facts learned inside
   witness-only code are no longer reused by real constraints; copies, overlapping

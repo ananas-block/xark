@@ -1,13 +1,12 @@
 # Toolchains
 
-`xark build` needs **only stable Rust, 1.88 or newer** (the `xark` crate's
-`rust-version`; it uses let-chains). Installing the CLI itself needs 1.89 (the
-workspace `rust-version`, set by its dependencies). The circuit crate is compiled by the ambient
+xark needs **only stable Rust, 1.89 or newer**, both to install the CLI and to build
+circuits (the workspace and `xark` crate `rust-version`). The circuit crate is compiled by the ambient
 `cargo`/`rustc` for `wasm32-unknown-unknown` (added with `rustup` on first use), and
 `crates/frontend` runs the module to lower it. Every circuit operation is an opaque
 wasm import, so the constraint system doesn't depend on the compiler version:
 `scripts/stable-digests.sh --check` rebuilds every example and compares its R1CS
-digest with `tests/stable-digests.txt`, and CI runs it on 1.88, stable and beta.
+digest with `tests/stable-digests.txt`, and CI runs it on 1.89, stable and beta.
 (All 70 examples were identical on 1.88, 1.89, 1.93, 1.96, 1.98 and a 2026-10
 nightly when this was introduced.) See `crates/frontend/README.md` for the design.
 
@@ -29,9 +28,9 @@ A circuit's proving and verifying keys are made for one exact constraint system,
 so the thing that matters is the **circuit digest**: a fingerprint of the R1CS
 that `xark build` prints and writes to `target/xark/<name>/digest`.
 
-- **Rust version.** Any stable Rust from 1.88 on builds circuits, and a circuit's
+- **Rust version.** Any stable Rust from 1.89 on builds circuits, and a circuit's
   digest is the same on every one of them. That is a tested guarantee, not a
-  hope: `ci.yml` checks all 70 examples on 1.88, stable and beta on every push,
+  hope: `ci.yml` checks all 70 examples on 1.89, stable and beta on every push,
   and `nightly-kats.yml` re-checks stable, beta and nightly daily, so a Rust
   release that would change a circuit is caught while it is still in beta. If one
   does, we fix xark so the old digest comes back; we don't ask anyone to make new

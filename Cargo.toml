@@ -46,9 +46,8 @@ version = "0.3.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/blueshift-gg/xark"
-# 1.89: the host tools' dependencies (`wincode`, `enum-ordinalize`). Circuits build
-# with 1.88+ (the `xark` crate's own `rust-version`; it uses let-chains) — see
-# tests/stable-digests.txt.
+# 1.89, for the host tools (their dependencies need it) and for circuits (the
+# `xark` crate's own `rust-version`) — see docs/toolchain.md.
 rust-version = "1.89"
 
 [workspace.dependencies]

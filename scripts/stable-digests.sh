@@ -7,7 +7,7 @@
 #   scripts/stable-digests.sh --update   # rewrite tests/stable-digests.txt
 #
 # The digest is `stream_digest` of the R1CS: the same on every supported rustc
-# (1.88+), which is the stable frontend's reproducibility guarantee. A difference
+# (1.89+), which is the stable frontend's reproducibility guarantee. A difference
 # means either a toolchain changed the circuit (a bug to report) or the lowering
 # changed on purpose (run --update and review).
 set -euo pipefail

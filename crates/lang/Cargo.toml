@@ -10,7 +10,7 @@ categories = ["cryptography"]
 readme = "README.md"
 # Oldest rustc that compiles a circuit (let-chains); CI checks every example
 # circuit is identical on it, stable and beta (`scripts/stable-digests.sh`).
-rust-version = "1.88"
+rust-version = "1.89"
 
 # The language: `use xark::prelude::*;` in a circuit (no_std, stable).
 [lib]

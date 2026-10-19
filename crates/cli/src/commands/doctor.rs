@@ -1,7 +1,7 @@
 //! `xark doctor` — check the local machine is set up to build and prove
 //! circuits, and print the exact fix for anything missing.
 //!
-//! Building needs only a stable Rust toolchain (1.88+) and its
+//! Building needs only a stable Rust toolchain (1.89+) and its
 //! `wasm32-unknown-unknown` standard library (`xark build` adds it with `rustup` on
 //! first use).
 
@@ -14,7 +14,7 @@ use clap::Args;
 pub struct DoctorArgs {}
 
 /// Oldest `rustc` that builds a circuit (the `xark` crate's `rust-version`).
-const MIN_RUSTC: (u32, u32) = (1, 88);
+const MIN_RUSTC: (u32, u32) = (1, 89);
 
 pub fn run(_args: DoctorArgs) -> Result<()> {
     println!(

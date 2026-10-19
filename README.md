@@ -11,8 +11,7 @@ stays expressive.
 
 ## Installation
 
-xark needs only stable Rust: 1.89 or newer to install the CLI, 1.88 or newer to
-build circuits:
+xark needs only stable Rust, 1.89 or newer:
 
 ```bash
 cargo install xark-cli
@@ -143,7 +142,7 @@ does the hard work â€” parse, type-check, borrow-check, monomorphize, optimize â
 xark then runs the module with those imports implemented as the circuit builder:
 loops and calls with known values simply execute (that *is* the unrolling), and
 witness values flow into constraints. The circuit is the same under every stable
-rustc (CI checks every example on 1.88, stable and beta), and constraint-reducing
+rustc (CI checks every example on 1.89, stable and beta), and constraint-reducing
 rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 [`crates/frontend/README.md`](crates/frontend/README.md).
 

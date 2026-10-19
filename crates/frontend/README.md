@@ -1,6 +1,6 @@
 # xark-frontend
 
-xark's frontend: compiles a circuit with any stable `rustc` (1.88+) and lowers it to
+xark's frontend: compiles a circuit with any stable `rustc` (1.89+) and lowers it to
 the `circuit.xbc` the prover reads.
 
 ```bash

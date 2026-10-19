@@ -35,14 +35,14 @@ are plain Rust crates that lower to the *same* small primitive constraint set.
 ## How the frontend works
 
 `xark build` runs `cargo build` on the circuit crate for `wasm32-unknown-unknown`
-with `--cfg xark` (any stable toolchain, 1.88+). Under that cfg each intrinsic
+with `--cfg xark` (any stable toolchain, 1.89+). Under that cfg each intrinsic
 (`Field` arithmetic, comparisons, hints, `require_eq`, input binding) is a call to
 an `xark.*` wasm import. `crates/frontend` then interprets the module: concrete
 values execute as ordinary wasm, and the imports, implemented by the circuit
 builder, turn witness values into constraints. Witness branches run both arms and
 merge with selects; an arm that can only panic is pruned and its condition
 constrained. Because every circuit operation is an opaque import, the circuit is
-the same under every rustc (CI checks 1.88, stable and beta). Details:
+the same under every rustc (CI checks 1.89, stable and beta). Details:
 [`crates/frontend/README.md`](../crates/frontend/README.md); toolchains:
 [`docs/toolchain.md`](toolchain.md).
 
