@@ -68,7 +68,7 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
     info(
         onpath.is_some(),
         "xark on PATH",
-        "needed for `xark init` and rust-analyzer diagnostics",
+        "used by rust-analyzer diagnostics, and by `cargo test` to build an unbuilt circuit",
         "cargo install xark-cli",
     );
     let node = cmd_ok("node", &["--version"]);

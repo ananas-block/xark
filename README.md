@@ -50,6 +50,11 @@ xark build examples/cube
 # → writes examples/cube/target/xark/cube/ (circuit.xbc + schema.json) and
 #   prints the circuit digest (a fingerprint of the R1CS the keys are made for).
 
+# Build, then run the crate's own `cargo test` circuit tests (they check inputs
+# against the circuit and name the source line of a failing constraint).
+# Arguments go to `cargo test`: `xark test examples/cube -- --nocapture`.
+xark test examples/cube
+
 # Generate a typed TypeScript client from schema.json: no setup or proof needed.
 # Like every command, it defaults to the current directory: inside the crate,
 # plain `xark client` is enough.
@@ -61,8 +66,16 @@ xark client examples/cube
 xark setup examples/cube
 
 # Solve the witness from your inputs, then produce AND verify a Groth16 proof.
+# Writes proof.bin and public_inputs.bin next to the keys.
 xark prove examples/cube --inputs '{"secret": "3", "result": "27"}'
-# → ✅ Proof produced and self-checked (1 public input).
+# → ✅ Proof produced and self-checked (1 public input(s)).
+
+# Check a proof against the verifying key and its public inputs.
+xark verify examples/cube
+
+# Generate the Solana verifier crate (the key embedded, the proof bundled as its
+# self-test). Refuses a dev key unless you pass --allow-insecure.
+xark export examples/cube
 
 # Validate a circuit WITHOUT emitting artifacts — subset violations as rustc
 # diagnostics with source spans (great for editors / CI).
@@ -223,7 +236,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 
 # `crates/lang` is its own workspace, so its suites run separately:
-cd crates/lang && cargo test --release --test snapshot --test semantics_fuzz
+cd crates/lang && cargo test --release
 cd crates/lang && cargo test --release --test snapshot -- --include-ignored  # + heavy KATs
 XARK_FUZZ_CASES=400 cargo test --release --test semantics_fuzz  # wider fuzzing
 
