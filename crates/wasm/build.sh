@@ -49,7 +49,9 @@ build() {
     --out-dir "$out_dir" --target module --out-name xark_wasm
 
   # workerd/esbuild reject the `import source` keyword; rewrite to a plain import.
-  sed -i 's|^import source |import |' "$out_dir/xark_wasm.js"
+  # (Not `sed -i`: GNU and BSD/macOS sed spell it differently.)
+  sed 's|^import source |import |' "$out_dir/xark_wasm.js" > "$out_dir/xark_wasm.js.tmp"
+  mv "$out_dir/xark_wasm.js.tmp" "$out_dir/xark_wasm.js"
 
   if [[ "$mode" == "release" ]]; then
     wasm-pack build --target bundler --release --out-dir dist/bundler --no-pack

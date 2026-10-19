@@ -93,6 +93,11 @@ gadgets now check more:
 
 ### Fixed
 
+- `make -f Makefile.publish publish-dry` works before a release: it builds every
+  crate from its own package (`scripts/publish-dry.sh`) instead of resolving
+  the new version's dependencies from crates.io, where they aren't yet.
+- `crates/wasm/build.sh` runs on macOS (its `sed -i` was GNU-only, so the
+  `module` build stopped before copying in the optimized wasm).
 - `xark test` passes its arguments to `cargo test` as given: a name filter,
   cargo flags, and after `--` the test binary's (`xark test . -- --list` used to
   fail with "unexpected argument").

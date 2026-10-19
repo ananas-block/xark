@@ -4,7 +4,8 @@
 # are always available when a dependent is published.
 #
 # Usage:
-#   make -f Makefile.publish publish-dry   # verify everything, upload nothing
+#   make -f Makefile.publish publish-dry   # build every crate from its tarball, upload nothing
+#                                          # (scripts/publish-dry.sh)
 #   make -f Makefile.publish publish       # real publish (needs `cargo login`)
 
 .PHONY: publish publish-dry $(addprefix pub-,$(PKGS))
@@ -71,60 +72,4 @@ publish:
 	@echo "All crates published."
 
 publish-dry:
-	@echo ">>> dry-run xark-curve"
-	cargo publish --dry-run -p xark-curve
-	@echo ">>> dry-run xark-ir"
-	cargo publish --dry-run -p xark-ir
-	@echo ">>> dry-run xark-macros"
-	cargo publish --dry-run -p xark-macros
-	@echo ">>> dry-run xark-verifier"
-	cargo publish --dry-run -p xark-verifier
-	@echo ">>> dry-run xark-frontend"
-	cargo publish --dry-run -p xark-frontend
-	@echo ">>> dry-run xark-groth16"
-	cargo publish --dry-run -p xark-groth16
-	@echo ">>> dry-run xark-backend"
-	cargo publish --dry-run -p xark-backend
-	@echo ">>> dry-run xark-prover"
-	cargo publish --dry-run -p xark-prover
-	@echo ">>> dry-run xark-test-harness"
-	cargo publish --dry-run -p xark-test-harness
-	@echo ">>> dry-run xark"
-	(cd crates/lang && cargo publish --dry-run)
-	@echo ">>> dry-run xark-aes"
-	cargo publish --dry-run -p xark-aes
-	@echo ">>> dry-run xark-bignum"
-	cargo publish --dry-run -p xark-bignum
-	@echo ">>> dry-run xark-bits"
-	cargo publish --dry-run -p xark-bits
-	@echo ">>> dry-run xark-cli"
-	cargo publish --dry-run -p xark-cli
-	@echo ">>> dry-run xark-grumpkin"
-	cargo publish --dry-run -p xark-grumpkin
-	@echo ">>> dry-run xark-hash"
-	cargo publish --dry-run -p xark-hash
-	@echo ">>> dry-run xark-mimc"
-	cargo publish --dry-run -p xark-mimc
-	@echo ">>> dry-run xark-pedersen"
-	cargo publish --dry-run -p xark-pedersen
-	@echo ">>> dry-run xark-poseidon"
-	cargo publish --dry-run -p xark-poseidon
-	@echo ">>> dry-run xark-poseidon2"
-	cargo publish --dry-run -p xark-poseidon2
-	@echo ">>> dry-run xark-blake2s"
-	cargo publish --dry-run -p xark-blake2s
-	@echo ">>> dry-run xark-blake3"
-	cargo publish --dry-run -p xark-blake3
-	@echo ">>> dry-run xark-ed25519"
-	cargo publish --dry-run -p xark-ed25519
-	@echo ">>> dry-run xark-keccak"
-	cargo publish --dry-run -p xark-keccak
-	@echo ">>> dry-run xark-merkle"
-	cargo publish --dry-run -p xark-merkle
-	@echo ">>> dry-run xark-secp256k1"
-	cargo publish --dry-run -p xark-secp256k1
-	@echo ">>> dry-run xark-secp256r1"
-	cargo publish --dry-run -p xark-secp256r1
-	@echo ">>> dry-run xark-sha256"
-	cargo publish --dry-run -p xark-sha256
-	@echo "Dry-run complete — all crates package cleanly."
+	scripts/publish-dry.sh
