@@ -103,6 +103,9 @@ gadgets now check more:
   circuit; the ECDSA ones are searched block by block.
 - `xark-groth16` is published.
 
+- Every crate declares the minimum Rust (`rust-version = "1.89"`), and CI
+  builds the whole workspace on 1.89, not only the example circuits.
+
 ### Fixed
 
 - A mistyped path is reported (`no such directory: …`) by every command.
@@ -116,6 +119,9 @@ gadgets now check more:
 - `xark prove` with a proving key made before the circuit last changed says
   so ("run `xark setup` again"); it used to fail with "proof failed
   self-verification".
+- xark-wasm's "proof failed self-verification" error names both causes (inputs
+  that don't satisfy the circuit, or a proving key from another build); it
+  only said "check the inputs".
 - `xark ceremony` documents its `--ptau-file`, `--out` and `--ceremony-dir`
   flags in `--help`.
 - `xark clean` no longer follows symlinks (which could reach build output

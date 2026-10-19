@@ -96,6 +96,26 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
         run: scripts/stable-digests.sh --check
 
+  msrv:
+    # The minimum Rust (`rust-version`, 1.89) builds the CLI and every crate, not
+    # only the circuits `reproducible` checks.
+    name: builds on Rust 1.89
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install Rust 1.89
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.89"
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: cargo check
+        run: |
+          cargo check --workspace --all-targets --locked
+          cargo check --all-targets --locked --manifest-path crates/lang/Cargo.toml
+
   compiler-snapshots:
     # The snapshot suite (count bridges to the Lean models, rejection diagnostics,
     # solves) and the native-semantics fuzzer. The heavy `#[ignore]`d known-answer

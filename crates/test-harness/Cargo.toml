@@ -8,6 +8,7 @@ repository.workspace = true
 readme = "README.md"
 version.workspace = true
 edition = "2024"
+rust-version.workspace = true
 [dependencies]
 num-bigint = "0.4"
 xark-ir = { path = "../ir", version = "0.3.0" }
