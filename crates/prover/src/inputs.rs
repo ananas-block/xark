@@ -312,6 +312,23 @@ pub fn resolve_input_ids(
         roots.dedup();
         return Err(format!("unknown input `{k}` (circuit inputs: {roots:?})"));
     }
+    // Every input must be given — named here, rather than as the solver's
+    // "missing input for variable <id>".
+    let mut missing: Vec<&str> = Vec::new();
+    for v in vars.iter().filter(|v| !id_inputs.contains_key(&v.id)) {
+        let root = logical_root(&v.name);
+        if !missing.contains(&root) {
+            missing.push(root);
+        }
+    }
+    if !missing.is_empty() {
+        let list = missing
+            .iter()
+            .map(|m| format!("`{m}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!("missing input {list}"));
+    }
     Ok(id_inputs)
 }
 
@@ -370,7 +387,13 @@ mod tests {
 
     #[test]
     fn logical_byte_array_still_resolves() {
-        let got = resolve(vec![("msg", Scalar("0x0102".into()))]).unwrap();
+        let got = resolve(vec![
+            ("id.dob", Scalar("1".into())),
+            ("id.salt", Scalar("2".into())),
+            ("msg", Scalar("0x0102".into())),
+            ("out", Scalar("3".into())),
+        ])
+        .unwrap();
         assert_eq!(got.get(&2).map(String::as_str), Some("1"));
         assert_eq!(got.get(&3).map(String::as_str), Some("2"));
     }
@@ -383,6 +406,12 @@ mod tests {
             !err.contains("\"tmp\""),
             "derived vars aren't listed as inputs: {err}"
         );
+    }
+
+    #[test]
+    fn missing_inputs_are_named() {
+        let err = resolve(vec![("out", InputValue::Scalar("1".into()))]).unwrap_err();
+        assert_eq!(err, "missing input `id`, `msg`");
     }
 
     #[test]

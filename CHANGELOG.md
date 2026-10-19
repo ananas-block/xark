@@ -95,6 +95,11 @@ gadgets now check more:
 
 ### Fixed
 
+- A circuit importing `Field` by name (`use xark::{Field, …}`) no longer gets an
+  `unused import` warning on host builds: `#[circuit]` keeps the parameter types
+  as written instead of rewriting them to `::xark::Field`.
+- A missing input is named (`missing input `result``) instead of reported as
+  `missing input for variable 1`, in `xark prove`, `xark check` and xark-wasm.
 - A failing `check` suggested building with `--profile`, which `xark build`
   doesn't accept; it now points to `xark test` / `xark profile`.
 - A crate from `xark init` passes its own `xark test`. The scaffold declared
