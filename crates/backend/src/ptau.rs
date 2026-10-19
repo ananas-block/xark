@@ -95,7 +95,7 @@ pub enum Phase2Error {
     /// The ptau transcript's power is too small for the circuit.
     #[error(
         "phase-2 setup: ptau covers domain size 2^{ptau_power} = {max_domain_size}, \
- but circuit requires {required_domain_size}. Use a larger.ptau file."
+ but circuit requires {required_domain_size}. Use a larger .ptau file."
     )]
     PtauTooSmall {
         ptau_power: u32,

@@ -1,0 +1,99 @@
+//! The trusted-setup ceremony through the CLI, end to end: `xark build` →
+//! `xark ceremony init` (from the build, over a synthetic Powers-of-Tau
+//! transcript) → two `contribute`s → `verify` → `finalize`, then `xark prove` /
+//! `xark verify` with the ceremony's keys, and a wrong public input rejected.
+//! The library-level ceremony (chain links, Schnorr proofs, tampering) is tested
+//! in `crates/backend/src/ceremony.rs`. The transcript's toxic waste is known
+//! here, so this checks the pipeline is correct, not that a ceremony is secret.
+
+mod common;
+
+use std::path::Path;
+use std::process::Command;
+
+use common::{build_valid_ptau, tempdir, xark_bin, xark_build};
+
+fn xark(args: &[&str], dir: &Path) -> (bool, String) {
+    let o = Command::new(xark_bin())
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("spawn xark");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    (o.status.success(), text)
+}
+
+#[test]
+fn ceremony_keys_prove_and_verify() {
+    let tmp = tempdir();
+    let (out, target) = (tmp.path().join("cube"), tmp.path().join("target"));
+    let (ok, log) = xark_build("cube", &out, &target);
+    assert!(ok, "xark build: {log}");
+    let ptau = tmp.path().join("test.ptau");
+    std::fs::write(&ptau, build_valid_ptau(12)).unwrap();
+    let cer = tmp.path().join("ceremony");
+    let (cer_s, ptau_s) = (cer.to_str().unwrap(), ptau.to_str().unwrap());
+
+    let step = |args: &[&str]| {
+        let (ok, log) = xark(args, &out);
+        assert!(ok, "xark {}: {log}", args.join(" "));
+        log
+    };
+    step(&["ceremony", "init", "--ptau-file", ptau_s, "--out", cer_s]);
+    step(&[
+        "ceremony",
+        "contribute",
+        "--ceremony-dir",
+        cer_s,
+        "--label",
+        "alice",
+    ]);
+    step(&[
+        "ceremony",
+        "contribute",
+        "--ceremony-dir",
+        cer_s,
+        "--label",
+        "bob",
+    ]);
+    let log = step(&["ceremony", "verify", "--ceremony-dir", cer_s]);
+    assert!(log.contains("alice") && log.contains("bob"), "{log}");
+    step(&["ceremony", "finalize", "--ceremony-dir", cer_s]);
+
+    let (pk, vk) = (cer.join("proving_key.bin"), cer.join("verifying_key.bin"));
+    let proof = tmp.path().join("proof").join("proof.bin");
+    step(&[
+        "prove",
+        "--inputs",
+        r#"{"secret": "3", "result": "27"}"#,
+        "--proving-key",
+        pk.to_str().unwrap(),
+        "--out",
+        proof.to_str().unwrap(),
+    ]);
+    let verify = |public: &str| {
+        xark(
+            &[
+                "verify",
+                "--verifying-key",
+                vk.to_str().unwrap(),
+                "--proof",
+                proof.to_str().unwrap(),
+                "--inputs",
+                public,
+            ],
+            &out,
+        )
+    };
+    let (ok, log) = verify(r#"{"result": "27"}"#);
+    assert!(ok && log.contains("verified"), "{log}");
+    let (ok, log) = verify(r#"{"result": "28"}"#);
+    assert!(
+        !ok || !log.contains("Proof verified"),
+        "a wrong public input must fail: {log}"
+    );
+}
