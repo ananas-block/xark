@@ -247,6 +247,10 @@ pub struct BuildOptions {
     /// Pass `--message-format=json` to cargo (its diagnostics go to stdout as
     /// JSON, for editors).
     pub json_diagnostics: bool,
+    /// With `json_diagnostics`: diagnostics already reported (their `rendered`
+    /// text), left out of the output — e.g. those a host `cargo check` of the
+    /// same crate just printed.
+    pub skip_rendered: std::collections::HashSet<String>,
 }
 
 impl Default for BuildOptions {
@@ -254,6 +258,7 @@ impl Default for BuildOptions {
         BuildOptions {
             line_tables: true,
             json_diagnostics: false,
+            skip_rendered: Default::default(),
         }
     }
 }
@@ -312,7 +317,30 @@ pub fn build_crate_with(
     if opts.json_diagnostics {
         cmd.arg("--message-format=json-diagnostic-rendered-ansi");
     }
-    let status = cmd.status().map_err(|e| format!("running cargo: {e}"))?;
+    let status = if opts.json_diagnostics && !opts.skip_rendered.is_empty() {
+        // Relay cargo's JSON lines, minus the diagnostics already reported.
+        use std::io::BufRead;
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("running cargo: {e}"))?;
+        let stdout = child.stdout.take().expect("piped stdout");
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            let seen = serde_json::from_str::<serde_json::Value>(&line)
+                .ok()
+                .and_then(|v| v["message"]["rendered"].as_str().map(str::to_string))
+                .is_some_and(|r| opts.skip_rendered.contains(&r));
+            if !seen {
+                println!("{line}");
+            }
+        }
+        child.wait().map_err(|e| format!("running cargo: {e}"))?
+    } else {
+        cmd.status().map_err(|e| format!("running cargo: {e}"))?
+    };
     if !status.success() {
         return Err("cargo build of the circuit failed".into());
     }

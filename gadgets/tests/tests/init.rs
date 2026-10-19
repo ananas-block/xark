@@ -71,10 +71,36 @@ fn init_then_test() {
         "--list didn't reach the tests:\n{out}"
     );
 
+    // The editor check (rust-analyzer's `overrideCommand`) reports errors in
+    // the tests too, not only in what the circuit build compiles.
+    let lib = dir.join("src/lib.rs");
+    let clean = std::fs::read_to_string(&lib).unwrap();
+    let broken = clean.replacen(
+        "fn accepts_valid() {",
+        "fn accepts_valid() {\n        let _n: u32 = \"not a number\";",
+        1,
+    );
+    assert_ne!(clean, broken, "the scaffold's tests changed shape");
+    std::fs::write(&lib, broken).unwrap();
+    let o = std::process::Command::new(common::xark_bin())
+        .args(["check", dir_s, "--message-format=json"])
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .expect("invoke xark");
+    let errors = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["reason"] == "compiler-message" && v["message"]["level"] == "error")
+        .count();
+    assert!(
+        !o.status.success() && errors > 0,
+        "no error for the tests module"
+    );
+    std::fs::write(&lib, clean).unwrap();
+
     // Plain `cargo test` after an edit tests the edited circuit: the stale build
     // is rebuilt (with `$XARK`), not silently reused. Cubing breaks `2 * 2 == 4`.
     std::thread::sleep(std::time::Duration::from_millis(1100)); // mtime granularity
-    let lib = dir.join("src/lib.rs");
     let src = std::fs::read_to_string(&lib).unwrap();
     let edited = src.replace("secret * secret,", "secret * secret * secret,");
     assert_ne!(src, edited, "the scaffold's circuit changed shape");

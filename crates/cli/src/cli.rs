@@ -324,8 +324,21 @@ pub fn cmd_check(args: &[String]) -> i32 {
 /// with `--message-format=json`, as a cargo `compiler-message` on stdout (what
 /// rust-analyzer's `check.overrideCommand` reads).
 fn check_stable(crate_abs: &std::path::Path, json: bool) -> i32 {
+    // For an editor, xark check *replaces* rust-analyzer's `cargo check`, so it
+    // runs one first: the circuit build below sees only the circuit (wasm32,
+    // `cfg(xark)`), never the tests or other host-only code.
+    let mut skip_rendered = std::collections::HashSet::new();
+    if json {
+        match host_check_json(crate_abs) {
+            Some((true, seen)) => skip_rendered = seen,
+            // Errors: reported; the circuit build would only repeat them.
+            Some((false, _)) => return 1,
+            None => {}
+        }
+    }
     let opts = xark_frontend::BuildOptions {
         json_diagnostics: json,
+        skip_rendered,
         ..Default::default()
     };
     let target_dir = crate_abs.join("target/xark-wasm");
@@ -356,6 +369,39 @@ fn check_stable(crate_abs: &std::path::Path, json: bool) -> i32 {
             1
         }
     }
+}
+
+/// `cargo check --all-targets` of the crate on the host, its JSON diagnostics
+/// relayed to stdout: `(passed, the diagnostics' rendered text)`, or `None` if
+/// cargo couldn't be run. Its `build-finished` line is held back unless it
+/// failed (the circuit check after it then reports its own).
+fn host_check_json(
+    crate_abs: &std::path::Path,
+) -> Option<(bool, std::collections::HashSet<String>)> {
+    let out = Command::new("cargo")
+        .args([
+            "check",
+            "--all-targets",
+            "--message-format=json-diagnostic-rendered-ansi",
+        ])
+        .current_dir(crate_abs)
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .ok()?;
+    let ok = out.status.success();
+    let mut seen = std::collections::HashSet::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let v = serde_json::from_str::<serde_json::Value>(line).ok();
+        let reason = v.as_ref().and_then(|v| v["reason"].as_str());
+        if ok && reason == Some("build-finished") {
+            continue;
+        }
+        if let Some(r) = v.as_ref().and_then(|v| v["message"]["rendered"].as_str()) {
+            seen.insert(r.to_string());
+        }
+        println!("{line}");
+    }
+    Some((ok, seen))
 }
 
 /// A frontend rejection as a cargo `compiler-message` (rustc's JSON diagnostic
@@ -499,7 +545,8 @@ pub fn cmd_init(args: &[String]) -> i32 {
             "rust-analyzer.toml",
             format!(
                 "# Run xark's subset validator on save so unsupported constructs show inline.\n\
-                 # Needs `xark` on PATH. Layers on top of rustc checks.\n\
+                 # Needs `xark` on PATH. Replaces rust-analyzer's `cargo check`, which\n\
+                 # `xark check` runs too.\n\
                  [check]\n\
                  overrideCommand = {ra_cmd}\n"
             ),

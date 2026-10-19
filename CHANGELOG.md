@@ -134,6 +134,10 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- In an editor, errors in a circuit crate's tests (and other host-only code)
+  now show. rust-analyzer's `overrideCommand`, which `xark init` sets, replaces
+  its `cargo check`, and `xark check` only built the circuit for wasm; with
+  `--message-format=json` it now runs `cargo check --all-targets` first.
 - Plain `cargo test` on a circuit crate rebuilds a circuit older than the
   crate's `src/` or `Cargo.toml` (it only built a missing one), so it no longer
   tests the previous build after an edit. Without an `xark` to rebuild with, it
