@@ -65,12 +65,14 @@ pub fn run(args: VerifyArgs) -> Result<()> {
                 .public_inputs
                 .clone()
                 .unwrap_or_else(|| project.public_inputs());
-            read_public_inputs(&path).with_context(|| {
-                format!(
-                    "reading {} (pass --inputs <JSON|FILE> or run `xark prove` first)",
-                    path.display()
-                )
-            })?
+            // The hint only when the file is missing: a corrupt one isn't fixed by it.
+            let hint = if path.exists() {
+                ""
+            } else {
+                " (pass --inputs <JSON|FILE> or run `xark prove` first)"
+            };
+            read_public_inputs(&path)
+                .with_context(|| format!("reading {}{hint}", path.display()))?
         }
         Some(arg) => {
             let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;

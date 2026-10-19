@@ -270,8 +270,9 @@ pub struct TestArgs {
 impl TestArgs {
     /// `[crate dir, cargo test args…]`, read from the raw command line: clap
     /// swallows a `--` that `cargo test` needs (`xark test . -- --list` must reach
-    /// cargo as `-- --list`). The first argument is the crate dir only if it is
-    /// one, so `xark test my_test` filters in the current crate.
+    /// cargo as `-- --list`). The first argument is the crate dir if it is one or
+    /// looks like a path (so a mistyped path is reported, not taken as a filter);
+    /// `xark test my_test` filters in the current crate.
     fn to_argv(&self) -> Vec<String> {
         let raw: Vec<String> = std::env::args().collect();
         let Some(i) = raw.iter().skip(1).position(|a| a == "test") else {
@@ -281,12 +282,23 @@ impl TestArgs {
         };
         let rest = &raw[i + 2..];
         match rest.first() {
-            Some(d) if !d.starts_with('-') && std::path::Path::new(d).is_dir() => rest.to_vec(),
+            Some(d)
+                if !d.starts_with('-')
+                    && (std::path::Path::new(d).is_dir() || looks_like_path(d)) =>
+            {
+                rest.to_vec()
+            }
             _ => std::iter::once(".".to_string())
                 .chain(rest.iter().cloned())
                 .collect(),
         }
     }
+}
+
+/// A path rather than a test-name filter: test names never hold a separator or
+/// start with `.` or `~`.
+fn looks_like_path(s: &str) -> bool {
+    s.contains('/') || s.contains(std::path::MAIN_SEPARATOR) || s.starts_with(['.', '~'])
 }
 
 // Shared helpers for the backend commands.

@@ -24,6 +24,7 @@ impl XarkProject {
     /// directory to the nearest crate root).
     pub fn resolve(path: Option<PathBuf>) -> Result<Self> {
         let base = match path {
+            Some(p) if !p.exists() => bail!("no such directory: {}", p.display()),
             Some(p) => p,
             None => std::env::current_dir().context("resolving current directory")?,
         };

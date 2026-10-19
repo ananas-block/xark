@@ -84,8 +84,12 @@ pub fn run(args: ExportArgs) -> Result<()> {
     let out_dir = args.out.clone().unwrap_or_else(|| project.export_dir());
 
     // Load inputs.
-    let vk = Groth16Keys::read_verifying_key(&vk_path)
-        .with_context(|| format!("reading verifying key {}", vk_path.display()))?;
+    let vk = Groth16Keys::read_verifying_key(&vk_path).with_context(|| {
+        format!(
+            "reading verifying key {} (run `xark setup` first?)",
+            vk_path.display()
+        )
+    })?;
     check_key_safe_for_export(&vk_path, args.allow_insecure)?;
     let proof = ProofBundle::read_proof(&proof_path)
         .with_context(|| format!("reading proof {}", proof_path.display()))?;

@@ -49,13 +49,26 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         return 2;
     };
     let crate_dir = PathBuf::from(crate_dir);
-    let name = crate_dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("circuit")
-        .to_string();
     let cwd = std::env::current_dir().expect("cwd");
     let crate_abs = cwd.join(&crate_dir);
+    if !crate_abs.join("Cargo.toml").is_file() {
+        let what = if crate_abs.is_dir() {
+            "no Cargo.toml in"
+        } else {
+            "no such directory:"
+        };
+        eprintln!(
+            "xark: {what} {} (expected a circuit crate)",
+            crate_dir.display()
+        );
+        return 1;
+    }
+    // Named after the directory (`.` resolved) when `Cargo.toml` has no package.
+    let name = crate_abs
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_string))
+        .unwrap_or_else(|| "circuit".to_string());
     // xark's artifacts live under the crate's `target/xark/`, and the wasm32 /
     // `--cfg xark` build cache under `target/xark-wasm/` — both apart from the
     // crate's normal `target/` so they don't thrash the one `cargo` and
@@ -69,7 +82,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
 
     build_stable(
-        &crate_abs, &crate_dir, &out_abs, &name, &field, profile, emit_json,
+        &crate_abs, &crate_dir, &out_abs, &pkg_name, &field, profile, emit_json,
     )
 }
 
@@ -409,6 +422,14 @@ pub fn cmd_init(args: &[String]) -> i32 {
         .and_then(|s| s.to_str())
         .unwrap_or("circuit")
         .to_string();
+    if let Err(why) = check_crate_name(&name) {
+        eprintln!(
+            "error: can't name a crate `{name}`: {why}\n  \
+             pick another directory name, e.g. `xark init {}`",
+            suggest_crate_name(&name)
+        );
+        return 2;
+    }
 
     // Pin the published `xark`/`xark-prover` deps to this CLI's own major.minor
     // (the whole workspace releases together), so the scaffold never suggests a
@@ -515,6 +536,56 @@ pub fn cmd_init(args: &[String]) -> i32 {
         ])
     );
     0
+}
+
+/// Refuse names `cargo new` refuses: the crate (and its `#[circuit]` fn, named
+/// after it) must be a valid, non-keyword Rust identifier once `-` becomes `_`.
+fn check_crate_name(name: &str) -> Result<(), &'static str> {
+    const KEYWORDS: &[&str] = &[
+        "_", "Self", "abstract", "as", "async", "await", "become", "box", "break", "const",
+        "continue", "crate", "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for",
+        "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod", "move", "mut",
+        "override", "priv", "pub", "ref", "return", "self", "static", "struct", "super", "trait",
+        "true", "try", "type", "typeof", "unsafe", "unsized", "use", "virtual", "where", "while",
+        "yield",
+    ];
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("only letters, digits, `-` and `_` are allowed");
+    }
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        return Err("it starts with a digit");
+    }
+    if KEYWORDS.contains(&name.replace('-', "_").as_str()) {
+        return Err("it is a Rust keyword");
+    }
+    Ok(())
+}
+
+/// A valid name close to a refused one: `type` → `type_circuit`,
+/// `1st` → `circuit_1st`, `a b` → `a_b`.
+fn suggest_crate_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if s.trim_matches('_').is_empty() {
+        "circuit".to_string()
+    } else if s.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("circuit_{s}")
+    } else if check_crate_name(&s).is_err() {
+        format!("{s}_circuit")
+    } else {
+        s
+    }
 }
 
 /// Turn a crate name into a valid Rust identifier for the scaffolded entry fn

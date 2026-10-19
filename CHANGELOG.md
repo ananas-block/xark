@@ -105,6 +105,17 @@ gadgets now check more:
 
 ### Fixed
 
+- A mistyped path is reported (`no such directory: …`) by every command.
+  `xark prove` used to build the crate in the current directory instead, and
+  `xark test` passed the path to `cargo test` as a test filter.
+- `xark init` refuses names `cargo new` refuses (a Rust keyword such as `type`,
+  a leading digit) and suggests one that works; it used to write a crate that
+  didn't build.
+- `xark build` / `xark test` with no path name the circuit after its package
+  (`building circuit cube`), not `circuit`.
+- `xark verify` suggests running `xark prove` only when `public_inputs.bin` is
+  missing, not when it's corrupt. `xark export` gives the same "run `xark setup`
+  first?" hint as the other commands when the key is missing.
 - An out-of-range `uN` input is named before solving (`input `b` is a u8: 256 is
   out of range (0..=255)`) instead of failing as an opaque constraint.
 - A whole number written as a JSON float (`1e3`) is accepted as an input; it was
