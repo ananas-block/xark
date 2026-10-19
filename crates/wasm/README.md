@@ -220,9 +220,11 @@ prove(xbc, pk, {
 });
 ```
 
-Scalars may be decimal strings, `0x`-hex strings (reduced mod p), safe-integer numbers,
-or bigints. A number outside JavaScript's safe-integer range is rejected rather than
-rounded; pass it as a bigint or a string. Flat leaf names (`"id.dob"`, `"path[0]"`)
+Scalars may be decimal strings, `0x`-hex strings, safe-integer numbers, or bigints.
+A field value must already be a field element (`0 <= x < p`): a negative or larger
+value is rejected rather than reduced, since it would prove a different number. A
+number outside JavaScript's safe-integer range is rejected rather than rounded; pass
+it as a bigint or a string. Flat leaf names (`"id.dob"`, `"path[0]"`)
 still work and can be mixed with nested values.
 
 `proof` and `publicInputs` are the canonical compressed bytes (identical to the

@@ -21,6 +21,16 @@ gadgets now check more:
 
 ### Changed
 
+- **Field inputs must be field elements.** A `Field` input outside `0 <= x < p`
+  (negative, or `p` and above) is rejected instead of silently reduced mod p, in
+  `xark prove` / `check` / `verify`, xark-wasm, generated TS clients and the Rust
+  API (`circuit.check` / `.prove`). A value that wraps proves a different number
+  than the one written, e.g. a 256-bit hash passed as a `Field`.
+  `xark_prover::hex_to_field_decimal` is replaced by `field_input_decimal`
+  (decimal or hex, range-checked).
+- A constant `Field` from `Field::constant` / `from_le_bytes` / `from_be_bytes` is
+  reduced mod p when it's made, so `to_decimal()` (and `{:?}`) give the value
+  the circuit sees. 32 random bytes used to print a number above p.
 - **Stable Rust only.** Circuits are compiled to wasm by any stable Rust from
   1.89 on and lowered by `xark-frontend`. The pinned-nightly MIR compiler
   (`xark-rustc`) is removed, along with `--frontend`, `XARK_FRONTEND`,
@@ -95,6 +105,12 @@ gadgets now check more:
 
 ### Fixed
 
+- An out-of-range `uN` input is named before solving (`input `b` is a u8: 256 is
+  out of range (0..=255)`) instead of failing as an opaque constraint.
+- A whole number written as a JSON float (`1e3`) is accepted as an input; it was
+  rejected as "not an exact integer".
+- `xark doctor` says what `xark` on PATH is for (rust-analyzer, and `cargo test`'s
+  auto-build), not `xark init`.
 - A circuit importing `Field` by name (`use xark::{Field, …}`) no longer gets an
   `unused import` warning on host builds: `#[circuit]` keeps the parameter types
   as written instead of rewriting them to `::xark::Field`.

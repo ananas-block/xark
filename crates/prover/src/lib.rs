@@ -89,25 +89,30 @@ pub fn fr_from_fieldconst(fc: &FieldConst) -> Fr {
     if sign == Sign::Minus { -mag } else { mag }
 }
 
-/// Parse a `0x`-prefixed hex value as a field element (big-endian, reduced mod p)
-/// and return its canonical decimal — for `--inputs` values written in hex.
-/// Errors (never panics) on a missing prefix or a non-hex body.
-pub fn hex_to_field_decimal(s: &str) -> Result<String, String> {
-    let h = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .ok_or_else(|| format!("expected a 0x-prefixed hex value, got {s:?}"))?;
-    if h.is_empty() {
-        return Err(format!("empty hex value {s:?}"));
-    }
-    let bi =
-        BigInt::parse_bytes(h.as_bytes(), 16).ok_or_else(|| format!("invalid hex value {s:?}"))?;
+/// A field-element input value — decimal or `0x`-hex (big-endian) — as its
+/// decimal. It must already be a field element, `0 <= x < p`: a negative or
+/// larger value is an error rather than silently reduced, since a value that
+/// wraps (a 256-bit hash passed as a `Field`, say) would prove a different number
+/// than the one written. Errors, never panics.
+pub fn field_input_decimal(s: &str) -> Result<String, String> {
+    let t = s.trim();
+    let bi = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some("") => return Err(format!("empty hex value {s:?}")),
+        Some(h) => BigInt::parse_bytes(h.as_bytes(), 16)
+            .filter(|_| h.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| format!("invalid hex value {s:?}"))?,
+        None => BigInt::parse_bytes(t.as_bytes(), 10)
+            .filter(|_| !t.is_empty())
+            .ok_or_else(|| format!("{s:?} is not a decimal or 0x-hex number"))?,
+    };
     let modulus = BigInt::parse_bytes(BN254_MODULUS, 10).expect("BN254_MODULUS is a valid decimal");
-    let mut r = bi % &modulus;
-    if r.sign() == Sign::Minus {
-        r += &modulus;
+    if bi.sign() == Sign::Minus || bi >= modulus {
+        return Err(format!(
+            "{s} is not a field element (0 <= x < p, p = {})",
+            std::str::from_utf8(BN254_MODULUS).expect("ascii")
+        ));
     }
-    Ok(r.to_str_radix(10))
+    Ok(bi.to_str_radix(10))
 }
 
 /// Lower a solved witness (`VarId → Fp`) to Groth16 scalars (`VarId → Fr`).
@@ -652,8 +657,12 @@ impl Circuit {
     ///
     /// Panics on a name that isn't a declared input, or a count mismatch — those
     /// are test-authoring bugs (the generated `<Fn>Inputs` struct can't produce
-    /// them), so failing loudly is correct.
-    fn resolve_inputs<I: ProveInputs>(&self, inputs: I) -> BTreeMap<VarId, String> {
+    /// them), so failing loudly is correct. A value that isn't a field element
+    /// (`0 <= x < p`) is an `Err`: it would otherwise wrap to a different number.
+    fn resolve_inputs<I: ProveInputs>(
+        &self,
+        inputs: I,
+    ) -> Result<BTreeMap<VarId, String>, ProveError> {
         let input_vars: Vec<&Var> = self
             .prim
             .vars
@@ -683,9 +692,11 @@ impl Circuit {
             let Some(&id) = by_name.get(name.as_str()) else {
                 panic!("unknown circuit input `{name}`; expected {:?}", names());
             };
+            let val = field_input_decimal(&val)
+                .map_err(|e| ProveError(format!("input `{name}`: {e}")))?;
             id_inputs.insert(id, val);
         }
-        id_inputs
+        Ok(id_inputs)
     }
 
     /// Check that `inputs` **satisfy the circuit**: solve the witness and verify it
@@ -698,7 +709,7 @@ impl Circuit {
     /// **not** run Groth16 (that exercises the backend, not the circuit); use
     /// [`Self::prove`] for the full pipeline. Panics only on malformed `inputs`.
     pub fn check<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
-        let id_inputs = self.resolve_inputs(inputs);
+        let id_inputs = self.resolve_inputs(inputs)?;
         // An unsatisfiable witness means the stated relation is false; explain
         // *which* constraint (and its source line / function, when profiled)
         // failed, via the shared diagnostic.
@@ -718,7 +729,7 @@ impl Circuit {
     /// catches the common "forgot to constrain a hint" bug, not every
     /// under-constraint); use it on a few representative inputs.
     pub fn check_constrained<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
-        let id_inputs = self.resolve_inputs(inputs);
+        let id_inputs = self.resolve_inputs(inputs)?;
         let assign = self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
@@ -760,7 +771,7 @@ impl Circuit {
         use ark_serialize::CanonicalSerialize;
         use xark_groth16::PkSource;
         let pk_path = pk_path.as_ref();
-        let id_inputs = self.resolve_inputs(inputs);
+        let id_inputs = self.resolve_inputs(inputs)?;
         let assign = self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
@@ -820,7 +831,7 @@ impl Circuit {
     /// inconsistency. For a test that the circuit proves at all; [`Self::prove`]
     /// makes a proof you keep. Runs in seconds only in `--release`.
     pub fn prove_dev<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
-        let id_inputs = self.resolve_inputs(inputs);
+        let id_inputs = self.resolve_inputs(inputs)?;
         let assign_fp = self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,

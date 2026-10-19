@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
-import { Cube } from "./cube";
+import { Cube, FIELD_MODULUS } from "./cube";
 
 const dir = join(__dirname, "..", "target", "xark", "cube");
 const read = (f: string) => new Uint8Array(readFileSync(join(dir, f)));
@@ -31,4 +31,15 @@ check(circuit.verify(proof, publicInputs), "the proof verifies");
 check(String(publicInputs.result) === "27", "the public input decodes");
 check(!circuit.verify(proof, { result: 28 }), "a wrong public input is rejected");
 check(throws(() => circuit.prove({ secret: 3, result: 28 })), "unsatisfiable inputs are refused");
+// p + 3 would prove as 3 if it wrapped; it's refused before proving instead.
+const outOfRange = (f: () => unknown) => {
+  try {
+    f();
+    return false;
+  } catch (e) {
+    return e instanceof RangeError;
+  }
+};
+check(outOfRange(() => circuit.prove({ secret: FIELD_MODULUS + 3n, result: 27 })), "a value past p is refused");
+check(outOfRange(() => circuit.prove({ secret: -1, result: 27 })), "a negative value is refused");
 console.log("✅ cube client");

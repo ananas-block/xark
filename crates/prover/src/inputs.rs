@@ -151,7 +151,8 @@ fn logical_root(leaf: &str) -> &str {
 ///
 /// Shared by `xark prove` and `xark check --inputs`. A name may be a single leaf
 /// or a **logical input** that fans out to its leaves:
-///   * scalar `Field` → decimal, or `0x`-hex (reduced mod p);
+///   * scalar `Field` → decimal or `0x`-hex, a field element (`0 <= x < p`;
+///     anything else is an error, not reduced);
 ///   * byte array `[u8; N]` (leaves `name[i]`) → a `0x`-hex string of exactly `N`
 ///     bytes, one byte per leaf;
 ///   * hash (leaves `name.hi` / `name.lo`) → a `0x`-hex string of 32 bytes packed
@@ -173,19 +174,13 @@ pub fn resolve_input_ids(
         .collect();
     let vars = &input_vars[..];
     let by_name: BTreeMap<&str, VarId> = vars.iter().map(|v| (v.name.as_str(), v.id)).collect();
-    let is_hex = |s: &str| s.starts_with("0x") || s.starts_with("0X");
     let mut id_inputs: BTreeMap<VarId, String> = BTreeMap::new();
 
     for (k, v) in inputs {
-        // 1. Exact leaf — a scalar value (decimal, or `0x`-hex reduced mod p).
+        // 1. Exact leaf — a field element (decimal or `0x`-hex, `0 <= x < p`).
         if let Some(&id) = by_name.get(k.as_str()) {
-            let dec = if is_hex(v) {
-                crate::hex_to_field_decimal(v).map_err(|e| format!("input `{k}`: {e}"))?
-            } else {
-                crate::try_fr_from_decimal(v)
-                    .map_err(|e| format!("invalid value for input `{k}`: {e}"))?;
-                v.clone()
-            };
+            let dec = crate::field_input_decimal(v)
+                .map_err(|e| format!("invalid value for input `{k}`: {e}"))?;
             id_inputs.insert(id, dec);
             continue;
         }
@@ -406,6 +401,31 @@ mod tests {
             !err.contains("\"tmp\""),
             "derived vars aren't listed as inputs: {err}"
         );
+    }
+
+    #[test]
+    fn field_inputs_must_be_field_elements() {
+        let p = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+        let p_minus_1 =
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+        let all = |out: &str| {
+            resolve(vec![
+                ("id.dob", Scalar("0".into())),
+                ("id.salt", Scalar("0".into())),
+                ("msg", Scalar("0x0000".into())),
+                ("out", Scalar(out.into())),
+            ])
+        };
+        assert_eq!(all(p_minus_1).unwrap()[&4], p_minus_1);
+        assert_eq!(all("0x10").unwrap()[&4], "16");
+        for bad in [
+            p,
+            "-1",
+            "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+        ] {
+            let err = all(bad).unwrap_err();
+            assert!(err.contains("not a field element"), "{bad}: {err}");
+        }
     }
 
     #[test]

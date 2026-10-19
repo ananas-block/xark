@@ -114,7 +114,9 @@ function fieldValue(v: unknown, at: string): bigint {
       throw new TypeError(`${at}: ${JSON.stringify(v)} is not a decimal or 0x-hex number`);
     }
   } else throw new TypeError(`${at}: expected a number, bigint, or string`);
-  return ((x % FIELD_MODULUS) + FIELD_MODULUS) % FIELD_MODULUS;
+  // Not reduced: a value that wraps would prove a different number than the one given.
+  if (x < 0n || x >= FIELD_MODULUS) throw new RangeError(`${at}: ${String(v)} is not a field element (0 <= x < p)`);
+  return x;
 }
 
 /** Flatten `value` of type `ty` into `out` under the compiler's leaf names. */
@@ -123,8 +125,9 @@ function flatten(schema: Schema, ty: SchemaType, value: unknown, leaf: string, a
     out[leaf] = fieldValue(value, at).toString();
   } else if ("uint" in ty) {
     if (typeof value === "string" || typeof value === "object") throw new TypeError(`${at}: expected an integer`);
-    const x = fieldValue(value, at);
-    if (typeof value === "bigint" ? value < 0n : (value as number) < 0 || x >= 1n << BigInt(ty.uint))
+    const neg = typeof value === "bigint" ? value < 0n : (value as number) < 0;
+    const x = neg ? -1n : fieldValue(value, at);
+    if (x < 0n || x >= 1n << BigInt(ty.uint))
       throw new RangeError(`${at}: ${String(value)} is outside u${ty.uint}`);
     out[leaf] = x.toString();
   } else if ("array" in ty) {
