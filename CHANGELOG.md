@@ -21,6 +21,9 @@ gadgets now check more:
 
 ### Changed
 
+- `xark export` no longer writes `client_call_example.rs`. It was generic
+  Solana client boilerplate (and its listed dependencies didn't compile
+  together); the generated README now says how to send `instruction_data.bin`.
 - **Field inputs must be field elements.** A `Field` input outside `0 <= x < p`
   (negative, or `p` and above) is rejected instead of silently reduced mod p, in
   `xark prove` / `check` / `verify`, xark-wasm, generated TS clients and the Rust

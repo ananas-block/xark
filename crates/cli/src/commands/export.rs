@@ -17,7 +17,6 @@
 //!   public_inputs.solana.bin   # sample public inputs (N * 32 B LE)
 //!   instruction_data.bin       # proof || public_inputs (the on-chain ix data)
 //!   README.md
-//!   client_call_example.rs     # off-chain submission snippet
 //! ```
 //!
 //! All field elements are 32-byte little-endian, matching the `alt_bn128` LE
@@ -137,7 +136,6 @@ pub fn run(args: ExportArgs) -> Result<()> {
         &out.join("README.md"),
         &gen_readme(&crate_name, num_public_inputs),
     )?;
-    write_str(&out.join("client_call_example.rs"), CLIENT_CALL_EXAMPLE)?;
 
     println!(
         "Generated verifier crate `{crate_name}` at {} ({} public input(s), \
@@ -381,7 +379,9 @@ instead: a nullifier or nonce the circuit derives from a secret, or the signer
 or context the proof is for, and record *that* on-chain.
 
 `cargo test` in this crate verifies the bundled sample proof against the
-embedded VK. `client_call_example.rs` shows how to submit a proof off-chain.
+embedded VK. `instruction_data.bin` is that proof as your program receives it
+(`proof || public_inputs`): send those bytes as an instruction's data, in a
+transaction built however your client builds them.
 "#
     )
 }
@@ -396,69 +396,6 @@ fn write_str(path: &Path, contents: &str) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
     Ok(())
 }
-
-// Off-chain client snippet.
-
-const CLIENT_CALL_EXAMPLE: &str = r#"//! Submit an xark-exported Groth16 proof to your on-chain verifier program.
-//!
-//! Your program embeds the verifying key via the generated verifier crate
-//! (`<crate>::verify_instruction_data(...)`); the client just submits
-//! `instruction_data.bin` (= `proof_bytes || public_inputs`, no VK).
-//!
-//! Uses Anza's broken-out client crates rather than the monolithic
-//! `solana-sdk`. Copy this file into a fresh Cargo project with:
-//!
-//! ```toml
-//! [dependencies]
-//! anyhow = "1"
-//! solana-address = "2"
-//! solana-client = "2"
-//! solana-commitment-config = "3"
-//! solana-instruction = "3"
-//! solana-keypair = "3"
-//! solana-message = "3"
-//! solana-signer = "3"
-//! solana-transaction = "3"
-//! ```
-
-use std::str::FromStr;
-
-use anyhow::Result;
-use solana_address::Address;
-use solana_client::rpc_client::RpcClient;
-use solana_commitment_config::CommitmentConfig;
-use solana_instruction::Instruction;
-use solana_keypair::read_keypair_file;
-use solana_signer::Signer;
-use solana_transaction::Transaction;
-
-// ---- Fill these in ---------------------------------------------------------
-const PROGRAM_ID: &str = "REPLACE_WITH_DEPLOYED_PROGRAM_ID";
-const RPC_URL: &str = "https://api.devnet.solana.com";
-/// Absolute path to the `instruction_data.bin` produced by `xark export`.
-/// Contents: `proof_bytes (256 B) || public_inputs (N * 32 B)`.
-const INSTRUCTION_DATA_PATH: &str = "/absolute/path/to/instruction_data.bin";
-const PAYER_KEYPAIR_PATH: &str = "/absolute/path/to/payer.json";
-
-fn main() -> Result<()> {
-    let instruction_data = std::fs::read(INSTRUCTION_DATA_PATH)?;
-    let program_id = Address::from_str(PROGRAM_ID)?;
-    let ix = Instruction {
-        program_id,
-        accounts: vec![],
-        data: instruction_data,
-    };
-    let rpc = RpcClient::new_with_commitment(RPC_URL.to_string(), CommitmentConfig::confirmed());
-    let payer = read_keypair_file(PAYER_KEYPAIR_PATH)
-        .map_err(|e| anyhow::anyhow!("read keypair: {e}"))?;
-    let blockhash = rpc.get_latest_blockhash()?;
-    let tx =
-        Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], blockhash);
-    let sig = rpc.send_and_confirm_transaction(&tx)?;
-    println!("Proof verified on-chain. Signature: {sig}");
-    Ok(())
-}
-"#;
 
 #[cfg(test)]
 mod tests {
