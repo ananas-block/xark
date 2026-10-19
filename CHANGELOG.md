@@ -134,6 +134,10 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- `xark export --out` and `xark client -o` refuse to overwrite files they
+  didn't generate. An `--out` naming your own program's crate used to replace
+  its `Cargo.toml` and `src/lib.rs` without a word; regenerating an earlier
+  export or client still works.
 - `xark ceremony init` refuses a directory that already holds a ceremony. It
   used to overwrite its keys and reset the count, discarding every
   contribution, and could leave a finalized ceremony's production-safe

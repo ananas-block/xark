@@ -210,3 +210,26 @@ fn failed_setup_keeps_the_previous_keys() {
         .collect();
     assert!(stray.is_empty(), "{stray:?}");
 }
+
+/// `xark client -o` regenerates its own file but never overwrites another.
+#[test]
+fn client_does_not_overwrite_other_files() {
+    let tmp = tempdir();
+    let out = tmp.path().join("out");
+    let (ok, err) = xark_build("arithmetic_square", &out, &tmp.path().join("target"));
+    assert!(ok, "build failed: {err}");
+    let ts = tmp.path().join("client.ts");
+    let (out_s, ts_s) = (out.to_str().unwrap(), ts.to_str().unwrap());
+    for _ in 0..2 {
+        let (ok, _, err) = run(&["client", out_s, "-o", ts_s]);
+        assert!(ok, "client failed: {err}");
+    }
+    let mine = tmp.path().join("mine.ts");
+    std::fs::write(&mine, "export const mine = 1;\n").unwrap();
+    let (ok, _, err) = run(&["client", out_s, "-o", mine.to_str().unwrap()]);
+    assert!(!ok && err.contains("refusing to overwrite"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(&mine).unwrap(),
+        "export const mine = 1;\n"
+    );
+}

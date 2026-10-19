@@ -27,6 +27,25 @@ fn exported_verifier_passes_its_own_test() {
     );
     let (ok, _, err) = run(&["export", out_s, "--out", verifier_s, "--allow-insecure"]);
     assert!(ok, "export failed: {err}");
+    // Again over its own output is fine (regenerating) …
+    let (ok, _, err) = run(&["export", out_s, "--out", verifier_s, "--allow-insecure"]);
+    assert!(ok, "re-export failed: {err}");
+    // … but never over a crate it didn't write.
+    let mine = tmp.path().join("mine");
+    std::fs::create_dir_all(mine.join("src")).unwrap();
+    std::fs::write(mine.join("src/lib.rs"), "// my program\n").unwrap();
+    let (ok, _, err) = run(&[
+        "export",
+        out_s,
+        "--out",
+        mine.to_str().unwrap(),
+        "--allow-insecure",
+    ]);
+    assert!(!ok && err.contains("refusing to overwrite"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(mine.join("src/lib.rs")).unwrap(),
+        "// my program\n"
+    );
 
     // The crate pins the published `xark-verifier`; use this checkout's.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
