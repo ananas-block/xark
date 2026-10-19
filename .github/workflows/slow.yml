@@ -119,8 +119,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - name: Install stable Rust
+      - name: Install stable Rust + wasm32
+        # wasm32: the Nova prover's tests build the circuits they fold.
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:

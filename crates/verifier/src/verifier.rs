@@ -81,8 +81,7 @@ const FR_MODULUS_LE: [u8; FR_BYTES] = [
 /// value with the unused top bits flipped all decode to the *same* point and
 /// verify against the same proof — proof/VK encoding malleability, where a
 /// third party mangles a valid proof's bytes and it still verifies. The
-/// `*_strict` entry points reject it. (Groth16 proofs remain re-randomizable
-/// as *points*, which no encoding check prevents.)
+/// `*_strict` entry points reject it (encoding only: proofs stay re-randomizable).
 const FQ_MODULUS_LE: [u8; FR_BYTES] = [
     0x47, 0xfd, 0x7c, 0xd8, 0x16, 0x8c, 0x20, 0x3c, 0x8d, 0xca, 0x71, 0x68, 0x91, 0x6a, 0x81, 0x97,
     0x5d, 0x58, 0x81, 0x81, 0xb6, 0x45, 0x50, 0xb8, 0x29, 0xa0, 0x31, 0xe1, 0x72, 0x4e, 0x64, 0x30,
@@ -420,17 +419,10 @@ pub fn verify_proof_only(vk_bytes: &[u8], instruction_data: &[u8]) -> Result<boo
 ///
 /// The `alt_bn128` syscall **masks** those bits, so a plain [`verify_groth16`]
 /// accepts byte-distinct encodings of the same point — i.e. a third party can
-/// mutate a valid proof's bytes and it still verifies. Use this when proofs
-/// must arrive in canonical encoding. (Public inputs are `Fr` and are already
-/// rejected when non-canonical by both variants — see
-/// [`VerifierError::NonCanonicalPublicInput`].)
-///
-/// Strict or not, a proof's bytes are **not** unique to its statement: Groth16
-/// proofs are re-randomizable, so anyone holding a valid proof can derive a
-/// different valid proof of the same public inputs, with canonical encoding.
-/// Never use proof bytes (or their hash) as a replay or dedup key; put replay
-/// protection in the public inputs (a nullifier, nonce or signer the circuit
-/// binds).
+/// mutate a valid proof's bytes and it still verifies; this rejects that. It does **not** make
+/// proof bytes unique: Groth16 proofs are re-randomizable, so never use them (or their hash) as a
+/// replay or dedup key; bind a nullifier, nonce or signer into the public inputs instead.
+/// (Non-canonical public inputs are rejected by both variants: [`VerifierError::NonCanonicalPublicInput`].)
 pub fn verify_groth16_strict(
     vk_bytes: &[u8],
     proof_bytes: &[u8],

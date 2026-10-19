@@ -165,12 +165,14 @@ fn js_to_input(v: &JsValue) -> Result<InputValue, String> {
 /// The result of [`prove`] / [`prove_preloaded`]: the canonical compressed
 /// proof + public-input bytes (identical to the host's `proof.bin` /
 /// `public_inputs.bin`), plus the public-input count.
-#[wasm_bindgen(getter_with_clone)]
+// `getter_with_clone` only on the byte fields: the count is `Copy`.
+#[wasm_bindgen]
 pub struct ProofBundle {
     /// Canonical compressed proof bytes (`== proof.bin`).
+    #[wasm_bindgen(getter_with_clone)]
     pub proof: Vec<u8>,
     /// Canonical compressed public-input bytes (`== public_inputs.bin`).
-    #[wasm_bindgen(js_name = publicInputs)]
+    #[wasm_bindgen(getter_with_clone, js_name = publicInputs)]
     pub public_inputs: Vec<u8>,
     /// Number of public inputs.
     #[wasm_bindgen(js_name = numPublicInputs)]
