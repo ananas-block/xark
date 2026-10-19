@@ -260,19 +260,30 @@ pub struct TestArgs {
     /// Circuit crate directory to build and test.
     #[arg(default_value = ".", value_hint = clap::ValueHint::DirPath)]
     pub crate_dir: String,
-    /// Extra arguments forwarded verbatim to `cargo test` (after `--`).
-    #[arg(last = true)]
+    /// Arguments for `cargo test`, passed through verbatim, as you'd give them to
+    /// `cargo test` itself: a test-name filter, cargo flags, and after `--` the
+    /// test binary's (`xark test . -- --include-ignored`).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub cargo_args: Vec<String>,
 }
 
 impl TestArgs {
+    /// `[crate dir, cargo test args…]`, read from the raw command line: clap
+    /// swallows a `--` that `cargo test` needs (`xark test . -- --list` must reach
+    /// cargo as `-- --list`). The first argument is the crate dir only if it is
+    /// one, so `xark test my_test` filters in the current crate.
     fn to_argv(&self) -> Vec<String> {
-        let mut v = vec![self.crate_dir.clone()];
-        if !self.cargo_args.is_empty() {
-            v.push("--".into());
+        let raw: Vec<String> = std::env::args().collect();
+        let Some(i) = raw.iter().skip(1).position(|a| a == "test") else {
+            let mut v = vec![self.crate_dir.clone()];
             v.extend(self.cargo_args.iter().cloned());
+            return v;
+        };
+        let rest = &raw[i + 2..];
+        match rest.first() {
+            Some(d) if !d.starts_with('-') && std::path::Path::new(d).is_dir() => rest.to_vec(),
+            _ => std::iter::once(".".to_string()).chain(rest.iter().cloned()).collect(),
         }
-        v
     }
 }
 

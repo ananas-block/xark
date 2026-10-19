@@ -222,17 +222,10 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
 /// `target/xark/<pkg>/` artifacts exist, then run `cargo test` in the crate so
 /// the in-crate `xark_prover::circuit(..).check(..)` tests can load them.
 pub fn cmd_test(args: &[String]) -> i32 {
-    // Split at `--`: everything before is ours (the crate dir); everything
-    // after is forwarded verbatim to `cargo test`.
-    let (ours, forwarded): (&[String], &[String]) = match args.iter().position(|a| a == "--") {
-        Some(i) => (&args[..i], &args[i + 1..]),
-        None => (args, &[]),
-    };
-    let crate_dir = ours
-        .iter()
-        .find(|a| !a.starts_with('-'))
-        .cloned()
-        .unwrap_or_else(|| ".".to_string());
+    // `args[0]` is the crate dir; the rest goes to `cargo test` verbatim, so
+    // `xark test . -- --include-ignored` is `cargo test -- --include-ignored`.
+    let crate_dir = args.first().cloned().unwrap_or_else(|| ".".to_string());
+    let forwarded = args.get(1..).unwrap_or(&[]);
     let build_argv = vec![crate_dir.clone()];
 
     // Build first so the tests' artifacts are present + current. Build with
@@ -247,8 +240,8 @@ pub fn cmd_test(args: &[String]) -> i32 {
 
     // Run in `--release`: circuit tests drive a full Groth16 setup+prove+verify,
     // 10–50× slower in debug (minutes vs seconds on a large hash/EC circuit), so
-    // release is the sensible default. Anything after `--` goes to `cargo test`
-    // (so `xark test . -- -- --include-ignored` reaches the test binary).
+    // release is the sensible default. The other arguments go to `cargo test`
+    // as given.
     eprintln!("xark: running `cargo test --release` in {crate_dir}");
     let status = Command::new("cargo")
         .arg("test")

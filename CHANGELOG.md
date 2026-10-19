@@ -93,6 +93,9 @@ gadgets now check more:
 
 ### Fixed
 
+- `xark test` passes its arguments to `cargo test` as given: a name filter,
+  cargo flags, and after `--` the test binary's (`xark test . -- --list` used to
+  fail with "unexpected argument").
 - Witness search skips rows it provably can't learn from, so wide circuits decide
   in seconds instead of timing out (a Grumpkin IPA search: 107 s → 4 s).
 - `xark ceremony init` reads the build's `circuit.xbc` like every other command
