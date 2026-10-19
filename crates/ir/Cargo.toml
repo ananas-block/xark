@@ -32,7 +32,6 @@ num-traits = "0.2"
 rayon = "1"
 # Fast bincode-compatible binary codec (placement-init reads) for the on-disk
 # minimized-R1CS cache that `xark setup` writes and `xark prove` reloads.
-wincode = { version = "0.5", features = ["derive"] }
 # Fast fixed-width BN254 scalar field (Montgomery) for the reference solver's
 # hot path; the `num-bigint` fallback stays for arbitrary-modulus programs.
 ark-bn254 = { workspace = true }

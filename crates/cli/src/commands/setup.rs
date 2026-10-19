@@ -1,6 +1,6 @@
 //! `xark setup` — generate Groth16 proving/verifying keys for a circuit.
 //!
-//! Reads the `r1cs.json` produced by `xark build` and runs either the insecure
+//! Reads the `circuit.xbc` produced by `xark build` and runs either the insecure
 //! dev-mode setup (`--insecure-dev-mode`) or the production phase-2 setup from a
 //! Powers-of-Tau transcript (`--ptau-file`, or one auto-detected under
 //! `target/xark/`). Keys land next to the build output as `pk.bin` / `vk.bin`.
@@ -17,7 +17,6 @@ use rand_chacha::ChaCha20Rng;
 use ark_serialize::Compress;
 use xark_backend::keys::KeyMetadata;
 use xark_backend::serialization::canonical_write_to_file;
-use xark_ir::Visibility;
 use xark_prover::XarkCircuit;
 
 use super::{circuit_hash, load_backend_r1cs, num_public_inputs};
@@ -30,9 +29,6 @@ pub struct SetupArgs {
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
-    /// Path to `r1cs.json`. Inferred from `target/xark/` when omitted.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
-    pub r1cs: Option<PathBuf>,
     /// Output directory for keys and metadata. Inferred as `target/xark/`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
@@ -59,14 +55,6 @@ pub struct SetupArgs {
     /// Optional — auto-generated via OS RNG when not supplied.
     #[arg(long, value_name = "HEX")]
     pub phase2_seed: Option<String>,
-    /// Cache the minimized R1CS (`r1cs.min.wcz`, the exact circuit this key is
-    /// generated from) next to the keys, so a later `xark prove` reloads it
-    /// instead of re-deriving it — skipping the minimize + `validate()` (~25s on
-    /// a multi-million-constraint circuit). Off by default: the cache can be large
-    /// (hundreds of MB) and only pays off when you prove against this key. Best
-    /// for the produce-many-proofs / production flow.
-    #[arg(long, default_value_t = false)]
-    pub cache: bool,
 
     /// Write the proving key UNCOMPRESSED (2× on disk) so `xark prove` skips the
     /// per-point square-root decompression on load — a large prove-time win (the
@@ -179,41 +167,6 @@ impl RngCore for SetupRng {
 
 impl CryptoRng for SetupRng {}
 
-/// Cache the minimized R1CS (tagged with the source `circuit.xbc` fingerprint)
-/// next to the keys, so `xark prove` can reload it and skip re-running the
-/// identical boundary-minimize + `validate()`. Best-effort: a write failure just
-/// forfeits the speedup (prove falls back to recomputing).
-fn write_r1cs_cache(
-    out_dir: &std::path::Path,
-    fingerprint: &str,
-    circuit: &XarkCircuit,
-    prof: bool,
-) {
-    let t = std::time::Instant::now();
-    let bytes = match xark_ir::r1cs_cache::serialize(fingerprint, circuit.prog()) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("warning: could not encode R1CS cache: {e}");
-            return;
-        }
-    };
-    let path = out_dir.join("r1cs.min.wcz");
-    if let Err(e) = fs::write(&path, &bytes) {
-        eprintln!(
-            "warning: could not write R1CS cache {}: {e}",
-            path.display()
-        );
-        return;
-    }
-    if prof {
-        eprintln!(
-            "SETUP_TIME: write r1cs cache      = {:.2}s ({} bytes)",
-            t.elapsed().as_secs_f64(),
-            bytes.len()
-        );
-    }
-}
-
 /// The circuit the key is generated for, the form's metadata name, and why.
 /// `prog` is the template-reduced R1CS (or an explicit `--r1cs` program, which has
 /// no bytecode to stream and is always minimized).
@@ -302,14 +255,13 @@ impl Keyed {
 
 /// Decide the key form and build its row source. The bytecode's row count picks
 /// `reduced` for large circuits without ever expanding them; only a candidate for
-/// `minimized` (or an explicit `--r1cs` program) is materialized, for the minimize
+/// `minimized` (or a debug flat build) is materialized, for the minimize
 /// pass. Returns `(source, form, reason, fingerprint, reduced rows, public inputs,
 /// QAP domain kind)`.
 #[allow(clippy::type_complexity)]
 fn plan_keyed(
     args: &SetupArgs,
     project: &XarkProject,
-    r1cs_path: &std::path::Path,
     form: R1csForm,
     ptau: bool,
 ) -> Result<(
@@ -323,7 +275,7 @@ fn plan_keyed(
 )> {
     let xbc = project.circuit_xbc();
     let flat = super::dbg_flag("XARK_FLAT_MINIMIZE") || super::dbg_flag("XARK_NO_MINIMIZE");
-    if args.r1cs.is_none() && xbc.exists() && !flat {
+    if xbc.exists() && !flat {
         let kind = args.domain.resolve(ptau, false);
         let bytes = fs::read(&xbc).with_context(|| format!("reading {}", xbc.display()))?;
         if !super::is_function_artifact(&bytes) {
@@ -365,8 +317,8 @@ fn plan_keyed(
             }
         };
     }
-    // An explicit `--r1cs` program (or a debug flat build): materialized.
-    let (prog, hash) = load_backend_r1cs(&xbc, args.r1cs.as_deref(), r1cs_path)?;
+    // A debug flat build (`XARK_FLAT_MINIMIZE` / `XARK_NO_MINIMIZE`): materialized.
+    let (prog, hash) = load_backend_r1cs(&xbc)?;
     let (rows, num_pi) = (prog.constraints.len(), num_public_inputs(&prog));
     let kind = args.domain.resolve(ptau, true);
     let (circuit, name, why) = keyed_circuit(&prog, form, true, kind);
@@ -375,7 +327,6 @@ fn plan_keyed(
 
 pub fn run(args: SetupArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
-    let r1cs_path = args.r1cs.clone().unwrap_or_else(|| project.r1cs_json());
     let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
     let prof = super::dbg_flag("XARK_BUILD_TIME");
     let form = if args.streamable {
@@ -418,7 +369,7 @@ pub fn run(args: SetupArgs) -> Result<()> {
 
     let t_load = std::time::Instant::now();
     let (keyed, form_name, why, hash, num_constraints, num_pi, kind) =
-        plan_keyed(&args, &project, &r1cs_path, form, ptau_path.is_some())?;
+        plan_keyed(&args, &project, form, ptau_path.is_some())?;
     println!("R1CS form: {form_name} ({why})");
     if prof {
         eprintln!(
@@ -438,9 +389,6 @@ pub fn run(args: SetupArgs) -> Result<()> {
             .validate()
             .map_err(|e| anyhow::anyhow!("malformed circuit: {e}"))?;
         write_row_file(&out_dir, &hash, circuit);
-        if args.cache {
-            write_r1cs_cache(&out_dir, &hash, circuit, prof);
-        }
     }
     let compress = if args.uncompressed {
         Compress::No
@@ -582,15 +530,14 @@ pub fn run(args: SetupArgs) -> Result<()> {
             );
         }
     }
-    print_next_steps(&project, &args.path, &r1cs_path);
+    print_next_steps(&project, &args.path);
     Ok(())
 }
 
-fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, r1cs_path: &std::path::Path) {
+fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>) {
     // Only the *declared* inputs — never the witnesses the solver derives (e.g.
     // `to_bits` range-check bits). `circuit.xbc`'s header lists them, in order, so
-    // nothing is expanded; a JSON-only build falls back to the R1CS's non-internal
-    // variables (declared inputs come first and in order, so it's still usable).
+    // nothing is expanded.
     let names: Vec<String> = match fs::read(project.circuit_xbc()) {
         Ok(bytes) if super::is_function_artifact(&bytes) => {
             xark_ir::function_decode::decode_input_vars(&bytes)
@@ -598,19 +545,7 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, r1cs_path: &s
                 .map(|v| v.name)
                 .collect()
         }
-        _ => fs::read_to_string(r1cs_path)
-            .ok()
-            .and_then(|s| xark_ir::json::from_json(&s).ok())
-            .map(|prog: xark_ir::R1csProgram| {
-                let mut vars: Vec<_> = prog
-                    .variables
-                    .into_iter()
-                    .filter(|v| v.visibility != Visibility::Internal)
-                    .collect();
-                vars.sort_by_key(|v| v.id);
-                vars.into_iter().map(|v| v.name).collect()
-            })
-            .unwrap_or_default(),
+        _ => Vec::new(),
     };
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let hint = super::inputs_hint(&name_refs);

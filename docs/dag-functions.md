@@ -105,8 +105,8 @@ By default this runs as a **template minimize + boundary pass**: each template b
 once during the reduced expand (plugs and outputs pinned), then one pass over the flattened
 result removes the remaining cross-template plug copies, reaching the same fixpoint as a full
 flat minimize without materializing the unreduced circuit. `xark setup` records which form a key
-was made for (`--r1cs-form`), and `xark setup --cache` persists the minimized rows so `xark prove`
-skips the minimize.
+was made for (`--r1cs-form`), and writes a minimized key's rows (`r1cs.stream`) beside it so `xark
+prove` skips the minimize.
 
 The Groth16 cost is set by the proving key and FFT domain, which scale with constraints and
 variables, so the big win is crossing below a domain-size boundary.
@@ -135,6 +135,6 @@ Behind the `debug` feature, or CLI flags:
 | `XARK_FLAT_MINIMIZE` | guarded flat minimize on the full expansion instead |
 | `XARK_NO_MINIMIZE` | skip R1CS minimization |
 | `XARK_MAX_FILL` | fill-in cap for the guarded flat minimize (default 32) |
-| `xark setup --cache` / `xark prove --cache` | write / reuse the minimized rows |
+| `xark prove --cache` | write the minimized rows (and a decoded key) when missing |
 | `XARK_VERIFY` | assert the minimizer reached its fixpoint |
 | `XARK_BUILD_TIME` / `PROVE_TIME` | per-phase build / prove timings |

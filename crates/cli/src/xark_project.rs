@@ -32,10 +32,6 @@ impl XarkProject {
         })
     }
 
-    pub fn r1cs_json(&self) -> PathBuf {
-        self.xark_dir.join("r1cs.json")
-    }
-
     pub fn circuit_xbc(&self) -> PathBuf {
         self.xark_dir.join("circuit.xbc")
     }
@@ -96,12 +92,8 @@ impl XarkProject {
 /// writes.
 fn resolve_xark_dir(base: &Path) -> Result<PathBuf> {
     // 1. `base` is already a scoped output dir (a `target/xark/<name>/` holding
-    //    circuit.xbc — the artifact every build writes — or the `--emit-json`
-    //    JSON siblings) — use it directly.
-    if base.join("circuit.xbc").is_file()
-        || base.join("r1cs.json").is_file()
-        || base.join("circuit.json").is_file()
-    {
+    //    circuit.xbc, the artifact every build writes) — use it directly.
+    if base.join("circuit.xbc").is_file() {
         return Ok(base.to_path_buf());
     }
     // 2. `base` is a crate dir → `target/xark/<pkg-name>/`.
@@ -128,7 +120,7 @@ fn resolve_xark_dir(base: &Path) -> Result<PathBuf> {
         }
     }
     // 5. Fallback: treat `base` itself as the output dir (setup will surface a
-    //    clear "missing r1cs.json" error if it is wrong).
+    //    clear "run `xark build` first" error if it is wrong).
     Ok(base.to_path_buf())
 }
 
@@ -148,7 +140,7 @@ fn scoped_dir(crate_dir: &Path) -> PathBuf {
 }
 
 /// When `base` is a bare `target/xark/`, find the single circuit subdir under
-/// it (a `<name>/` holding r1cs.json / circuit.json). Returns `Ok(None)` if
+/// it (a `<name>/` holding `circuit.xbc`). Returns `Ok(None)` if
 /// there are none; errors if there is more than one (the user must name one).
 fn single_named_subdir(base: &Path) -> Result<Option<PathBuf>> {
     if !base.is_dir() {
@@ -158,11 +150,7 @@ fn single_named_subdir(base: &Path) -> Result<Option<PathBuf>> {
     if let Ok(entries) = std::fs::read_dir(base) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir()
-                && (p.join("circuit.xbc").is_file()
-                    || p.join("r1cs.json").is_file()
-                    || p.join("circuit.json").is_file())
-            {
+            if p.is_dir() && p.join("circuit.xbc").is_file() {
                 candidates.push(p);
             }
         }

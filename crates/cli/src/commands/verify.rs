@@ -38,10 +38,6 @@ pub struct VerifyArgs {
     /// Public inputs file. Inferred as `target/xark/public_inputs.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub public_inputs: Option<PathBuf>,
-    /// Path to `r1cs.json` (used to order `--inputs` public values). Inferred
-    /// from `target/xark/` when omitted.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
-    pub r1cs: Option<PathBuf>,
 }
 
 pub fn run(args: VerifyArgs) -> Result<()> {
@@ -77,9 +73,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             })?
         }
         Some(arg) => {
-            let r1cs_path = args.r1cs.clone().unwrap_or_else(|| project.r1cs_json());
-            let (prog, _) =
-                load_backend_r1cs(&project.circuit_xbc(), args.r1cs.as_deref(), &r1cs_path)?;
+            let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;
             let inputs = parse_inputs_arg(arg)?;
             public_inputs_from_inputs(&prog, &inputs)?
         }

@@ -184,17 +184,16 @@ pub struct BuildArgs {
     /// Circuit crate directory to build.
     #[arg(default_value = ".", value_hint = clap::ValueHint::DirPath)]
     pub crate_dir: String,
-    /// Output directory for `circuit.json` / `r1cs.json`
-    /// (default: `<crate>/target/xark/`).
+    /// Output directory for the build artifacts (`circuit.xbc`, `schema.json`, …;
+    /// default: `<crate>/target/xark/<name>/`).
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<String>,
     /// Field the circuit is defined over.
     #[arg(long, default_value = "bn254")]
     pub field: String,
-    /// Also emit the human-readable `circuit.json` (the primitive program as
-    /// JSON). Off by default: `xark prove`/`check` load the compact binary
-    /// `circuit.xbc` instead, so a normal build skips the (multi-GB on large
-    /// circuits) JSON serialization. `r1cs.json` is always written.
+    /// Also write `circuit.json` and `r1cs.json`, human-readable views of the
+    /// circuit for debugging. Every command reads `circuit.xbc`; the JSON is
+    /// never read back, and is multi-GB on large circuits, so it's off by default.
     #[arg(long = "emit-json", default_value_t = false)]
     pub emit_json: bool,
 }
@@ -240,8 +239,8 @@ pub struct CheckArgs {
     /// `check` stays the fast validator.
     #[arg(long = "inputs", value_name = "JSON|FILE")]
     pub inputs: Option<String>,
-    /// Output directory for the intermediate `circuit.json` / `r1cs.json` built
-    /// by `--inputs` (default: `<crate>/target/xark/`). Only used with `--inputs`.
+    /// Output directory for the build `--inputs` runs (default:
+    /// `<crate>/target/xark/<name>/`). Only used with `--inputs`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<String>,
 }
@@ -381,13 +380,6 @@ pub fn inputs_hint(names: &[&str]) -> String {
     format!("--inputs '{{{body}}}'")
 }
 
-/// Load and parse an `r1cs.json` file.
-pub fn load_r1cs(path: &std::path::Path) -> Result<R1csProgram> {
-    let s = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {} (run `xark build` first?)", path.display()))?;
-    xark_ir::json::from_json(&s).with_context(|| format!("parsing {}", path.display()))
-}
-
 /// Load and parse a `circuit.json` (primitive / witness-gen) file.
 pub fn load_circuit(path: &std::path::Path) -> Result<PrimitiveProgram> {
     let s = std::fs::read_to_string(path)
@@ -415,54 +407,29 @@ pub fn load_circuit_program(path: &std::path::Path) -> Result<xark_ir::CircuitPr
     xark_ir::function_decode::expand_function_blob(&bytes).map_err(|e| anyhow::anyhow!(e))
 }
 
-/// Load the Groth16 backend's [`R1csProgram`] from a built circuit, preferring
-/// the self-contained `circuit.xbc` (deriving the R1CS from it) and falling back
-/// to `r1cs.json` — either an explicit `--r1cs <path>` override or an
-/// `--emit-json` / legacy build. Also returns the SHA-256 fingerprint of the
-/// bytes it read (the key metadata's circuit hash).
-pub fn load_backend_r1cs(
-    xbc_path: &std::path::Path,
-    r1cs_override: Option<&std::path::Path>,
-    r1cs_default: &std::path::Path,
-) -> Result<(R1csProgram, String)> {
-    if let Some(p) = r1cs_override {
-        let s = std::fs::read_to_string(p)
-            .with_context(|| format!("reading {} (run `xark build` first?)", p.display()))?;
-        let prog =
-            xark_ir::json::from_json(&s).with_context(|| format!("parsing {}", p.display()))?;
-        return Ok((prog, sha256_hex(s.as_bytes())));
+/// Load the Groth16 backend's [`R1csProgram`] from a built `circuit.xbc`, with
+/// the SHA-256 fingerprint of its bytes (the key metadata's circuit hash).
+pub fn load_backend_r1cs(xbc_path: &std::path::Path) -> Result<(R1csProgram, String)> {
+    let bytes = std::fs::read(xbc_path)
+        .with_context(|| format!("reading {} (run `xark build` first?)", xbc_path.display()))?;
+    let fingerprint = sha256_hex(&bytes);
+    if !is_function_artifact(&bytes) {
+        anyhow::bail!(
+            "{} is not a current circuit artifact — rebuild with `xark build`",
+            xbc_path.display()
+        );
     }
-    if xbc_path.exists() {
-        let bytes =
-            std::fs::read(xbc_path).with_context(|| format!("reading {}", xbc_path.display()))?;
-        let fingerprint = sha256_hex(&bytes);
-        if !is_function_artifact(&bytes) {
-            anyhow::bail!(
-                "{} is not a current circuit artifact — rebuild with `xark build`",
-                xbc_path.display()
-            );
-        }
-        // Groth16 view. By default expand the reduced R1CS (each template
-        // minimized once), avoiding the full flat expansion + flat minimize.
-        // `XARK_FLAT_MINIMIZE` / `XARK_NO_MINIMIZE` fall back to the full expand.
-        let use_reduced = !dbg_flag("XARK_FLAT_MINIMIZE") && !dbg_flag("XARK_NO_MINIMIZE");
-        let cp = if use_reduced {
-            xark_ir::function_decode::expand_function_blob_reduced(&bytes)
-        } else {
-            xark_ir::function_decode::expand_function_blob(&bytes)
-        }
-        .map_err(|e| anyhow::anyhow!(e))?;
-        return Ok((cp.into_r1cs(), fingerprint));
+    // Groth16 view. By default expand the reduced R1CS (each template
+    // minimized once), avoiding the full flat expansion + flat minimize.
+    // `XARK_FLAT_MINIMIZE` / `XARK_NO_MINIMIZE` fall back to the full expand.
+    let use_reduced = !dbg_flag("XARK_FLAT_MINIMIZE") && !dbg_flag("XARK_NO_MINIMIZE");
+    let cp = if use_reduced {
+        xark_ir::function_decode::expand_function_blob_reduced(&bytes)
+    } else {
+        xark_ir::function_decode::expand_function_blob(&bytes)
     }
-    let s = std::fs::read_to_string(r1cs_default).with_context(|| {
-        format!(
-            "reading {} (run `xark build` first?)",
-            r1cs_default.display()
-        )
-    })?;
-    let prog = xark_ir::json::from_json(&s)
-        .with_context(|| format!("parsing {}", r1cs_default.display()))?;
-    Ok((prog, sha256_hex(s.as_bytes())))
+    .map_err(|e| anyhow::anyhow!(e))?;
+    Ok((cp.into_r1cs(), fingerprint))
 }
 
 /// Load the solver-facing [`PrimitiveProgram`] from a `circuit.xbc`.
@@ -587,39 +554,6 @@ pub fn stream_soundness(
     }
 }
 
-/// The `--r1cs`/`--circuit` override path of `xark prove`: the same gate over a
-/// `PrimitiveProgram` (Expression) + `R1csProgram` loaded from JSON, rather than
-/// a `circuit.xbc`. The default path uses [`soundness_check`] on the
-/// `CircuitProgram` directly.
-pub fn soundness_check_r1cs(
-    prim: &PrimitiveProgram,
-    r1cs: &R1csProgram,
-    profile: Option<&ProfileProgram>,
-    id_inputs: &BTreeMap<VarId, String>,
-) -> Result<BTreeMap<VarId, Fp>> {
-    let assign_fp = xark_ir::solver::solve_and_check(prim, id_inputs).map_err(|e| {
-        // A missing input names the *declared* input the user actually types,
-        // e.g. `MissingInput(1)` → "missing input `result`". Every other failure
-        // defers to the shared diagnostic, which names the failing constraint
-        // (and its source line / gadget when profiled) — the same explanation
-        // `xark test` surfaces.
-        if let xark_ir::solver::SolveError::MissingInput(id) = e
-            && let Some(v) = prim.vars.iter().find(|v| v.id == id)
-        {
-            return anyhow::anyhow!(
-                "missing input `{0}` (add it to --inputs, e.g. --inputs '{{\"{0}\": <value>}}')",
-                v.name
-            );
-        }
-        anyhow::anyhow!(
-            "{}",
-            xark_ir::diagnose::describe_unsatisfied(&e, r1cs, profile)
-        )
-    })?;
-    report_underconstrained(xark_ir::solver::analyze_underconstrained(prim, &assign_fp))?;
-    Ok(assign_fp)
-}
-
 /// `bail!` with the shared under-constraint diagnostic if any hole was found.
 fn report_underconstrained(holes: Vec<xark_ir::solver::UnderConstrained>) -> Result<()> {
     if !holes.is_empty() {
@@ -655,7 +589,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// A stable circuit identifier: the SHA-256 (hex) of the `r1cs.json` text.
+/// The SHA-256 (hex) of a string (e.g. a phase-2 seed, recorded in key metadata).
 pub fn circuit_hash(r1cs_json: &str) -> String {
     sha256_hex(r1cs_json.as_bytes())
 }

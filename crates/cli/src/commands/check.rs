@@ -4,7 +4,7 @@
 //! Bare `xark check` (no `--inputs`) stays the fast, artifact-free `cargo check`
 //! validator in [`crate::cli::cmd_check`]. When `--inputs` is supplied, we opt
 //! into the same soundness gate `xark prove` runs, but **without** the expensive
-//! `setup` + `prove` steps: build the circuit so `circuit.json` exists, solve
+//! `setup` + `prove` steps: build the circuit, solve
 //! the witness from the `--inputs` values, and run
 //! [`xark_ir::solver::analyze_underconstrained`]. It reports any derived
 //! variable the constraints fail to pin (a value a malicious prover could
@@ -21,7 +21,7 @@ use super::{
 use crate::xark_project::XarkProject;
 
 pub fn run(args: CheckArgs) -> Result<()> {
-    // Build the circuit (reuses the `xark build` path) so `circuit.json` exists.
+    // Build the circuit (reuses the `xark build` path).
     let mut build_argv = vec![args.crate_dir.clone()];
     if let Some(out) = &args.out {
         build_argv.push("--out".into());
@@ -32,7 +32,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
         bail!("build failed (exit {code}); fix the circuit before `xark check --inputs`");
     }
 
-    // Locate the freshly built `circuit.json` the same way the backend commands
+    // Locate the freshly built `circuit.xbc` the same way the backend commands
     // do: from `--out` when given, else the crate's default `target/xark/`.
     let base = args.out.clone().unwrap_or_else(|| args.crate_dir.clone());
     let project = XarkProject::resolve(Some(base.into()))?;

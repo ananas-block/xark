@@ -1,6 +1,5 @@
-//! `xark inspect` — print statistics about a built circuit (`circuit.json` +
-//! `r1cs.json`): variable counts by visibility, constraint count, and public
-//! inputs.
+//! `xark inspect` — print statistics about a built circuit (`circuit.xbc`):
+//! variable counts by visibility, constraint count, and public inputs.
 
 use std::path::PathBuf;
 
@@ -20,13 +19,6 @@ pub struct InspectArgs {
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
-    /// Path to `r1cs.json`. Inferred from `target/xark/` when omitted.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
-    pub r1cs: Option<PathBuf>,
-    /// Path to `circuit.json`. Inferred from `target/xark/` when omitted.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
-    pub circuit: Option<PathBuf>,
-
     /// Emit machine-readable JSON instead of human-readable text.
     #[arg(long, default_value_t = false)]
     pub json: bool,
@@ -34,17 +26,8 @@ pub struct InspectArgs {
 
 pub fn run(args: InspectArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
-    let r1cs_path = args.r1cs.clone().unwrap_or_else(|| project.r1cs_json());
-    let circuit_path = args
-        .circuit
-        .clone()
-        .unwrap_or_else(|| project.circuit_xbc());
-
-    // Prefer the self-contained `circuit.xbc` (deriving the R1CS + fingerprint
-    // from it); fall back to `r1cs.json` for `--r1cs` / `--emit-json` builds.
-    let (prog, fingerprint) =
-        load_backend_r1cs(&project.circuit_xbc(), args.r1cs.as_deref(), &r1cs_path)?;
-    let prim = load_circuit_auto(&circuit_path).ok();
+    let (prog, fingerprint) = load_backend_r1cs(&project.circuit_xbc())?;
+    let prim = load_circuit_auto(&project.circuit_xbc()).ok();
 
     let num_internal = prog
         .variables

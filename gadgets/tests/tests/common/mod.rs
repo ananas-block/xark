@@ -254,17 +254,8 @@ fn inputs_json(inputs: &[(&str, &str)]) -> String {
 /// `xark prove <out-dir> --inputs '{...}'` (solve witness + Groth16 prove/verify).
 /// Returns `(success, combined stdout+stderr)`.
 pub fn xark_prove(out: &Path, inputs: &[(&str, &str)]) -> (bool, String) {
-    xark_prove_opts(out, inputs, false)
-}
-
-/// As [`xark_prove`], with `--stream` when `stream` is set (streams the proving
-/// key from disk instead of loading it into RAM).
-pub fn xark_prove_opts(out: &Path, inputs: &[(&str, &str)], stream: bool) -> (bool, String) {
     let mut c = Command::new(xark_bin());
     c.arg("prove").arg(out);
-    if stream {
-        c.arg("--stream");
-    }
     c.arg("--inputs").arg(inputs_json(inputs));
     let o = c
         .stdout(Stdio::piped())

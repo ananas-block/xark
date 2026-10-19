@@ -16,7 +16,6 @@ pub mod minimize;
 pub mod primitive;
 pub mod profile;
 pub mod r1cs;
-pub mod r1cs_cache;
 pub mod r1cs_stream;
 pub mod solver;
 pub mod witness_search;

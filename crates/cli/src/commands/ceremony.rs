@@ -27,7 +27,7 @@ use xark_backend::keys::{Groth16Keys, KeyMetadata};
 use xark_backend::ptau::parse_ptau;
 use xark_prover::XarkCircuit;
 
-use super::{circuit_hash, load_backend_r1cs, load_r1cs, num_public_inputs};
+use super::{load_backend_r1cs, num_public_inputs};
 use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
@@ -54,10 +54,6 @@ pub struct InitArgs {
     /// the current directory; the circuit is read from its `circuit.xbc`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
-    /// An explicit `r1cs.json` (`xark build --emit-json`) instead of the build's
-    /// `circuit.xbc`.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
-    pub r1cs: Option<PathBuf>,
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub ptau_file: PathBuf,
     /// Optional — auto-generated via OS RNG when not supplied. Pass this to
@@ -99,18 +95,9 @@ pub fn run(args: CeremonyArgs) -> Result<()> {
 }
 
 fn run_init(args: InitArgs) -> Result<()> {
-    let (prog, hash) = match &args.r1cs {
-        Some(path) => {
-            let r1cs_str =
-                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-            (load_r1cs(path)?, circuit_hash(&r1cs_str))
-        }
-        // The build's `circuit.xbc`, loaded as `xark setup` does.
-        None => {
-            let project = XarkProject::resolve(args.path.clone())?;
-            load_backend_r1cs(&project.circuit_xbc(), None, &project.r1cs_json())?
-        }
-    };
+    // The build's `circuit.xbc`, loaded as `xark setup` does.
+    let project = XarkProject::resolve(args.path.clone())?;
+    let (prog, hash) = load_backend_r1cs(&project.circuit_xbc())?;
     let num_pi = num_public_inputs(&prog);
     let circuit = XarkCircuit::for_setup(prog);
 

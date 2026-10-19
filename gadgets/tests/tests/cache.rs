@@ -23,7 +23,7 @@ const INPUTS: &[(&str, &str)] = &[
     ("out", "1"),
 ];
 
-fn setup(out: &Path, cache: bool) -> (bool, String) {
+fn setup(out: &Path) -> (bool, String) {
     let mut c = Command::new(xark_bin());
     c.arg("setup")
         .arg(out)
@@ -32,9 +32,6 @@ fn setup(out: &Path, cache: bool) -> (bool, String) {
         .arg("1")
         .arg("--r1cs-form")
         .arg("minimized");
-    if cache {
-        c.arg("--cache");
-    }
     let o = c
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -83,12 +80,12 @@ fn cache_hit_fallback_and_warm_all_verify() {
     assert!(ok, "build failed: {err}");
 
     // Setup writes the minimized rows (`r1cs.stream`) next to the keys.
-    let (ok, err) = setup(&out, true);
-    assert!(ok, "setup --cache failed: {err}");
+    let (ok, err) = setup(&out);
+    assert!(ok, "setup failed: {err}");
     let cache = out.join("r1cs.stream");
     assert!(
         cache.exists(),
-        "setup --cache did not write {}",
+        "setup did not write {}",
         cache.display()
     );
 
@@ -158,7 +155,7 @@ fn corrupt_cache_is_ignored_and_recomputes() {
     let out = tmp.path().join("out");
     let target = tmp.path().join("target");
     assert!(xark_build("bignum_ops", &out, &target).0, "build failed");
-    assert!(setup(&out, true).0, "setup --cache failed");
+    assert!(setup(&out).0, "setup failed");
 
     // Corrupt the cache: prove must fall back to a recompute (never panic) and
     // still produce a verifying proof.

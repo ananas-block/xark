@@ -38,6 +38,13 @@ gadgets now check more:
   proofs are compatible with the arkworks path (byte-identical for the same
   randomness).
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
+- **One proving path.** `xark prove` always uses the streaming prover from
+  `circuit.xbc`, and tells a key's row form from its metadata or, failing that,
+  its size. Removed: `--r1cs` / `--circuit` (reading `r1cs.json` / `circuit.json`)
+  from `prove`, `setup`, `verify`, `inspect` and `ceremony init`; `prove
+  --stream` (always streams now); `setup --cache` and the `r1cs.min.wcz` cache
+  (`r1cs.stream` replaces it). `xark build --emit-json` still writes the JSON as
+  a debugging view.
 - **arkworks' Groth16 removed.** `xark-groth16` now owns the whole Groth16 stack:
   key generation, the prover, verification, and the `Proof` / `VerifyingKey` /
   `ProvingKey` types, which serialize byte-for-byte like `ark-groth16`'s, so
