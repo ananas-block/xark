@@ -102,6 +102,22 @@ pub fn run(args: CeremonyArgs) -> Result<()> {
 }
 
 fn run_init(args: InitArgs) -> Result<()> {
+    // Never over an existing ceremony: that would discard its contributions,
+    // and leave a finalized one's `metadata.json` (production-safe) beside fresh
+    // keys whose secrets the initiator knows.
+    for f in [
+        "proving_key.bin",
+        "verifying_key.bin",
+        "contribution_count",
+        "metadata.json",
+    ] {
+        if args.out.join(f).exists() {
+            bail!(
+                "{} already holds a ceremony ({f}); pick a new --out directory",
+                args.out.display()
+            );
+        }
+    }
     // The build's `circuit.xbc`, loaded as `xark setup` does.
     let project = XarkProject::resolve(args.path.clone())?;
     let (prog, hash) = load_backend_r1cs(&project.circuit_xbc())?;

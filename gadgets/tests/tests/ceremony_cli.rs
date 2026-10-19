@@ -44,6 +44,12 @@ fn ceremony_keys_prove_and_verify() {
         log
     };
     step(&["ceremony", "init", "--ptau-file", ptau_s, "--out", cer_s]);
+    // A second init over it is refused, not a reset.
+    let (ok, log) = xark(
+        &["ceremony", "init", "--ptau-file", ptau_s, "--out", cer_s],
+        &out,
+    );
+    assert!(!ok && log.contains("already holds a ceremony"), "{log}");
     step(&[
         "ceremony",
         "contribute",

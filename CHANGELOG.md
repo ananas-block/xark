@@ -134,6 +134,10 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- `xark ceremony init` refuses a directory that already holds a ceremony. It
+  used to overwrite its keys and reset the count, discarding every
+  contribution, and could leave a finalized ceremony's production-safe
+  `metadata.json` beside the fresh keys.
 - `xark build`, `test`, `check` and `profile` find the crate from inside it,
   as cargo does (`xark test` from `src/` used to fail with "no Cargo.toml"), and
   a project path given as a relative directory is found by walking up from it
