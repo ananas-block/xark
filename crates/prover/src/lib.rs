@@ -229,8 +229,7 @@ impl XarkCircuit {
     /// one this returns a descriptive `Err` instead of letting proving panic.
     ///
     /// Call this before handing a circuit built from *untrusted* input (e.g. a
-    /// deserialized `r1cs.json`) to the Groth16 backend. [`prove_only`] runs it
-    /// automatically.
+    /// deserialized `r1cs.json`) to the Groth16 backend.
     pub fn validate(&self) -> Result<(), String> {
         validate_program_constants(&self.prog)
     }
@@ -283,13 +282,14 @@ fn public_inputs(prog: &R1csProgram, assign: &BTreeMap<VarId, Fr>) -> Vec<Fr> {
 ///
 /// **TEST / DEV ONLY.** Setup here uses a *fixed* RNG seed (`0`), so the Groth16
 /// trapdoor is publicly known and any proof this produces is forgeable. It
-/// exists for in-crate round-trip / differential tests. Never use it — or any
-/// key it generates — in production; the CLI `xark setup` (ptau / ceremony) and
+/// exists for this crate's round-trip tests. Never use it — or any key it
+/// generates — in production; the CLI `xark setup` (ptau / ceremony) and
 /// `xark prove` (`OsRng`) path is the real one.
 // The tuple return (verifying key, proof, public inputs) is the natural result
 // shape for a test/dev prove helper; a named struct would not add clarity.
+#[cfg(test)]
 #[allow(clippy::type_complexity)]
-pub fn prove_only(
+fn prove_only(
     r1cs: &R1csProgram,
     circuit: &PrimitiveProgram,
     inputs: &BTreeMap<VarId, String>,
@@ -307,7 +307,7 @@ pub fn prove_only(
 }
 
 /// Dev-mode Groth16 on `prog`: keys from a fixed `seed` (a known trapdoor), then a
-/// proof for `assign`. The test/dev round trip [`prove_only`] and
+/// proof for `assign`. The test round trip `prove_only` and
 /// [`Circuit::prove_dev`] share.
 fn dev_prove(
     prog: &R1csProgram,
@@ -342,7 +342,8 @@ fn dev_prove(
 
 /// Run the full pipeline: solve the witness from `inputs`, lower to Groth16, and
 /// return whether the resulting proof verifies against the public inputs.
-pub fn prove_and_verify(
+#[cfg(test)]
+fn prove_and_verify(
     r1cs: &R1csProgram,
     circuit: &PrimitiveProgram,
     inputs: &BTreeMap<VarId, String>,
@@ -714,44 +715,6 @@ impl Circuit {
             id_inputs.insert(id, val);
         }
         id_inputs
-    }
-
-    /// Bind flattened input field values (decimals, in the circuit's structural-flatten
-    /// order) **positionally** to the input variables — the `Into<[Field; N]>` path,
-    /// which needs no leaf names: value `k` binds to the `k`-th input var. The
-    /// `#[derive(CircuitInput)]` flatten order is a mechanical match for the compiler's
-    /// input-var order, so this is exact.
-    fn resolve_positional(&self, decimals: Vec<String>) -> BTreeMap<VarId, String> {
-        let mut input_vars: Vec<&Var> = self
-            .prim
-            .vars
-            .iter()
-            .filter(|v| matches!(v.role, VarRole::PublicInput | VarRole::PrivateInput))
-            .collect();
-        input_vars.sort_by_key(|v| v.id); // id order == structural-flatten order
-        assert_eq!(
-            decimals.len(),
-            input_vars.len(),
-            "positional input count mismatch: circuit has {} input leaves, got {} values",
-            input_vars.len(),
-            decimals.len(),
-        );
-        input_vars.iter().map(|v| v.id).zip(decimals).collect()
-    }
-
-    /// [`check`](Self::check) via flat, positional field values — the `Into<[Field; N]>`
-    /// input path. The caller flattens their host value to `[Field; N]` (via
-    /// `#[derive(CircuitInput)]`) and renders each with `Field::to_decimal`.
-    pub fn check_fields(&self, decimals: Vec<String>) -> Result<(), ProveError> {
-        let id_inputs = self.resolve_positional(decimals);
-        self.solve_and_check(&id_inputs).map_err(|e| {
-            ProveError(xark_ir::diagnose::describe_unsatisfied(
-                &e,
-                &self.r1cs,
-                self.profile.as_ref(),
-            ))
-        })?;
-        Ok(())
     }
 
     /// Check that `inputs` **satisfy the circuit**: solve the witness and verify it
