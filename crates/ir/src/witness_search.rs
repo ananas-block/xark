@@ -485,8 +485,51 @@ impl Search<'_> {
         Ok(())
     }
 
+    /// Whether `process(ci)` can deduce nothing: the row has at least three
+    /// unknowns, two of them unbounded. Then it is non-linear in two unknowns, or
+    /// linear with two unbounded ones, and neither aliasing (two unknowns) nor
+    /// interval reasoning (at most one unbounded) applies. Cheap — no field
+    /// arithmetic, and it stops as soon as that is clear — where `process` would
+    /// resolve every term: wide rows (bit sums) re-queued by each assignment were
+    /// most of the search's time. Skipping only loses deductions (terms that
+    /// cancel could leave fewer unknowns), never soundness: the row is re-queued
+    /// whenever one of its variables changes.
+    fn idle(&self, ci: usize) -> bool {
+        let row = &self.rows[ci];
+        // Up to three distinct unknown roots, and up to two distinct unbounded ones.
+        let (mut seen, mut n) = ([usize::MAX; 3], 0usize);
+        let (mut free, mut nf) = ([usize::MAX; 2], 0usize);
+        let vars = row.lins.iter().map(|t| t.1);
+        let vars = vars.chain(row.muls.iter().flat_map(|t| [t.1, t.2]));
+        for v in vars {
+            let mut u = v;
+            while let Some((w, _, _)) = &self.alias[u] {
+                u = *w;
+            }
+            match self.dom[u] {
+                Dom::Val(_) => continue,
+                Dom::Free if nf < 2 && !free[..nf].contains(&u) => {
+                    free[nf] = u;
+                    nf += 1;
+                }
+                _ => {}
+            }
+            if n < 3 && !seen[..n].contains(&u) {
+                seen[n] = u;
+                n += 1;
+            }
+            if n == 3 && nf == 2 {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Propagate one constraint.
     fn process(&mut self, ci: usize) -> Result<(), Conflict> {
+        if self.idle(ci) {
+            return Ok(());
+        }
         let row = &self.rows[ci];
         let zero = self.zero.clone();
         let mut konst = row.konst.clone();
