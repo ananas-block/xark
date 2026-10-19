@@ -282,7 +282,9 @@ impl TestArgs {
         let rest = &raw[i + 2..];
         match rest.first() {
             Some(d) if !d.starts_with('-') && std::path::Path::new(d).is_dir() => rest.to_vec(),
-            _ => std::iter::once(".".to_string()).chain(rest.iter().cloned()).collect(),
+            _ => std::iter::once(".".to_string())
+                .chain(rest.iter().cloned())
+                .collect(),
         }
     }
 }

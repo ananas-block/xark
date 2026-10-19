@@ -7,9 +7,7 @@
 //! in one shot.
 
 mod common;
-use common::{
-    tempdir, xark_build, xark_check_input, xark_prove, xark_setup, xark_setup_opts,
-};
+use common::{tempdir, xark_build, xark_check_input, xark_prove, xark_setup, xark_setup_opts};
 
 #[test]
 fn arithmetic_square_build_prove_verify() {

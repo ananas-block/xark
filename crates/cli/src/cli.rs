@@ -399,16 +399,16 @@ fn check_diagnostic_json(crate_abs: &std::path::Path, e: &xark_frontend::Compile
 pub fn cmd_init(args: &[String]) -> i32 {
     let name_arg = args.iter().find(|a| !a.starts_with('-')).cloned();
     let cwd = std::env::current_dir().expect("cwd");
-    let (dir, name) = match &name_arg {
-        Some(n) => (cwd.join(n), n.clone()),
-        None => (
-            cwd.clone(),
-            cwd.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("circuit")
-                .to_string(),
-        ),
-    };
+    // The argument may be a path (`xark init circuits/demo`): the crate is named
+    // after its last component.
+    let dir = name_arg
+        .as_ref()
+        .map_or_else(|| cwd.clone(), |n| cwd.join(n));
+    let name = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("circuit")
+        .to_string();
 
     // Pin the published `xark`/`xark-prover` deps to this CLI's own major.minor
     // (the whole workspace releases together), so the scaffold never suggests a
@@ -419,15 +419,18 @@ pub fn cmd_init(args: &[String]) -> i32 {
         "[package]\n\
          name = \"{name}\"\n\
          version = \"0.1.0\"\n\
-         edition = \"2021\"\n\n\
+         edition = \"2024\"\n\n\
          [lib]\n\
          crate-type = [\"lib\"]\n\n\
          [dependencies]\n\
          xark = {{ version = \"{ver}\", default-features = false }}\n\
          # From git:               xark = {{ git = \"https://github.com/blueshift-gg/xark\", default-features = false }}\n\
          # From a local checkout:  xark = {{ path = \"../xark/crates/lang\", default-features = false }}\n\n\
-         # `xark-prover` powers the in-crate `cargo test` circuit tests below.\n\
-         [dev-dependencies]\n\
+         # `xark-prover` powers the in-crate `cargo test` circuit tests below. It's a\n\
+         # host-only dependency rather than a dev-dependency because the code\n\
+         # `#[circuit]` generates uses it outside tests too; `cfg(not(xark))` keeps it\n\
+         # out of the circuit build.\n\
+         [target.'cfg(not(xark))'.dependencies]\n\
          xark-prover = \"{ver}\"\n\
          # From git:               xark-prover = {{ git = \"https://github.com/blueshift-gg/xark\" }}\n\
          # From a local checkout:  xark-prover = {{ path = \"../xark/crates/prover\" }}\n\n\
@@ -489,8 +492,8 @@ pub fn cmd_init(args: &[String]) -> i32 {
         "xark: scaffolded circuit `{name}` ({created} files) in {}",
         dir.display()
     );
-    let where_ = if name_arg.is_some() {
-        name.as_str()
+    let where_ = if let Some(n) = &name_arg {
+        n.as_str()
     } else {
         "."
     };

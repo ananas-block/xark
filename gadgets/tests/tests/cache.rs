@@ -83,11 +83,7 @@ fn cache_hit_fallback_and_warm_all_verify() {
     let (ok, err) = setup(&out);
     assert!(ok, "setup failed: {err}");
     let cache = out.join("r1cs.stream");
-    assert!(
-        cache.exists(),
-        "setup did not write {}",
-        cache.display()
-    );
+    assert!(cache.exists(), "setup did not write {}", cache.display());
 
     // Cache HIT: prove reloads it (cached=true) and verifies.
     let (ok, o) = prove(&out, false);

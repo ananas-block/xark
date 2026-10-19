@@ -93,6 +93,11 @@ gadgets now check more:
 
 ### Fixed
 
+- A crate from `xark init` passes its own `xark test`. The scaffold declared
+  `xark-prover` as a dev-dependency, but `#[circuit]`'s generated code needs it
+  in every host build, so the tests didn't compile. `xark init <path>` names the
+  crate after the last path component (it used the whole path), and the scaffold
+  uses edition 2024.
 - `make -f Makefile.publish publish-dry` works before a release: it builds every
   crate from its own package (`scripts/publish-dry.sh`) instead of resolving
   the new version's dependencies from crates.io, where they aren't yet.
