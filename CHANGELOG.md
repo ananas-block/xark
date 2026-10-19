@@ -134,6 +134,11 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- `xark_test_harness::compile_file` builds debug notes and variable names only
+  when it writes the JSON views (`compile_file_json`), and `minimized_r1cs_len`
+  minimizes the per-template-reduced expansion, where unbounded fill-in is safe.
+  Same counts; `grumpkin_ipa_fold`'s tests went from 34 GB and 106 s to 3.6 GB
+  and 7 s, which a CI runner couldn't hold.
 - The builds that `xark test`, `profile`, `check --inputs` and `prove` run
   first no longer print `xark build`'s "Next: xark setup" hint in the middle of
   their output, and build paths have no stray `/./`.

@@ -63,9 +63,12 @@ impl Compiled {
     pub fn minimized_r1cs_len(&self) -> usize {
         let bytes = std::fs::read(self.out_dir.join("circuit.xbc"))
             .unwrap_or_else(|e| panic!("read {}: {e}", self.out_dir.join("circuit.xbc").display()));
-        let cp = xark_ir::function_decode::expand_function_blob(&bytes)
+        // From the per-template-reduced expansion: unbounded fill-in is safe (and
+        // reaches the same fixpoint) there, but not on the raw flat expansion,
+        // where it took 34 GB on grumpkin_ipa_fold.
+        let cp = xark_ir::function_decode::expand_function_blob_reduced(&bytes)
             .unwrap_or_else(|e| panic!("expand circuit.xbc: {e}"));
-        xark_ir::minimize::minimize_with_fill(&cp.to_r1cs(), usize::MAX)
+        xark_ir::minimize::minimize_with_fill(&cp.into_r1cs(), usize::MAX)
             .constraints
             .len()
     }
@@ -390,7 +393,10 @@ fn compile_file_stable(src: &Path, out_name: &str, field: &str, emit_json: bool)
     } else {
         xark_ir::FieldSpec::named(field)
     };
-    match xark_frontend::lower_module(&bytes, spec, false, true) {
+    // Debug notes and variable names only for the JSON views that show them:
+    // `circuit.xbc` is the same either way, and on a large circuit they cost GBs
+    // (34 GB on grumpkin_ipa_fold).
+    match xark_frontend::lower_module(&bytes, spec, false, emit_json) {
         Ok(l) => {
             xark_frontend::write_outputs(&out_dir, &l.output, emit_json, false)
                 .expect("write outputs");
