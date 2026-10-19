@@ -134,6 +134,9 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- The builds that `xark test`, `profile`, `check --inputs` and `prove` run
+  first no longer print `xark build`'s "Next: xark setup" hint in the middle of
+  their output, and build paths have no stray `/./`.
 - In an editor, errors in a circuit crate's tests (and other host-only code)
   now show. rust-analyzer's `overrideCommand`, which `xark init` sets, replaces
   its `cargo check`, and `xark check` only built the circuit for wasm; with

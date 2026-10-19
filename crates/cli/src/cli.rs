@@ -15,6 +15,24 @@ pub fn cmd_build(args: &[String]) -> i32 {
     cmd_build_impl(args, false)
 }
 
+/// The `xark build` command: [`cmd_build`], then what to run next. (The builds
+/// other commands run first — `test`, `profile`, `prove`'s — stay quiet about
+/// it.)
+pub fn cmd_build_command(args: &[String]) -> i32 {
+    let code = cmd_build(args);
+    if code == 0 {
+        let dir = args.first().map_or(".", String::as_str);
+        eprintln!(
+            "\n{}",
+            crate::style::next_steps(&[(
+                format!("xark setup {dir}"),
+                "generate the proving/verifying keys",
+            )])
+        );
+    }
+    code
+}
+
 /// Like [`cmd_build`], but injects `--profile` so the extractor additionally
 /// writes `profile.json` (per-constraint source/function/kind attribution). Used
 /// by `xark profile`; a normal `xark build` never emits it.
@@ -50,7 +68,8 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     };
     let crate_dir = PathBuf::from(crate_root(&crate_dir));
     let cwd = std::env::current_dir().expect("cwd");
-    let crate_abs = cwd.join(&crate_dir);
+    // Normalized: `.` leaves no `/./` in the paths printed below.
+    let crate_abs: PathBuf = cwd.join(&crate_dir).components().collect();
     if !crate_abs.join("Cargo.toml").is_file() {
         let what = if crate_abs.is_dir() {
             "no Cargo.toml in"
@@ -81,16 +100,13 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         .map(|o| cwd.join(o))
         .unwrap_or_else(|| xark_dir.join(&pkg_name));
 
-    build_stable(
-        &crate_abs, &crate_dir, &out_abs, &pkg_name, &field, profile, emit_json,
-    )
+    build_stable(&crate_abs, &out_abs, &pkg_name, &field, profile, emit_json)
 }
 
 /// `xark build`: `cargo` (any toolchain) builds the circuit
 /// for wasm32, then `xark-frontend` runs it to lower the circuit.
 fn build_stable(
     crate_abs: &std::path::Path,
-    crate_dir: &std::path::Path,
     out_abs: &std::path::Path,
     name: &str,
     field: &str,
@@ -164,13 +180,6 @@ fn build_stable(
         "{} wrote {}",
         crate::style::tag(),
         crate::style::brand(&out_abs.display().to_string())
-    );
-    eprintln!(
-        "\n{}",
-        crate::style::next_steps(&[(
-            format!("xark setup {}", crate_dir.display()),
-            "generate the proving/verifying keys",
-        )])
     );
     0
 }

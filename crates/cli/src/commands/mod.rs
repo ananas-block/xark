@@ -126,7 +126,7 @@ fn run(cli: Cli) -> Result<()> {
         // Frontend commands delegate to the hand-rolled `cargo`-driving
         // implementations, which return a process exit code.
         Command::Init(a) => exit_code("init", crate::cli::cmd_init(&a.to_argv())),
-        Command::Build(a) => exit_code("build", crate::cli::cmd_build(&a.to_argv())),
+        Command::Build(a) => exit_code("build", crate::cli::cmd_build_command(&a.to_argv())),
         // Bare `xark check` stays the fast, artifact-free `cargo check` validator.
         // `xark check --inputs …` opts into the witness-based soundness analyzer
         // (build + solve + `analyze_underconstrained`), which is `anyhow`-based.
