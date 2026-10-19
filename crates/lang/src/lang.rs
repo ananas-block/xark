@@ -171,11 +171,49 @@ impl Field {
         Field::constant_u64(value as u64)
     }
 
+    /// The BN254 scalar field order `p`, little-endian 64-bit limbs.
+    const MODULUS: [u64; 4] = [
+        0x43e1f593f0000001,
+        0x2833e84879b97091,
+        0xb85045b68181585d,
+        0x30644e72e131a029,
+    ];
+
+    /// A 256-bit value reduced to `[0, p)`: since `2^256 < 6p`, at most five
+    /// subtractions. Keeps a constant `Field` canonical, so `to_decimal` (and so
+    /// the prover) sees the value the circuit does.
+    const fn reduced(mut limbs: [u64; 4]) -> Field {
+        loop {
+            // limbs >= p? Compare from the most significant limb.
+            let mut i = 4;
+            let mut ge = true;
+            while i > 0 {
+                i -= 1;
+                if limbs[i] != Self::MODULUS[i] {
+                    ge = limbs[i] > Self::MODULUS[i];
+                    break;
+                }
+            }
+            if !ge {
+                return Field { _limbs: limbs };
+            }
+            let mut borrow = 0u64;
+            let mut j = 0;
+            while j < 4 {
+                let (d, b1) = limbs[j].overflowing_sub(Self::MODULUS[j]);
+                let (d, b2) = d.overflowing_sub(borrow);
+                limbs[j] = d;
+                borrow = (b1 | b2) as u64;
+                j += 1;
+            }
+        }
+    }
+
     /// In-circuit constant from a decimal string, for full field-sized constants
     /// that don't fit a `u128`: `Field::constant("218882428718...")`. A `const fn`,
     /// so it works in circuit bodies (recognised by the call) and `const` items.
-    /// Parses a non-negative decimal `< 2^256`; panics (a compile error in `const`
-    /// contexts) on a non-digit or overflow.
+    /// Parses a non-negative decimal `< 2^256`, reduced mod p; panics (a compile
+    /// error in `const` contexts) on a non-digit or overflow.
     pub const fn constant(decimal: &str) -> Field {
         let bytes = decimal.as_bytes();
         let mut limbs = [0u64; 4];
@@ -198,13 +236,14 @@ impl Field {
             assert!(carry == 0, "Field::constant literal overflows 256 bits");
             i += 1;
         }
-        Field { _limbs: limbs }
+        Self::reduced(limbs)
     }
 
     /// A field element from **little-endian** bytes (`bytes[0]` is least significant) —
     /// the direct "raw bytes → `Field`" input constructor, no `Fr`/decimal round-trip.
     /// A `const fn`, so byte-encoded inputs (an id, a random nonce) can be `const`.
-    /// At most 32 bytes; the value is reduced mod the field order at prove time.
+    /// At most 32 bytes; the value is reduced mod p (so 32 random bytes are a
+    /// uniform-enough field element, and `to_decimal` gives the value proven).
     pub const fn from_le_bytes(bytes: &[u8]) -> Field {
         assert!(bytes.len() <= 32, "Field::from_le_bytes: at most 32 bytes");
         let mut limbs = [0u64; 4];
@@ -213,7 +252,7 @@ impl Field {
             limbs[i / 8] |= (bytes[i] as u64) << ((i % 8) * 8);
             i += 1;
         }
-        Field { _limbs: limbs }
+        Self::reduced(limbs)
     }
 
     /// A field element from **big-endian** bytes (`bytes[0]` is most significant) — the
@@ -228,7 +267,7 @@ impl Field {
             limbs[i / 8] |= (bytes[n - 1 - i] as u64) << ((i % 8) * 8);
             i += 1;
         }
-        Field { _limbs: limbs }
+        Self::reduced(limbs)
     }
 
     /// Allocate a fresh *advice* (private witness) field element with no

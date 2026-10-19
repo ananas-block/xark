@@ -58,6 +58,20 @@ fn from_bytes_constructors() {
 }
 
 #[test]
+fn constants_are_reduced_mod_p() {
+    // A `Field` holds its canonical value, so `to_decimal` is what gets proven
+    // (the prover rejects anything outside `0..p` rather than wrapping it).
+    const P: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+    const MAX: &str =
+        "6350874878119819312338956282401532410528162663560392320966563075034087161850";
+    assert_eq!(Field::constant(P).to_decimal(), "0");
+    assert_eq!(Field::from_le_bytes(&[0xff; 32]).to_decimal(), MAX); // (2^256 - 1) mod p
+    assert_eq!(Field::from_be_bytes(&[0xff; 32]).to_decimal(), MAX);
+    const C: Field = Field::from_le_bytes(&[0xff; 32]); // still a `const fn`
+    assert_eq!(C.to_decimal(), MAX);
+}
+
+#[test]
 fn const_integer_construction() {
     // `.into()` can't appear in a `const` (traits aren't `const` on stable); the per-type
     // `from_*` constructors are the `const` integer transformers — no `as` cast needed.

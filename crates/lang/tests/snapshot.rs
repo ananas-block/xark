@@ -2355,7 +2355,7 @@ fn from_str_const_lowers() {
         "from_str",
         "#![no_std]\nuse xark::{require_eq, Field, Private, Public};\n\
          pub fn circuit(a: Private<Field>, b: Public<Field>) {\n\
-         let big = Field::from(\"21888242871839275222246405745257275088548364400416034343698204186575808495617\");\n\
+         let big = Field::from(\"218882428718392752222464057452572750885483644004160343436982041865758084956\");\n\
          let two: Field = \"2\".into();\n\
          require_eq(a * two + big, b);\n}\n",
     );
@@ -2364,7 +2364,7 @@ fn from_str_const_lowers() {
     let r1cs = std::fs::read_to_string(c.out_dir.join("r1cs.json")).unwrap();
     assert!(
         r1cs.contains(
-            "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+            "218882428718392752222464057452572750885483644004160343436982041865758084956"
         ),
         "the decimal-string constant landed"
     );
