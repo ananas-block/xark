@@ -114,10 +114,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/lang
-      - name: cargo test (snapshots, semantics fuzz)
+      - name: cargo test (snapshots, semantics fuzz, input and host tests)
+        # Every test in the crate: naming files here let the others go stale
+        # unnoticed. The heavy KAT vectors are `#[ignore]`d (nightly-kats.yml).
         env:
           XARK_FUZZ_CASES: "200"
-        run: cd crates/lang && cargo test --release --test snapshot --test semantics_fuzz
+        run: cd crates/lang && cargo test --release --no-fail-fast
 
   wasm-smoke:
     # The xark-wasm prover package against host artifacts: build + setup + prove

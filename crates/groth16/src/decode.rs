@@ -251,7 +251,10 @@ mod tests {
             // Random bytes: same verdict and (when valid) same point as arkworks.
             let mut junk = [0u8; 64];
             for (j, b) in junk.iter_mut().enumerate() {
-                *b = (i as u8).wrapping_mul(31).wrapping_add(j as u8 * 7) ^ 0x5a;
+                *b = (i as u8)
+                    .wrapping_mul(31)
+                    .wrapping_add((j as u8).wrapping_mul(7))
+                    ^ 0x5a;
             }
             junk[31] &= 0x3f;
             junk[63] &= 0x3f;

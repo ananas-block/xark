@@ -77,6 +77,7 @@ fn const_integer_construction() {
 fn positional_input_flattens_and_solves() {
     // Toy relation over a struct input: the four fields must sum to a public total.
     let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(CircuitInput)]\n\
         struct ZkId { id: Field, dob: Field, country: Field, nonce: Field }\n\
         pub fn circuit(u: Private<ZkId>, total: Public<Field>) {\n\
         require_eq(u.id + u.dob + u.country + u.nonce, total);\n\
