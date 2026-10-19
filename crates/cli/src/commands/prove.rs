@@ -132,6 +132,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
         Some(arg) => parse_inputs_arg(arg)?,
         None => Default::default(),
     };
+    super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let profile = crate::commands::load_profile(&project.xark_dir);
 
     // The streaming prover: neither the R1CS nor the key is ever fully in memory.

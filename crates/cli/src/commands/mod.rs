@@ -313,6 +313,73 @@ pub fn parse_inputs_arg(arg: &str) -> Result<BTreeMap<String, String>> {
     }
 }
 
+/// Reject a value that doesn't fit its `uN` input before solving, naming the input
+/// and the range, rather than leaving it to the circuit's range check (which
+/// rejects it too, but as an opaque failing constraint). Types come from the
+/// build's `schema.json`; without one this is a no-op. Only exact leaves are
+/// checked (`b`, `bs[0]`, `user.dob`); a hex byte string is checked for length
+/// by input resolution.
+pub fn check_uint_ranges(
+    xark_dir: &std::path::Path,
+    inputs: &BTreeMap<String, String>,
+) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(xark_dir.join("schema.json")) else {
+        return Ok(());
+    };
+    let schema: serde_json::Value = serde_json::from_str(&text).context("parsing schema.json")?;
+    let mut widths = BTreeMap::new();
+    for input in schema["inputs"].as_array().into_iter().flatten() {
+        if let Some(name) = input["name"].as_str() {
+            uint_leaves(&schema, &input["type"], name.to_string(), &mut widths);
+        }
+    }
+    for (leaf, value) in inputs {
+        let Some(&w) = widths.get(leaf) else { continue };
+        let v = value.trim();
+        let parsed = match v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            Some(h) => num_bigint::BigInt::parse_bytes(h.as_bytes(), 16),
+            None => num_bigint::BigInt::parse_bytes(v.as_bytes(), 10),
+        };
+        // Unparseable values get input resolution's error.
+        let Some(x) = parsed else { continue };
+        if x.sign() == num_bigint::Sign::Minus || x.bits() > w {
+            let max = (num_bigint::BigUint::from(1u8) << w) - 1u8;
+            anyhow::bail!("input `{leaf}` is a u{w}: {v} is out of range (0..={max})");
+        }
+    }
+    Ok(())
+}
+
+/// The `uN` leaves of a `schema.json` type, under the compiler's leaf names.
+fn uint_leaves(
+    schema: &serde_json::Value,
+    ty: &serde_json::Value,
+    leaf: String,
+    out: &mut BTreeMap<String, u64>,
+) {
+    if let Some(w) = ty["uint"].as_u64() {
+        out.insert(leaf, w);
+    } else if let Some(a) = ty.get("array") {
+        for i in 0..a["len"].as_u64().unwrap_or(0) {
+            uint_leaves(schema, &a["of"], format!("{leaf}[{i}]"), out);
+        }
+    } else if let Some(ts) = ty["tuple"].as_array() {
+        for (i, t) in ts.iter().enumerate() {
+            uint_leaves(schema, t, format!("{leaf}.{i}"), out);
+        }
+    } else if let Some(r) = ty["ref"].as_str() {
+        for f in schema["types"][r]["struct"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(name) = f["name"].as_str() {
+                uint_leaves(schema, &f["type"], format!("{leaf}.{name}"), out);
+            }
+        }
+    }
+}
+
 /// Parse input text: either a `{ "name": value, … }` JSON object, or lines of
 /// `name = value` (`#` comments and blank lines ignored). Values are kept as
 /// decimal strings; array elements use the flat names `xark inspect` prints.
@@ -356,17 +423,26 @@ pub fn parse_input_text(text: &str, source: &std::path::Path) -> Result<BTreeMap
 
 /// A JSON input value → [`xark_prover::InputValue`]: strings and integers are scalars,
 /// `true`/`false` are `1`/`0`, arrays and objects nest (flattened to `name[i]` /
-/// `name.field`). Non-integer or out-of-`u64`/`i64` numbers are rejected rather than
-/// rounded: pass big values as decimal or `0x`-hex strings.
+/// `name.field`). A float that is a whole number (`1e3`) is accepted while it's
+/// exact (up to 2^53); anything else is rejected rather than rounded: pass big
+/// values as decimal or `0x`-hex strings.
 fn json_to_input(v: &serde_json::Value) -> Result<xark_prover::InputValue> {
     use xark_prover::InputValue;
     Ok(match v {
         serde_json::Value::String(s) => InputValue::Scalar(s.clone()),
-        serde_json::Value::Number(n) => match (n.as_u64(), n.as_i64()) {
-            (Some(u), _) => InputValue::Scalar(u.to_string()),
-            (None, Some(i)) => InputValue::Scalar(i.to_string()),
+        serde_json::Value::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
+            (Some(u), _, _) => InputValue::Scalar(u.to_string()),
+            (None, Some(i), _) => InputValue::Scalar(i.to_string()),
+            // `1e3` is a whole number written as a float: fine while it's exact.
+            (None, None, Some(f)) if f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_992.0 => {
+                InputValue::Scalar(format!("{}", f as i64))
+            }
+            (None, None, Some(f)) if f.fract() != 0.0 => {
+                anyhow::bail!("number {n} is not a whole number")
+            }
             _ => anyhow::bail!(
-                "number {n} is not an exact integer; pass large values as a decimal string"
+                "number {n} is too large for a JSON number to hold exactly; pass it as a \
+                 decimal string"
             ),
         },
         serde_json::Value::Bool(b) => InputValue::Scalar(if *b { "1" } else { "0" }.into()),
@@ -638,7 +714,7 @@ pub fn public_inputs_from_inputs(
 
 #[cfg(test)]
 mod tests {
-    use super::{inputs_hint, parse_input_text, parse_inputs_arg};
+    use super::{check_uint_ranges, inputs_hint, parse_input_text, parse_inputs_arg};
     use std::path::Path;
 
     #[test]
@@ -727,6 +803,54 @@ mod tests {
         let inputs = parse_inputs_arg(path.to_str().unwrap()).unwrap();
         assert_eq!(inputs.get("secret").map(String::as_str), Some("3"));
         assert_eq!(inputs.get("result").map(String::as_str), Some("27"));
+    }
+
+    #[test]
+    fn whole_floats_are_integers() {
+        let inputs = parse_inputs_arg(r#"{"a": 1e3, "b": -2.0}"#).unwrap();
+        assert_eq!(inputs["a"], "1000");
+        assert_eq!(inputs["b"], "-2");
+        let err = parse_inputs_arg(r#"{"a": 1.5}"#).unwrap_err();
+        assert!(format!("{err:#}").contains("not a whole number"), "{err:#}");
+        let err = parse_inputs_arg(r#"{"a": 1e30}"#).unwrap_err();
+        assert!(format!("{err:#}").contains("decimal string"), "{err:#}");
+    }
+
+    #[test]
+    fn uint_inputs_are_range_checked() {
+        let dir = std::env::temp_dir().join(format!("xark-uint-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("schema.json"),
+            r#"{"inputs": [
+                {"name": "b", "type": {"uint": 8}},
+                {"name": "id", "type": {"ref": "Id"}},
+                {"name": "f", "type": "field"}
+            ], "types": {"Id": {"struct": [
+                {"name": "tags", "type": {"array": {"len": 2, "of": {"uint": 16}}}}
+            ]}}}"#,
+        )
+        .unwrap();
+        let check = |json: &str| check_uint_ranges(&dir, &parse_inputs_arg(json).unwrap());
+        check(r#"{"b": 255, "id": {"tags": [65535, 0]}, "f": 99999}"#).unwrap();
+        for (json, want) in [
+            (
+                r#"{"b": 256}"#,
+                "input `b` is a u8: 256 is out of range (0..=255)",
+            ),
+            (r#"{"b": -1}"#, "input `b` is a u8: -1"),
+            (r#"{"b": "0x100"}"#, "input `b` is a u8: 0x100"),
+            (
+                r#"{"id": {"tags": [0, 65536]}}"#,
+                "input `id.tags[1]` is a u16",
+            ),
+        ] {
+            let err = check(json).unwrap_err().to_string();
+            assert!(err.contains(want), "{json}: {err}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        // No schema: nothing to check.
+        check_uint_ranges(&dir, &parse_inputs_arg(r#"{"b": 256}"#).unwrap()).unwrap();
     }
 
     #[test]

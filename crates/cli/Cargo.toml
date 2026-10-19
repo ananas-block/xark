@@ -19,6 +19,7 @@ path = "src/main.rs"
 debug = ["xark-ir/debug", "xark-prover/debug"]
 
 [dependencies]
+num-bigint = "0.4"
 xark-ir = { path = "../ir", version = "0.3.0" }
 xark-prover = { path = "../prover", version = "0.3.0" }
 xark-backend = { path = "../backend", version = "0.3.0" }

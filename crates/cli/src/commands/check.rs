@@ -49,6 +49,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
         .as_deref()
         .expect("check::run is only reached with --inputs");
     let inputs = parse_inputs_arg(arg)?;
+    super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let id_inputs = resolve_input_ids(&cp.vars, &inputs)?;
     let _assign = soundness_check(&cp, profile.as_ref(), &id_inputs)?;
 

@@ -4753,6 +4753,7 @@ dependencies = [
  "clap_complete",
  "hex",
  "mimalloc",
+ "num-bigint 0.4.8",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
  "serde_json",
