@@ -82,6 +82,6 @@ fn report_constraint_count() {
 fn groth16_setup_prove_verify() {
     // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
     xark_prover::circuit("grumpkin_ipa")
-        .prove(honest())
+        .prove_dev(honest())
         .expect("the Groth16 proof must verify");
 }

@@ -4941,11 +4941,14 @@ dependencies = [
  "ark-ff 0.6.0",
  "ark-groth16",
  "ark-relations",
+ "ark-serialize 0.6.0",
  "ark-snark",
  "ark-std 0.6.0",
  "num-bigint 0.4.8",
  "rand 0.8.6",
  "serde_json",
+ "sha2 0.11.0",
+ "xark-groth16",
  "xark-ir",
 ]
 

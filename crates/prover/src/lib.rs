@@ -398,6 +398,8 @@ pub fn prove_and_verify(
 pub struct Circuit {
     /// The circuit name (for diagnostics), e.g. `<name>` in `target/xark/<name>/`.
     name: String,
+    /// The artifact directory (`circuit.xbc`, and `pk.bin` once `xark setup` ran).
+    dir: std::path::PathBuf,
     r1cs: R1csProgram,
     prim: PrimitiveProgram,
     /// Per-constraint source/function attribution, loaded from `profile.json` when
@@ -647,10 +649,59 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
         .and_then(|s| xark_ir::profile::from_json(&s).ok());
     Circuit {
         name,
+        dir: dir.to_path_buf(),
         r1cs,
         prim,
         profile,
     }
+}
+
+/// A Groth16 proof and its public inputs, as the canonical compressed bytes
+/// `xark prove` writes (`proof.bin`, `public_inputs.bin`): what `xark verify`,
+/// xark-wasm's `verify` and `xark export`'s verifier tests consume.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CircuitProof {
+    pub proof: Vec<u8>,
+    pub public_inputs: Vec<u8>,
+}
+
+/// The constraint rows a proving key was made for, picked from the key's
+/// `a_len`: the circuit as built (a `reduced` key, streamed from `xbc`) or its
+/// minimized form (`minimized`). `cached` is the `r1cs.stream` `xark setup` writes
+/// beside a minimized key; it is used when it belongs to this `xbc`, and the
+/// minimize is redone otherwise.
+pub fn rows_for_key(
+    xbc: &[u8],
+    a_len: usize,
+    cached: Option<Vec<u8>>,
+) -> Result<Box<dyn xark_groth16::ConstraintSource>, String> {
+    use sha2::Digest;
+    use xark_groth16::ConstraintSource;
+    let src =
+        xark_groth16::BytecodeSource::new(xbc).map_err(|e| format!("parsing circuit.xbc: {e}"))?;
+    if src.layout().num_vars() == a_len {
+        return Ok(Box::new(src));
+    }
+    drop(src);
+    let fingerprint: String = sha2::Sha256::digest(xbc)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if let Some(rows) = cached
+        && let Ok(src) = xark_groth16::RowFileSource::new(rows)
+        && src.file().fingerprint() == fingerprint
+    {
+        return Ok(Box::new(src));
+    }
+    let reduced = xark_ir::function_decode::expand_function_blob_reduced(xbc)
+        .map_err(|e| format!("parsing circuit.xbc: {e}"))?
+        .into_r1cs();
+    let circuit = XarkCircuit::for_setup(reduced);
+    let rows = xark_ir::r1cs_stream::encode(&fingerprint, circuit.prog());
+    drop(circuit);
+    Ok(Box::new(
+        xark_groth16::RowFileSource::new(rows).map_err(|e| format!("r1cs: {e}"))?,
+    ))
 }
 
 impl Circuit {
@@ -794,17 +845,84 @@ impl Circuit {
         )))
     }
 
-    /// Prove the circuit against `inputs` **end to end** — solve the witness, then
-    /// run a real (dev-mode, seed 1) Groth16 setup + prove + verify. Returns
-    /// `Ok(())` when the proof verifies, or an actionable `Err`: an unsatisfiable
-    /// witness, or — past that — a genuine `r1cs.json`/`circuit.json` inconsistency.
-    ///
-    /// Prefer [`Self::check`] for ordinary tests — it's the same witness
-    /// satisfaction check without the much slower Groth16 (which exercises the
-    /// backend, not the circuit). Reach for `prove` to confirm the whole proving
-    /// pipeline for one circuit. Runs in seconds only in `--release`; a large
-    /// circuit takes minutes in debug.
-    pub fn prove<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
+    /// Prove `inputs` with the built circuit and its proving key
+    /// (`<dir>/pk.bin`, from `xark setup`) and return the proof — the same
+    /// streaming prover and the same bytes as `xark prove`, without the CLI. The
+    /// inputs are checked first, with the same diagnostics as [`Self::check`].
+    pub fn prove<I: ProveInputs>(&self, inputs: I) -> Result<CircuitProof, ProveError> {
+        self.prove_with_key(self.dir.join("pk.bin"), inputs)
+    }
+
+    /// [`Self::prove`] with a proving key from elsewhere (e.g. a ceremony's
+    /// `proving_key.bin`).
+    pub fn prove_with_key<I: ProveInputs>(
+        &self,
+        pk_path: impl AsRef<std::path::Path>,
+        inputs: I,
+    ) -> Result<CircuitProof, ProveError> {
+        use ark_serialize::CanonicalSerialize;
+        use xark_groth16::PkSource;
+        let pk_path = pk_path.as_ref();
+        let id_inputs = self.resolve_inputs(inputs);
+        let assign = self.solve_and_check(&id_inputs).map_err(|e| {
+            ProveError(xark_ir::diagnose::describe_unsatisfied(
+                &e,
+                &self.r1cs,
+                self.profile.as_ref(),
+            ))
+        })?;
+        let fail = |what: &str, e: &dyn std::fmt::Display| {
+            ProveError(format!("circuit `{}`: {what}: {e}", self.name))
+        };
+        let xbc_path = self.dir.join("circuit.xbc");
+        let xbc = std::fs::read(&xbc_path)
+            .map_err(|e| fail(&format!("reading {}", xbc_path.display()), &e))?;
+        let mut pk = xark_groth16::SerializedPk::open(pk_path).map_err(|e| {
+            fail(
+                &format!(
+                    "reading proving key {} (run `xark setup` first?)",
+                    pk_path.display()
+                ),
+                &e,
+            )
+        })?;
+        let cached = std::fs::read(pk_path.with_file_name("r1cs.stream")).ok();
+        let src = rows_for_key(&xbc, pk.header().a_len, cached).map_err(|e| fail("rows", &e))?;
+        let z = src.layout().assignment(|id| {
+            assign.get(&id).map(|v| {
+                v.as_bn254_fr()
+                    .unwrap_or_else(|| fr_from_decimal(&v.to_decimal()))
+            })
+        });
+        let proof = xark_groth16::prove(
+            &*src,
+            &z,
+            &mut pk,
+            &mut rand::rngs::OsRng,
+            &xark_groth16::ProverConfig::default(),
+        )
+        .map_err(|e| fail("proving", &e))?;
+        let public: Vec<Fr> = z[1..src.layout().num_instance()].to_vec();
+        let mut out = CircuitProof {
+            proof: Vec::new(),
+            public_inputs: Vec::new(),
+        };
+        proof
+            .serialize_compressed(&mut out.proof)
+            .map_err(|e| fail("encoding the proof", &e))?;
+        public
+            .serialize_compressed(&mut out.public_inputs)
+            .map_err(|e| fail("encoding the public inputs", &e))?;
+        Ok(out)
+    }
+
+    /// The whole proving pipeline on throwaway keys — solve the witness, then a
+    /// real (dev-mode, seed 1) Groth16 setup + prove + verify — with no `xark
+    /// setup` needed. Returns `Ok(())` when the proof verifies, or an actionable
+    /// `Err`: an unsatisfiable witness, or — past that — a genuine circuit/backend
+    /// inconsistency. For a test that the circuit proves at all; [`Self::prove`]
+    /// makes a proof you keep. Runs in seconds only in `--release`.
+    pub fn prove_dev<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
         let id_inputs = self.resolve_inputs(inputs);
         let assign_fp = self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(

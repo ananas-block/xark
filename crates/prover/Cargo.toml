@@ -38,8 +38,11 @@ ark-groth16 = { version = "0.6", default-features = false, features = ["std"] }
 ark-relations = { version = "0.6", default-features = false, features = ["std"] }
 ark-snark = { workspace = true }
 ark-std = { version = "0.6", default-features = false, features = ["std"] }
+ark-serialize = { version = "0.6", default-features = false }
 num-bigint = "0.4"
 rand = "0.8"
+sha2 = "0.11"
+xark-groth16 = { path = "../groth16", version = "0.3.0" }
 
 [dev-dependencies]
 # A unit test round-trips `FieldConst`'s custom serde impl through JSON.

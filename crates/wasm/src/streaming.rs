@@ -354,21 +354,7 @@ fn prepare(
 /// program — rebuilt here exactly as `xark setup` keyed it — held as a compact
 /// in-memory row file.
 fn auto_row_source(xbc: &[u8], a_len: usize) -> Result<Box<dyn ConstraintSource>, js_sys::Error> {
-    let parse = |e: String| js_error(&format!("parsing circuit.xbc: {e}"));
-    let src = BytecodeSource::new(xbc).map_err(parse)?;
-    if src.layout().num_vars() == a_len {
-        return Ok(Box::new(src));
-    }
-    drop(src);
-    let reduced = xark_ir::function_decode::expand_function_blob_reduced(xbc)
-        .map_err(parse)?
-        .into_r1cs();
-    let circuit = xark_prover::XarkCircuit::for_setup(reduced);
-    let rows = xark_ir::r1cs_stream::encode(&crate::sha256_hex(xbc), circuit.prog());
-    drop(circuit);
-    Ok(Box::new(
-        RowFileSource::new(rows).map_err(|e| js_error(&format!("r1cs: {e}")))?,
-    ))
+    xark_prover::rows_for_key(xbc, a_len, None).map_err(|e| js_error(&e))
 }
 
 /// [`Prepared`] for the one-call API (`prove` / `preload`): the row source is

@@ -56,6 +56,10 @@ gadgets now check more:
 
 - `xark build` prints the circuit digest (a fingerprint of the R1CS) and writes it
   to `target/xark/<name>/digest`.
+- Proving from Rust: `xark_prover::circuit("name").prove(inputs)` proves with the
+  built circuit and its `pk.bin` and returns the proof and public-input bytes
+  (`CircuitProof`, the same bytes `xark prove` writes); `prove_with_key` takes
+  another key. The throwaway-keys round trip it used to do is now `prove_dev`.
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).
 - Generated clients for `cube`, `zk_kyc`, `sha256` and `merkle` are committed in
