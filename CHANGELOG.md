@@ -100,14 +100,19 @@ gadgets now check more:
   `examples/<name>/client/` with tests that prove and verify through xark-wasm;
   `scripts/client-check.sh` (in CI) keeps them current.
 - Exhaustive witness search (`xark_ir::witness_search`) and
-  `scripts/difftest-examples.sh` (daily in CI), which check that each example
+  `scripts/difftest-examples.sh` (on every pull request), which check that each example
   accepts exactly the inputs it should, with exactly one witness. It covers every
   example except the two ECDSA circuits, including the whole ed25519 verify
   circuit; the ECDSA ones are searched block by block.
 - `xark-groth16` is published.
-
 - Every crate declares the minimum Rust (`rust-version = "1.89"`), and CI
   builds the whole workspace on 1.89, not only the example circuits.
+- The slow CI checks (known-answer vectors, the EC gadget vectors, the example
+  sweep, the publish rehearsal) run on every pull request (`slow.yml`) instead
+  of daily, so a break shows on the PR that caused it. `scheduled.yml` keeps,
+  weekly, only what can fail with no code change: the circuit-digest check on
+  Rust stable and beta, and the long fuzz run. Nightly Rust is no longer
+  checked.
 
 ### Fixed
 

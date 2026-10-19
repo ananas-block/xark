@@ -51,7 +51,7 @@ jobs:
         # tests (Blake2s, AES128, SHA256, Keccak, ECDSA, ...) are 10–20× slower
         # in debug. The heaviest Groth16 e2e proves — the Ed25519 scalar-mul/EdDSA
         # and secp256k1/r1 ECDSA vectors — take longer than the per-step CI limit
-        # and run in nightly-kats.yml (60-min timeout); exclude those packages here
+        # and run in slow.yml (60-min timeout); exclude those packages here
         # rather than terminating mid-test.
         #
         # The `sbpf` and `differential_alt_bn128` integration tests under
@@ -119,7 +119,7 @@ jobs:
   compiler-snapshots:
     # The snapshot suite (count bridges to the Lean models, rejection diagnostics,
     # solves) and the native-semantics fuzzer. The heavy `#[ignore]`d known-answer
-    # vectors run in `nightly-kats.yml`.
+    # vectors run in `slow.yml`.
     name: compiler snapshot suite + semantics fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -136,7 +136,7 @@ jobs:
           workspaces: crates/lang
       - name: cargo test (snapshots, semantics fuzz, input and host tests)
         # Every test in the crate: naming files here let the others go stale
-        # unnoticed. The heavy KAT vectors are `#[ignore]`d (nightly-kats.yml).
+        # unnoticed. The heavy KAT vectors are `#[ignore]`d (slow.yml).
         env:
           XARK_FUZZ_CASES: "200"
         run: cd crates/lang && cargo test --release --no-fail-fast

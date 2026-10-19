@@ -31,8 +31,8 @@ that `xark build` prints and writes to `target/xark/<name>/digest`.
 - **Rust version.** Any stable Rust from 1.89 on builds circuits, and a circuit's
   digest is the same on every one of them. That is a tested guarantee, not a
   hope: `ci.yml` checks all 70 examples on 1.89, stable and beta on every push,
-  and `nightly-kats.yml` re-checks stable, beta and nightly daily, so a Rust
-  release that would change a circuit is caught while it is still in beta. If one
+  and `scheduled.yml` re-checks stable and beta weekly, so a Rust release that
+  would change a circuit is caught while it is still in beta. If one
   does, we fix xark so the old digest comes back; we don't ask anyone to make new
   keys. You don't need to pin Rust (a `rust-toolchain.toml` does no harm).
 - **xark version.** Only your code or an xark upgrade may change a circuit. An
@@ -41,7 +41,7 @@ that `xark build` prints and writes to `target/xark/<name>/digest`.
   changed" in [CHANGELOG.md](../CHANGELOG.md); a patch release never changes one.
   Lock the xark version (commit `Cargo.lock`) for anything deployed.
 - **Minimum Rust.** Raised only in a minor release, and noted in the changelog.
-  Nightly works but isn't supported; it's checked only as an early warning.
+  Nightly Rust isn't supported or tested.
 
 ## When a circuit digest changes
 
