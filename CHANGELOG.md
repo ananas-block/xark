@@ -116,6 +116,8 @@ gadgets now check more:
 - The on-chain (Solana) test workflow also runs when its own tests, the
   fixtures they embed or `Cargo.lock` change; it used to run only for verifier
   changes, so an edit to `sbpf.rs` was never tested.
+- CI runs `grumpkin_nova_prover`'s tests and builds `grumpkin_reference`, the
+  two examples that aren't circuits; nothing ran them before.
 
 ### Fixed
 

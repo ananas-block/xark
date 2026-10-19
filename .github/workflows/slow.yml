@@ -109,6 +109,29 @@ jobs:
           XARK_SWEEP_JOBS: "2"
         run: scripts/difftest-examples.sh
 
+  host-examples:
+    # The two examples that aren't circuits, so the sweep skips them: the Nova
+    # folding prover (with its own tests) and the Grumpkin reference tools that
+    # generate the grumpkin examples' test vectors. Each is its own workspace.
+    name: host-side example crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            examples/grumpkin_nova_prover
+            examples/grumpkin_reference
+      - name: grumpkin_nova_prover tests
+        run: cd examples/grumpkin_nova_prover && cargo test --release
+      - name: grumpkin_reference builds
+        run: cd examples/grumpkin_reference && cargo build --release
+
   publish-dry:
     # A crates.io release rehearsal: every publishable crate is packaged and built
     # from its own `.crate`, as crates.io will see it (scripts/publish-dry.sh).
