@@ -134,6 +134,12 @@ gadgets now check more:
 - `xark ceremony contribute` likewise swaps its files in at the end (an
   interruption could leave keys the recorded chain didn't explain, ruining the
   ceremony), and refuses to contribute to a finalized ceremony.
+- Plain `cargo test` on a circuit crate rebuilds a circuit older than the
+  crate's `src/` or `Cargo.toml` (it only built a missing one), so it no longer
+  tests the previous build after an edit. Without an `xark` to rebuild with, it
+  warns that it is testing the previous build.
+- `xark doctor` warns when the `xark` that `cargo test` and rust-analyzer run
+  (`$XARK`, else `PATH`) is a different version, e.g. an old 0.2 install.
 - `xark export --out` and `xark client -o` refuse to overwrite files they
   didn't generate. An `--out` naming your own program's crate used to replace
   its `Cargo.toml` and `src/lib.rs` without a word; regenerating an earlier

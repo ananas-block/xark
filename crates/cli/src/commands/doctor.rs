@@ -64,13 +64,40 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
     );
 
     // Optional (informational — never a hard failure).
-    let onpath = cmd_ok("xark", &["--version"]);
-    info(
-        onpath.is_some(),
-        "xark on PATH",
-        "used by rust-analyzer diagnostics, and by `cargo test` to build an unbuilt circuit",
-        "cargo install xark-cli",
-    );
+    // The `xark` that `cargo test` runs (`$XARK`, else `PATH`) builds with its
+    // own version: an older one can't build this release's circuits.
+    let from_env = std::env::var("XARK").ok();
+    let bin = from_env.clone().unwrap_or_else(|| "xark".to_string());
+    let onpath = cmd_ok(&bin, &["--version"]);
+    let mine = major_minor(env!("CARGO_PKG_VERSION"));
+    let theirs = onpath
+        .as_deref()
+        .and_then(|v| v.split_whitespace().nth(1))
+        .map(major_minor);
+    let label = match &from_env {
+        Some(p) => format!("$XARK ({p})"),
+        None => "xark on PATH".to_string(),
+    };
+    match theirs {
+        Some(v) if v != mine => {
+            let found = onpath.unwrap_or_default();
+            info(
+                false,
+                &label,
+                &format!(
+                    "is `{found}`, not {}: `cargo test` and rust-analyzer would run the old one",
+                    env!("CARGO_PKG_VERSION")
+                ),
+                "cargo install xark-cli --force",
+            );
+        }
+        _ => info(
+            onpath.is_some(),
+            &label,
+            "used by rust-analyzer diagnostics, and by `cargo test` to build a missing or out-of-date circuit",
+            "cargo install xark-cli",
+        ),
+    }
     let node = cmd_ok("node", &["--version"]);
     info(
         node.is_some(),
@@ -99,6 +126,11 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
 
 /// Run `bin args…`; return trimmed stdout on success, `None` on any failure
 /// (including the binary not being found).
+/// `"0.3.1"` → `"0.3"`: versions that build the same circuits.
+fn major_minor(v: &str) -> &str {
+    v.rsplit_once('.').map_or(v, |(mm, _)| mm)
+}
+
 fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(bin).args(args).output().ok()?;
     out.status

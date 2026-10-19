@@ -518,15 +518,15 @@ fn not_built_message(name: &str, xbc_path: &std::path::Path) -> String {
 
 /// Best-effort auto-build: when a `#[circuit]` test finds its circuit missing,
 /// run the `xark` CLI (`$XARK`, else `xark` on `PATH`) to build it in place.
-/// Silently no-ops if `xark` isn't reachable or the build fails. Only fires when
-/// the artifact is *absent*, so it never masks a stale one.
+/// Silently no-ops if `xark` isn't reachable or the build fails. Fires when the
+/// artifact is absent or older than the crate's sources ([`newer_source`]).
 fn try_autobuild(dir: &std::path::Path) {
     // Serialize across the test binary's threads: parallel `#[circuit]` tests
     // would otherwise each launch a build and race on the output files. After
     // taking the lock, re-check — another thread may have just built it.
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if dir.join("circuit.xbc").exists() {
+    if dir.join("circuit.xbc").exists() && newer_source(dir).is_none() {
         return;
     }
     let crate_dir = dir
@@ -542,11 +542,49 @@ fn try_autobuild(dir: &std::path::Path) {
         .status();
 }
 
+/// A file of the crate (`Cargo.toml`, or anything under `src/`) changed since
+/// `circuit.xbc` in `<crate>/target/xark/<name>/` was built — `cargo test` after
+/// an edit, without `xark test` or `xark build`. Only for that layout; changes
+/// in path dependencies aren't seen.
+fn newer_source(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let built = std::fs::metadata(dir.join("circuit.xbc"))
+        .and_then(|m| m.modified())
+        .ok()?;
+    let xark = dir.parent()?;
+    let target = xark.parent()?;
+    if xark.file_name()? != "xark" || target.file_name()? != "target" {
+        return None;
+    }
+    let krate = target.parent()?;
+    let newer = |p: &std::path::Path| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t > built)
+    };
+    let manifest = krate.join("Cargo.toml");
+    if newer(&manifest) {
+        return Some(manifest);
+    }
+    let mut stack = vec![krate.join("src")];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let (p, ty) = (e.path(), e.file_type());
+            if ty.as_ref().is_ok_and(|t| t.is_dir()) {
+                stack.push(p);
+            } else if newer(&p) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// Load a circuit built by `xark build` from `target/xark/<name>/`, relative to
 /// the current directory (where `cargo test` runs, i.e. the crate root).
 ///
-/// Missing artifacts trigger a best-effort `try_autobuild`; if that can't run,
-/// panics with a clear message — run `xark build` first.
+/// Missing or out-of-date artifacts trigger a best-effort `try_autobuild`; if
+/// that can't run, a missing circuit panics with a clear message (run `xark
+/// build` first) and an out-of-date one is used with a warning.
 pub fn circuit(name: &str) -> Circuit {
     circuit_at(std::path::Path::new("target/xark").join(name))
 }
@@ -563,15 +601,24 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
         .to_string();
     let xbc_path = dir.join("circuit.xbc");
 
-    // The common failure is "forgot to build". Try a best-effort auto-build so
-    // `cargo test` on a `#[circuit]` example just works; if that can't run (no
+    // The common failures are "forgot to build" and "edited since the build".
+    // Try a best-effort auto-build so `cargo test` on a `#[circuit]` example
+    // tests what's in `src/`; if that can't run (no
     // `xark` on `PATH`/`$XARK`), fall through to the clear "run `xark build`"
     // guidance rather than a raw file/parse error from deeper in the load.
-    if !xbc_path.exists() {
+    if !xbc_path.exists() || newer_source(dir).is_some() {
         try_autobuild(dir);
     }
     if !xbc_path.exists() {
         panic!("{}", not_built_message(&name, &xbc_path));
+    }
+    if let Some(src) = newer_source(dir) {
+        eprintln!(
+            "warning: {} changed since {} was built, and it couldn't be rebuilt (no \
+             `xark` on PATH?); testing the previous build. Run `xark test` instead.",
+            src.display(),
+            xbc_path.display()
+        );
     }
 
     // `circuit.xbc` is self-contained: expanding it once yields both the

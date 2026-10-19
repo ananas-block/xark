@@ -70,4 +70,25 @@ fn init_then_test() {
         out.contains("tests::accepts_valid: test"),
         "--list didn't reach the tests:\n{out}"
     );
+
+    // Plain `cargo test` after an edit tests the edited circuit: the stale build
+    // is rebuilt (with `$XARK`), not silently reused. Cubing breaks `2 * 2 == 4`.
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // mtime granularity
+    let lib = dir.join("src/lib.rs");
+    let src = std::fs::read_to_string(&lib).unwrap();
+    let edited = src.replace("secret * secret,", "secret * secret * secret,");
+    assert_ne!(src, edited, "the scaffold's circuit changed shape");
+    std::fs::write(&lib, edited).unwrap();
+    let o = std::process::Command::new("cargo")
+        .args(["test", "--release"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("XARK", common::xark_bin())
+        .output()
+        .expect("invoke cargo");
+    let log = String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
+    assert!(
+        !o.status.success() && log.contains("accepts_valid ... FAILED"),
+        "cargo test ran the stale circuit:\n{log}"
+    );
 }
