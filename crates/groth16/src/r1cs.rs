@@ -335,6 +335,23 @@ impl<T: ConstraintSource + ?Sized> ConstraintSource for Box<T> {
     }
 }
 
+/// The first row `i` with `⟨A_i, z⟩·⟨B_i, z⟩ ≠ ⟨C_i, z⟩`, or `None` when `z`
+/// satisfies every row. Sequential, one window at a time: for telling why a
+/// proof failed its self-check (a bad witness, or a key for another circuit),
+/// not for the proving path.
+pub fn first_unsatisfied<S: ConstraintSource + ?Sized>(src: &S, z: &[Fr]) -> Option<usize> {
+    let mut chunk = RowChunk::default();
+    for w in src.windows(1 << 14) {
+        src.expand(&w, &mut chunk);
+        for i in 0..chunk.rows() {
+            if chunk.eval(i, 0, z) * chunk.eval(i, 1, z) != chunk.eval(i, 2, z) {
+                return Some(w.rows.start + i);
+            }
+        }
+    }
+    None
+}
+
 /// Evaluate `⟨M_i, z⟩` for every row into the requested output vectors
 /// (`outs[m]` for matrix `m`; each at least `num_constraints` long), streaming the
 /// rows window-by-window in parallel. Peak extra memory: one [`RowChunk`] per

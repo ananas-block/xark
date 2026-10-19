@@ -65,9 +65,24 @@ pub enum ProveError {
     /// The proving key's shape doesn't match the constraint source — wrong key for
     /// this circuit (or a different minimization of it).
     KeyMismatch(String),
-    /// The proof failed verification under the key's own `vk`: the witness does
-    /// not satisfy the constraints (or a prover bug). Never a forgeable state.
+    /// The proof failed verification under the key's own `vk` because the
+    /// witness breaks constraint row `row` (of the source's rows): the inputs
+    /// don't satisfy the circuit.
+    Unsatisfied {
+        row: usize,
+    },
+    /// The proof failed verification under the key's own `vk` although the
+    /// witness satisfies every row: the key was made for a different circuit (or
+    /// a different build of it). Never a forgeable state.
     SelfCheckFailed,
+}
+
+/// Why a proof failed its self-check: the witness, or the key.
+pub(crate) fn self_check_failure<S: ConstraintSource + ?Sized>(src: &S, z: &[Fr]) -> ProveError {
+    match crate::r1cs::first_unsatisfied(src, z) {
+        Some(row) => ProveError::Unsatisfied { row },
+        None => ProveError::SelfCheckFailed,
+    }
 }
 
 impl std::fmt::Display for ProveError {
@@ -76,7 +91,15 @@ impl std::fmt::Display for ProveError {
             ProveError::Pk(e) => write!(f, "{e}"),
             ProveError::Spill(e) => write!(f, "low-memory spill file: {e}"),
             ProveError::KeyMismatch(m) => write!(f, "proving key does not match circuit: {m}"),
-            ProveError::SelfCheckFailed => write!(f, "proof failed self-verification"),
+            ProveError::Unsatisfied { row } => write!(
+                f,
+                "the witness does not satisfy the circuit (constraint row {row} fails)"
+            ),
+            ProveError::SelfCheckFailed => write!(
+                f,
+                "the proof failed self-verification although the witness satisfies every \
+                 constraint: the proving key was made for a different circuit (or build of it)"
+            ),
         }
     }
 }
@@ -329,10 +352,8 @@ where
         c: g_c.into_affine(),
     };
     if cfg.self_check {
-        let ok = crate::types::verify(&hdr.vk, &z[1..ninst], &proof)
-            .map_err(|_| ProveError::SelfCheckFailed)?;
-        if !ok {
-            return Err(ProveError::SelfCheckFailed);
+        if !crate::types::verify(&hdr.vk, &z[1..ninst], &proof).unwrap_or(false) {
+            return Err(self_check_failure(src, z));
         }
         probe.mark("self_check");
     }

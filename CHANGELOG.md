@@ -119,9 +119,12 @@ gadgets now check more:
 - `xark prove` with a proving key made before the circuit last changed says
   so ("run `xark setup` again"); it used to fail with "proof failed
   self-verification".
-- xark-wasm's "proof failed self-verification" error names both causes (inputs
-  that don't satisfy the circuit, or a proving key from another build); it
-  only said "check the inputs".
+- A proof that fails its self-check now says why. If the witness breaks a
+  constraint, xark-wasm says the inputs don't satisfy the circuit; if every
+  constraint holds, it says the proving key was made for a different circuit
+  or build. Before, both said "check the inputs". `xark_groth16::ProveError`
+  gains `Unsatisfied { row }` for the first case, and `first_unsatisfied`
+  finds that row.
 - `xark ceremony` documents its `--ptau-file`, `--out` and `--ceremony-dir`
   flags in `--help`.
 - `xark clean` no longer follows symlinks (which could reach build output

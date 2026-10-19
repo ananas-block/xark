@@ -74,7 +74,8 @@ test("verify throws on a malformed proof (does not silently return false)", () =
 });
 
 test("prove throws on an unsatisfiable witness", () => {
-  assert.throws(() => prove(xbc, pk, { secret: "3", result: "26" }));
+  // Named as the inputs' fault, not the key's.
+  assert.throws(() => prove(xbc, pk, { secret: "3", result: "26" }), /inputs don't satisfy the circuit/);
 });
 
 test("byte args accept a raw ArrayBuffer (browser response.arrayBuffer() flow)", () => {

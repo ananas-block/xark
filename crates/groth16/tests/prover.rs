@@ -23,7 +23,7 @@ use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use xark_groth16::r1cs::{RowChunk, eval_rows};
+use xark_groth16::r1cs::{RowChunk, eval_rows, first_unsatisfied};
 use xark_groth16::{
     BytecodeSource, ConstraintSource, DomainKind, FftConfig, InMemoryPk, ProgramSource, ProveError,
     ProverConfig, SerializedPk, prove, qap,
@@ -407,6 +407,48 @@ fn reordering_variables_breaks_the_proof() {
         &ProverConfig::default(),
     );
     assert!(matches!(res, Err(ProveError::SelfCheckFailed)), "{res:?}");
+    // Which `first_unsatisfied` tells apart from a bad witness.
+    assert_eq!(first_unsatisfied(&src, &z), None);
+}
+
+#[test]
+fn first_unsatisfied_finds_the_failing_row() {
+    let (prog, assign) = random_program(32, 60);
+    let src = ProgramSource::new(&prog);
+    let mut z = src.layout().assignment_from_map(&assign);
+    assert_eq!(first_unsatisfied(&src, &z), None);
+    // Break one value: the first row reading it is reported.
+    let pos = z.len() - 1;
+    z[pos] += Fr::from(1u64);
+    let row = first_unsatisfied(&src, &z).expect("a row must fail");
+    let mut chunk = RowChunk::default();
+    let mut found = None;
+    for w in src.windows(1 << 14) {
+        src.expand(&w, &mut chunk);
+        for i in 0..chunk.rows() {
+            if found.is_none()
+                && chunk.eval(i, 0, &z) * chunk.eval(i, 1, &z) != chunk.eval(i, 2, &z)
+            {
+                found = Some(w.rows.start + i);
+            }
+        }
+    }
+    assert_eq!(Some(row), found);
+
+    // The prover reports that row, rather than blaming the key.
+    let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
+    let (pk, _) = ArkG16::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
+    let res = prove(
+        &src,
+        &z,
+        &mut InMemoryPk::new(&pk),
+        &mut ChaCha20Rng::seed_from_u64(2),
+        &ProverConfig::default(),
+    );
+    assert!(
+        matches!(res, Err(ProveError::Unsatisfied { row: r }) if r == row),
+        "{res:?}"
+    );
 }
 
 #[test]

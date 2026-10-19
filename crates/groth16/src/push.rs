@@ -323,7 +323,7 @@ impl<S: ConstraintSource> PushProver<S> {
         if self.cfg.self_check {
             let ninst = self.src.layout().num_instance();
             if !crate::types::verify(&vk, &self.z[1..ninst], &proof).unwrap_or(false) {
-                return Err(ProveError::SelfCheckFailed);
+                return Err(crate::prover::self_check_failure(&self.src, &self.z));
             }
         }
         Ok(proof)

@@ -312,10 +312,13 @@ fn config(options: &JsValue) -> (ProverConfig, Fr, Fr) {
 
 fn mismatch_error(e: xark_groth16::ProveError) -> js_sys::Error {
     match e {
+        xark_groth16::ProveError::Unsatisfied { .. } => js_error(
+            "the inputs don't satisfy the circuit (a constraint fails); `xark prove` with \
+             the same inputs names the constraint and its source line",
+        ),
         xark_groth16::ProveError::SelfCheckFailed => js_error(
-            "the proof failed self-verification: the inputs don't satisfy the circuit, or \
-             the proving key was made for a different build of circuit.xbc (rerun `xark \
-             setup` after rebuilding). `xark prove` names the failing constraint",
+            "the proving key doesn't match this circuit.xbc: it was made for a different \
+             circuit or an earlier build of it (rerun `xark setup` and use its pk.bin)",
         ),
         xark_groth16::ProveError::KeyMismatch(m) => js_error(&format!(
             "{m} — a `reduced` key proves from circuit.xbc alone; a `minimized` key also \

@@ -36,5 +36,7 @@ pub use prover::{
     Probe, ProveError, ProverConfig, prove, prove_accelerated, prove_with_randomness,
 };
 pub use push::PushProver;
-pub use r1cs::{BytecodeSource, ConstraintSource, ProgramSource, RowFileSource, VarLayout};
+pub use r1cs::{
+    BytecodeSource, ConstraintSource, ProgramSource, RowFileSource, VarLayout, first_unsatisfied,
+};
 pub use types::{Proof, ProvingKey, VerifyError, VerifyingKey, verify};
