@@ -353,8 +353,9 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
     {
         // A `Field` is a full field element (~254 bits, past `i128`), so the
         // struct takes it as a `String` (decimal or `0x`-hex), matching how the
-        // CLI `--inputs` takes scalars.
-        return Ok((quote! { String }, quote! { ::xark::Field }, Fanout::Scalar));
+        // CLI `--inputs` takes scalars. The circuit side keeps the type as written
+        // (not `::xark::Field`), so the author's `use xark::Field` stays used.
+        return Ok((quote! { String }, quote! { #inner }, Fanout::Scalar));
     }
     // Native unsigned integers are first-class circuit witnesses: the `<Fn>Inputs`
     // field takes the native `uN` (fits `u128`, so no `String` needed), the circuit
@@ -393,7 +394,7 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
             let n = eval_usize_lit(&arr.len)?;
             return Ok((
                 quote! { [::std::string::String; #n] },
-                quote! { [::xark::Field; #n] },
+                quote! { #inner },
                 Fanout::FieldArray(n),
             ));
         }
