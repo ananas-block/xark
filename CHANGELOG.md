@@ -95,6 +95,8 @@ gadgets now check more:
 
 ### Fixed
 
+- A failing `check` suggested building with `--profile`, which `xark build`
+  doesn't accept; it now points to `xark test` / `xark profile`.
 - A crate from `xark init` passes its own `xark test`. The scaffold declared
   `xark-prover` as a dev-dependency, but `#[circuit]`'s generated code needs it
   in every host build, so the tests didn't compile. `xark init <path>` names the

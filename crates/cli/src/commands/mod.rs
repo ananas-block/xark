@@ -465,7 +465,8 @@ pub fn load_circuit_auto(path: &std::path::Path) -> Result<PrimitiveProgram> {
 
 /// Best-effort load of `profile.json` (per-constraint source/function attribution)
 /// from a build directory, for richer failure diagnostics. Returns `None` when
-/// the circuit was built without `--profile` (or the file is malformed).
+/// the circuit was built without profiling — `xark test` and `xark profile`
+/// profile, a plain `xark build` doesn't — or the file is malformed.
 pub fn load_profile(dir: &std::path::Path) -> Option<ProfileProgram> {
     std::fs::read_to_string(dir.join("profile.json"))
         .ok()

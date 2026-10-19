@@ -157,7 +157,7 @@ pub fn describe_unsatisfied(
         }
     }
 
-    // Source location + function chain when built with `--profile` (as `xark test`
+    // Source location + function chain when built with profiling (as `xark test`
     // does); otherwise a hint on how to get it.
     match prof {
         Some(c) => {
@@ -177,8 +177,8 @@ pub fn describe_unsatisfied(
             }
         }
         None => msg.push_str(&format!(
-            "\n\n  {}(build with `--profile`, or run `xark test`, for the source line \
-             and function chain){}",
+            "\n\n  {}(run `xark test` or `xark profile` for the source line and \
+             function chain){}",
             p.dim, p.reset
         )),
     }
