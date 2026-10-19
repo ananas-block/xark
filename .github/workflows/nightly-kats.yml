@@ -162,3 +162,21 @@ jobs:
           XARK_SWEEP_SHARD: ${{ matrix.shard }}/4
           XARK_SWEEP_JOBS: "2"
         run: scripts/difftest-examples.sh
+
+  publish-dry:
+    # A crates.io release rehearsal: every publishable crate is packaged and built
+    # from its own `.crate`, as crates.io will see it (scripts/publish-dry.sh).
+    # Catches a packaging break (a file left out, missing metadata, a path-only
+    # dependency) before release day rather than halfway through a publish.
+    name: publish dry run (crates.io)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Package and build every crate
+        run: make -f Makefile.publish publish-dry
