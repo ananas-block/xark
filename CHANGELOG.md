@@ -113,6 +113,11 @@ gadgets now check more:
   didn't build.
 - `xark build` / `xark test` with no path name the circuit after its package
   (`building circuit cube`), not `circuit`.
+- `xark prove` with a proving key made before the circuit last changed says
+  so ("run `xark setup` again"); it used to fail with "proof failed
+  self-verification".
+- `xark ceremony` documents its `--ptau-file`, `--out` and `--ceremony-dir`
+  flags in `--help`.
 - `xark clean` no longer follows symlinks (which could reach build output
   outside the current directory) and skips `node_modules`.
 - `xark setup` says a key needs xark's provers only when its QAP domain is

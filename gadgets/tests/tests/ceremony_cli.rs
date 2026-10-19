@@ -96,4 +96,20 @@ fn ceremony_keys_prove_and_verify() {
         !ok || !log.contains("Proof verified"),
         "a wrong public input must fail: {log}"
     );
+
+    // A finalized ceremony is production-safe: `xark export` takes its key
+    // without `--allow-insecure`.
+    let verifier = tmp.path().join("verifier");
+    step(&[
+        "export",
+        "--verifying-key",
+        vk.to_str().unwrap(),
+        "--proof",
+        proof.to_str().unwrap(),
+        "--public-inputs",
+        proof.with_file_name("public_inputs.bin").to_str().unwrap(),
+        "--out",
+        verifier.to_str().unwrap(),
+    ]);
+    assert!(verifier.join("Cargo.toml").is_file());
 }

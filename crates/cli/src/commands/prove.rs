@@ -235,6 +235,18 @@ fn prove_streaming(
     let t = std::time::Instant::now();
     let bytes = std::fs::read(xbc).with_context(|| format!("reading {}", xbc.display()))?;
     let fingerprint = super::sha256_hex(&bytes);
+    // A key made for another build can't prove this one: say so, rather than
+    // failing the self-verification below.
+    if let Some(keyed) =
+        key_meta(pk_path, "circuit_hash").and_then(|h| h.as_str().map(str::to_string))
+        && keyed != fingerprint
+    {
+        anyhow::bail!(
+            "the proving key {} was made for a different build of the circuit \
+             (the circuit changed since `xark setup`): run `xark setup` again",
+            pk_path.display()
+        );
+    }
     // Whether the rows came without re-running the minimize (the `cached=` marker).
     let mut cached = true;
     let src: Box<dyn ConstraintSource> = match kind {

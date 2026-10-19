@@ -50,22 +50,27 @@ pub enum CeremonyCommand {
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// Circuit crate directory (or its `target/xark/` output dir). Defaults to
-    /// the current directory; the circuit is read from its `circuit.xbc`.
+    /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults
+    /// to the current directory; the circuit is read from its `circuit.xbc`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
+    /// Powers-of-Tau transcript (`.ptau`, snarkjs / Hermez format) large enough
+    /// for the circuit.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub ptau_file: PathBuf,
     /// Optional — auto-generated via OS RNG when not supplied. Pass this to
     /// reproduce byte-identical initial keys from the same circuit + `.ptau`.
     #[arg(long, value_name = "HEX")]
     pub phase2_seed: Option<String>,
+    /// Ceremony directory to create: the keys and contribution chain live here,
+    /// and every later `xark ceremony` step takes it as `--ceremony-dir`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: PathBuf,
 }
 
 #[derive(Args, Debug)]
 pub struct ContributeArgs {
+    /// The directory `xark ceremony init --out` created.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub ceremony_dir: PathBuf,
     /// Human-readable label recorded in the contribution attestation.
@@ -75,12 +80,14 @@ pub struct ContributeArgs {
 
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
+    /// The directory `xark ceremony init --out` created.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub ceremony_dir: PathBuf,
 }
 
 #[derive(Args, Debug)]
 pub struct FinalizeArgs {
+    /// The directory `xark ceremony init --out` created.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub ceremony_dir: PathBuf,
 }

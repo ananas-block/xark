@@ -123,3 +123,26 @@ fn clean_does_not_follow_symlinks() {
         "cleaned through a symlink:\n{out}"
     );
 }
+
+/// A proving key made for an earlier build is named as stale, not left to fail
+/// the proof's self-verification.
+#[test]
+fn stale_proving_key_is_named() {
+    let tmp = tempdir();
+    let out = tmp.path().join("out");
+    let (ok, err) = xark_build("arithmetic_square", &out, &tmp.path().join("target"));
+    assert!(ok, "build failed: {err}");
+    let (ok, err) = xark_setup(&out);
+    assert!(ok, "setup failed: {err}");
+    // As if the circuit had been rebuilt with a change since setup.
+    let meta = out.join("metadata.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+    m["circuit_hash"] = "00".repeat(32).into();
+    std::fs::write(&meta, m.to_string()).unwrap();
+    let (ok, err) = xark_prove(&out, &[("x", "3"), ("y", "9")]);
+    assert!(
+        !ok && err.contains("different build of the circuit"),
+        "{err}"
+    );
+}
