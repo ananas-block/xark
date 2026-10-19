@@ -113,6 +113,9 @@ gadgets now check more:
   weekly, only what can fail with no code change: the circuit-digest check on
   Rust stable and beta, and the long fuzz run. Nightly Rust is no longer
   checked.
+- The on-chain (Solana) test workflow also runs when its own tests, the
+  fixtures they embed or `Cargo.lock` change; it used to run only for verifier
+  changes, so an edit to `sbpf.rs` was never tested.
 
 ### Fixed
 
