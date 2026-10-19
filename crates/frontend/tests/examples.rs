@@ -39,9 +39,9 @@ fn cube() {
 
 #[test]
 fn poseidon_keeps_large_sums_inline() {
-    // The MIR frontend's flat lowering names every multiplication operand over 8
-    // terms (400 constraints); inline it's 241, its templated count, less 3 for the
-    // constant capacity lane's first S-box (`rc⁵`, folded at compile time).
+    // Naming every multiplication operand over 8 terms (as the removed MIR
+    // frontend's flat lowering did) costs 400 constraints; inline it's 241, less 3
+    // for the constant capacity lane's first S-box (`rc⁵`, folded at compile time).
     check("poseidon", 238);
 }
 

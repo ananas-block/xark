@@ -395,14 +395,12 @@ pub fn load_circuit(path: &std::path::Path) -> Result<PrimitiveProgram> {
     xark_ir::primitive::from_json(&s).with_context(|| format!("parsing {}", path.display()))
 }
 
-/// True if `bytes` is a current `XBC` circuit container: version 2 (what `xark build`
-/// writes) or 1 (the older, less dense encoding of the same container).
-/// The magic + u16 version guard rejects stale/foreign files so every loader can
+/// True if `bytes` is a current `XBC` circuit container: version 2, what `xark
+/// build` writes. (Version 1 came from the removed MIR frontend: rebuild.) The
+/// magic + u16 version guard rejects stale/foreign files so every loader can
 /// dispatch on it.
 pub fn is_function_artifact(bytes: &[u8]) -> bool {
-    bytes.len() >= 6
-        && bytes[0..4] == *b"XBC\0"
-        && matches!(u16::from_le_bytes([bytes[4], bytes[5]]), 1 | 2)
+    bytes.len() >= 6 && bytes[0..4] == *b"XBC\0" && u16::from_le_bytes([bytes[4], bytes[5]]) == 2
 }
 
 pub fn load_circuit_program(path: &std::path::Path) -> Result<xark_ir::CircuitProgram> {

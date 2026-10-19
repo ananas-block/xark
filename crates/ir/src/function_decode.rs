@@ -1,13 +1,15 @@
-//! Decoder for the DAG-compact `XBC` circuit artifact (versions 1 and 2).
+//! Decoder for the DAG-compact `XBC` circuit artifact (container version 2, what
+//! `xark-frontend` writes; version 1 came from the removed MIR frontend and is
+//! rejected).
 //!
-//! Version 2 (the stable frontend's) is version 1's container encoded more
-//! densely: a constant pool after the signature inputs (constant tag `3` = pool
-//! index, `2` = binary big constant, `4`/`5` = ±2^k); var lists and LC term vars
-//! zigzag-delta-coded; item tags `5` (CALL, delta-coded plugs), `6` (rolled CALL
-//! block, same), `7` (rolled run with varint integers, constants pooled), `8` (a
-//! row / witness op whose LCs may be `6` + an index into the scope's table of
-//! row LCs), and in a witness stream `4` (the next CALLs of the scope's
-//! constraint stream). Template bodies may contain CALLs (nested templates).
+//! After the signature inputs: a constant pool (constant tags `0` = small int,
+//! `2` = binary big constant, `3` = pool index, `4`/`5` = ±2^k); var lists and LC
+//! term vars zigzag-delta-coded. Item tags: `0` a row / witness op, `5` a CALL
+//! (delta-coded plugs), `6` a rolled CALL block, `7` a rolled run (varint
+//! integers, constants pooled), `8` a row / witness op whose LCs may be `6` + an
+//! index into the scope's table of row LCs, and in a witness stream `4` (the
+//! next CALLs of the scope's constraint stream). Template bodies may contain
+//! CALLs (nested templates).
 //!
 //! Decode half of `xark-frontend`'s `build_function_blob` (`output.rs`); lives in `xark-ir` so both the
 //! `xark` CLI and the compiler can reach it. Parses the container (function defs +
@@ -45,13 +47,7 @@ fn get_fc(b: &[u8], p: &mut usize) -> FieldConst {
     *p += 1;
     match tag {
         0 => FieldConst::from_i64(get_iv(b, p)),
-        1 => {
-            let n = get_uv(b, p) as usize;
-            let s = std::str::from_utf8(&b[*p..*p + n]).unwrap();
-            *p += n;
-            FieldConst::from_decimal(s).unwrap()
-        }
-        // Version 2: a big constant as sign (1 = +, 2 = −) + length + LE magnitude.
+        // A big constant as sign (1 = +, 2 = −) + length + LE magnitude.
         2 => {
             let sign = match b[*p] {
                 1 => num_bigint::Sign::Plus,
@@ -64,12 +60,12 @@ fn get_fc(b: &[u8], p: &mut usize) -> FieldConst {
             *p += n;
             FieldConst::from_bigint(v)
         }
-        // Version 2: an entry of the container's constant pool.
+        // An entry of the container's constant pool.
         3 => {
             let i = get_uv(b, p) as usize;
             POOL.with(|pool| pool.borrow()[i].clone())
         }
-        // Version 2: ±2^k.
+        // ±2^k.
         4 | 5 => {
             let k = get_uv(b, p);
             assert!(k < 4096, "bad exponent");
@@ -79,15 +75,11 @@ fn get_fc(b: &[u8], p: &mut usize) -> FieldConst {
         t => panic!("bad constant tag {t}"),
     }
 }
-/// A var id in an LC or id list: absolute (version 1) or a zigzag delta from the
-/// previous one in the same list (version 2).
+/// A var id in an LC or id list: a zigzag delta from the previous one in the
+/// same list.
 fn get_var(b: &[u8], p: &mut usize, prev: &mut i64) -> u32 {
-    if V2.with(|v| v.get()) {
-        *prev += get_iv(b, p);
-        *prev as u32
-    } else {
-        get_uv(b, p) as u32
-    }
+    *prev += get_iv(b, p);
+    *prev as u32
 }
 fn get_lc(b: &[u8], p: &mut usize) -> LinearCombination {
     let constant = get_fc(b, p);
@@ -105,10 +97,6 @@ fn get_ids(b: &[u8], p: &mut usize) -> Vec<VarId> {
     let n = get_uv(b, p) as usize;
     let mut prev = 0i64;
     (0..n).map(|_| get_var(b, p, &mut prev)).collect()
-}
-fn get_lcs(b: &[u8], p: &mut usize) -> Vec<LinearCombination> {
-    let n = get_uv(b, p) as usize;
-    (0..n).map(|_| get_lc(b, p)).collect()
 }
 fn get_str(b: &[u8], p: &mut usize) -> String {
     let n = get_uv(b, p) as usize;
@@ -431,70 +419,6 @@ struct GDef {
     c_items: Vec<CItem>,
     w_items: Vec<WItem>,
 }
-/// Parse a rolled-CALL block (tag `3`, loop fusion) and expand it to the
-/// `count · period` individual CALLs it stands for. Iteration `k` of template `j`
-/// gets `base = base0 + k·base_step` and each plug-LC term var `var0 + k·var_step`
-/// (coeffs/constants loop-invariant). Expanding at parse time keeps the rolled form
-/// BYTE-IDENTICAL to the unrolled CALL tokens. Mirrors the encoder's `put_rolled_call_compact`.
-fn parse_rolled_calls(b: &[u8], p: &mut usize) -> Vec<(u32, u32, Vec<LinearCombination>)> {
-    let count = get_uv(b, p) as i64;
-    let period = get_uv(b, p) as usize;
-    struct Tmpl {
-        def: u32,
-        base0: i64,
-        base_step: i64,
-        #[allow(clippy::type_complexity)]
-        plugs: Vec<(FieldConst, Vec<(FieldConst, i64, i64)>)>,
-    }
-    let mut body = Vec::with_capacity(period);
-    for _ in 0..period {
-        let def = get_uv(b, p) as u32;
-        let base0 = get_uv(b, p) as i64;
-        let base_step = get_iv(b, p);
-        let nplugs = get_uv(b, p) as usize;
-        let mut plugs = Vec::with_capacity(nplugs);
-        for _ in 0..nplugs {
-            let constant = get_fc(b, p);
-            let nterms = get_uv(b, p) as usize;
-            let mut terms = Vec::with_capacity(nterms);
-            for _ in 0..nterms {
-                let coeff = get_fc(b, p);
-                let var0 = get_uv(b, p) as i64;
-                let step = get_iv(b, p);
-                terms.push((coeff, var0, step));
-            }
-            plugs.push((constant, terms));
-        }
-        body.push(Tmpl {
-            def,
-            base0,
-            base_step,
-            plugs,
-        });
-    }
-    let mut out = Vec::with_capacity(count.max(0) as usize * period);
-    for k in 0..count {
-        for t in &body {
-            let base = (t.base0 + k * t.base_step) as u32;
-            let lcs: Vec<LinearCombination> = t
-                .plugs
-                .iter()
-                .map(|(c, terms)| LinearCombination {
-                    constant: c.clone(),
-                    terms: terms
-                        .iter()
-                        .map(|(coeff, var0, step)| Term {
-                            coeff: coeff.clone(),
-                            var: (var0 + k * step) as u32,
-                        })
-                        .collect(),
-                })
-                .collect();
-            out.push((t.def, base, lcs));
-        }
-    }
-    out
-}
 /// A CALL's plug LCs, version-2 form (tag `5`): each plug is a varint header —
 /// even: a bare variable (`1·v`), `v` = previous bare plug (initially `base`) +
 /// zigzag(header / 2); `1`: a general LC follows.
@@ -624,9 +548,8 @@ fn push_refs(items: &[CItem], table: &mut Vec<LcRef>) {
     }
 }
 
-/// Parse a constraint item stream, and (version 2) its LC table.
+/// Parse a constraint item stream and its LC table.
 fn parse_c_items(b: &[u8], p: &mut usize) -> (Vec<CItem>, Vec<LcRef>) {
-    let v2 = V2.with(|v| v.get());
     let n = get_uv(b, p) as usize;
     let mut out = Vec::with_capacity(n.min(1 << 20));
     let mut table: Vec<LcRef> = Vec::new();
@@ -681,16 +604,6 @@ fn parse_c_items(b: &[u8], p: &mut usize) -> (Vec<CItem>, Vec<LcRef>) {
                 c: get_lc(b, p),
                 note: None,
             })),
-            1 => {
-                let d = get_uv(b, p) as u32;
-                let base = get_uv(b, p) as u32;
-                out.push(CItem::Call(d, base, get_lcs(b, p)));
-            }
-            3 => {
-                for (d, base, plugs) in parse_rolled_calls(b, p) {
-                    out.push(CItem::Call(d, base, plugs));
-                }
-            }
             5 => {
                 let d = get_uv(b, p) as u32;
                 let base = get_uv(b, p) as u32;
@@ -709,22 +622,14 @@ fn parse_c_items(b: &[u8], p: &mut usize) -> (Vec<CItem>, Vec<LcRef>) {
                     .unwrap_or_default();
                 out.push(CItem::Rolled(rows));
             }
-            _ => {
-                let len = get_uv(b, p) as usize;
-                let blob = &b[*p..*p + len];
-                *p += len;
-                let (rows, _) = crate::bytecode::decode_and_expand_ops(blob).unwrap_or_default();
-                out.push(CItem::Rolled(rows));
-            }
+            t => panic!("bad constraint item tag {t}"),
         }
-        if v2 {
-            push_refs(&out, &mut table);
-        }
+        push_refs(&out, &mut table);
     }
     (out, table)
 }
 /// Parse a witness item stream. `c_items` is the same scope's constraint stream:
-/// a version-2 tag `4` reuses its CALLs (in order) instead of repeating them.
+/// a tag `4` reuses its CALLs (in order) instead of repeating them.
 fn parse_w_items(b: &[u8], p: &mut usize, c_items: &[CItem], table: &[LcRef]) -> Vec<WItem> {
     let n = get_uv(b, p) as usize;
     let mut out = Vec::with_capacity(n);
@@ -745,16 +650,6 @@ fn parse_w_items(b: &[u8], p: &mut usize, c_items: &[CItem], table: &[LcRef]) ->
                     get_lc(b, p)
                 }
             }))),
-            1 => {
-                let d = get_uv(b, p) as u32;
-                let base = get_uv(b, p) as u32;
-                out.push(WItem::Call(d, base, get_lcs(b, p)));
-            }
-            3 => {
-                for (d, base, plugs) in parse_rolled_calls(b, p) {
-                    out.push(WItem::Call(d, base, plugs));
-                }
-            }
             4 => {
                 let skip = get_uv(b, p) as usize;
                 let n = get_uv(b, p) as usize;
@@ -784,13 +679,7 @@ fn parse_w_items(b: &[u8], p: &mut usize, c_items: &[CItem], table: &[LcRef]) ->
                     .unwrap_or_default();
                 out.push(WItem::Rolled(wits));
             }
-            _ => {
-                let len = get_uv(b, p) as usize;
-                let blob = &b[*p..*p + len];
-                *p += len;
-                let (_, wits) = crate::bytecode::decode_and_expand_ops(blob).unwrap_or_default();
-                out.push(WItem::Rolled(wits));
-            }
+            t => panic!("bad witness item tag {t}"),
         }
     }
     out
@@ -941,9 +830,7 @@ fn decode_header(b: &[u8]) -> (FieldSpec, usize, Vec<Var>, usize) {
 }
 
 thread_local! {
-    /// Whether the container being parsed is version 2 (delta-coded var lists).
-    static V2: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The container's constant pool while its body is being parsed (version 2).
+    /// The container's constant pool while its body is being parsed.
     static POOL: std::cell::RefCell<std::rc::Rc<Vec<FieldConst>>> =
         std::cell::RefCell::new(std::rc::Rc::new(Vec::new()));
 }
@@ -953,7 +840,7 @@ fn pool() -> std::rc::Rc<Vec<FieldConst>> {
     POOL.with(|p| p.borrow().clone())
 }
 
-/// Everything after the header's signature inputs: (version 2) the constant pool,
+/// Everything after the header's signature inputs: the constant pool,
 /// the function defs, the top-level streams and the keep-set exceptions.
 #[allow(clippy::type_complexity)]
 fn parse_body(
@@ -966,21 +853,16 @@ fn parse_body(
     std::collections::BTreeSet<u32>,
 ) {
     let version = u16::from_le_bytes([b[4], b[5]]);
-    let pool: Vec<FieldConst> = if version >= 2 {
-        let n = get_uv(b, &mut p) as usize;
-        (0..n).map(|_| get_fc(b, &mut p)).collect()
-    } else {
-        Vec::new()
-    };
+    assert_eq!(version, 2, "unsupported XBC container version {version}");
+    let n = get_uv(b, &mut p) as usize;
+    let pool: Vec<FieldConst> = (0..n).map(|_| get_fc(b, &mut p)).collect();
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
             POOL.with(|p| *p.borrow_mut() = std::rc::Rc::new(Vec::new()));
-            V2.with(|v| v.set(false));
         }
     }
     POOL.with(|p| *p.borrow_mut() = std::rc::Rc::new(pool));
-    V2.with(|v| v.set(version >= 2));
     let _reset = Reset;
     let n_defs = get_uv(b, &mut p) as usize;
     let mut defs = Vec::with_capacity(n_defs.min(1 << 20));
@@ -1122,6 +1004,12 @@ pub fn stream_solve(
 /// expanding any constraints — cheap input resolution for a streaming check.
 pub fn decode_vars(b: &[u8]) -> Vec<Var> {
     decode_compact(b).1
+}
+
+/// How many function templates (defs) the container holds: `0` for a circuit
+/// with no repeated calls worth templating.
+pub fn count_templates(b: &[u8]) -> usize {
+    decode_compact(b).2.len()
 }
 
 /// Stream the constraints and total the **distinct-variable references** across
@@ -1810,7 +1698,7 @@ fn solve_streamed(
     .map_err(|e| format!("solve: {e:?}"))
 }
 
-/// Parse an `XBC` (version 1 or 2) container and expand it to a full `CircuitProgram`.
+/// Parse an `XBC` (version 2) container and expand it to a full `CircuitProgram`.
 /// The 6-byte header (`XBC` + version) is assumed already dispatched on.
 ///
 /// Total: a `circuit.xbc` may be foreign or corrupted, so this must never crash the

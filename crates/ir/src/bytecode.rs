@@ -1,37 +1,14 @@
-//! Compact binary form (`circuit.xbc`) of a [`PrimitiveProgram`](crate::primitive::PrimitiveProgram) that round-trips
-//! exactly. Each constraint and each witness-gen op becomes one *opcode* whose
-//! operands are witness offsets (`VarId`s) plus immediates. Each opcode fully
-//! embeds the `VarId`s it writes / constraint slot it fills, so an opcode can be
-//! decoded and expanded in isolation (the affordance for parallel expansion).
+//! Rolled opcode runs: the compression `circuit.xbc` (see `function_decode`) uses
+//! for long runs of rows or witness ops. Each constraint or witness-gen op is one
+//! [`Opcode`]; [`roll_and_encode_ops_compact`] folds periodic runs into repeat
+//! items (one body plus per-iteration var steps) and encodes them, and
+//! [`decode_and_expand_ops_compact`] expands them back exactly.
 //!
-//! # Binary layout (little-endian throughout)
-//!
-//! ```text
-//! header:
-//!   magic            : [u8; 4]  = b"XBC\0" (version-neutral; the u16 carries the version)
-//!   version          : u16      = 1
-//!   flags            : u16      = 0 (reserved)
-//!   field_name       : str      (u32 len + utf8 bytes)
-//!   field_modulus    : str      (decimal modulus)
-//!   n_vars           : u32
-//!   n_constraints    : u32
-//!   n_opcodes        : u32
-//! vars section:        n_vars × { id: u32, role: u8, name: str }
-//! opcode index:        n_opcodes × { offset: u32, base: u32 }   (8 bytes each)
-//! opcode stream:       n_opcodes × { tag: u8, payload… }
-//! ```
-//!
-//! Each index entry is 64 bits: `offset` is the opcode's byte position in the
-//! stream, and `base` is the single output coordinate — a constraint index or a
-//! witness op's first output `VarId` (which one follows from the tag byte at
-//! `offset`). `base == NO_BASE` marks an opcode with no output (e.g. empty `Bits`).
-//!
-//! The opcode stream is emitted constraints-first (one [`OP_CONSTRAINT`] per
-//! constraint, in order) then witness-gen ops (one opcode per [`WitnessGen`]
-//! kind, in order), so [`decode_and_expand_ops`] rebuilds the two ordered vectors exactly.
-//!
-//! Field constants are stored as a sign byte + little-endian magnitude (via
-//! `BigInt`): compact and exactly round-trips the canonical decimal.
+//! Integers are (zigzag) varints, LC term vars and var lists are zigzag deltas
+//! from the previous one, and field constants are tagged: `0`/`1`/`-1` in one
+//! byte, ±2^k as the exponent, u64-sized values as a varint, an entry of the
+//! container's constant pool as its index, and anything else as sign + length +
+//! little-endian magnitude. [`MAGIC`] is the `circuit.xbc` container's magic.
 
 use std::collections::BTreeMap;
 
@@ -192,18 +169,16 @@ fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
         return;
     }
     let (sign, mag) = b.to_bytes_le();
-    // Compact blobs: a power of two (bit-sum coefficients) as its exponent.
-    if compact() {
-        let m = b.magnitude();
-        if m.count_ones() == 1 {
-            buf.push(if sign == Sign::Minus {
-                FC_NEG_POW2
-            } else {
-                FC_POW2
-            });
-            put_varint(buf, m.trailing_zeros().unwrap_or(0));
-            return;
-        }
+    // A power of two (bit-sum coefficients) as its exponent.
+    let m = b.magnitude();
+    if m.count_ones() == 1 {
+        buf.push(if sign == Sign::Minus {
+            FC_NEG_POW2
+        } else {
+            FC_POW2
+        });
+        put_varint(buf, m.trailing_zeros().unwrap_or(0));
+        return;
     }
     // Small path: magnitude fits in a u64 → tag + varint.
     if mag.len() <= 8 {
@@ -225,43 +200,25 @@ fn put_fieldconst(buf: &mut Vec<u8>, fc: &FieldConst) {
     buf.extend_from_slice(&mag);
 }
 
-/// Whether a compact blob is being written (vars delta-coded, pooled constants).
-fn compact() -> bool {
-    ENC_POOL.with(|p| p.borrow().is_some())
-}
-
 fn put_lc(buf: &mut Vec<u8>, lc: &LinearCombination) {
     put_fieldconst(buf, &lc.constant);
     put_varint(buf, lc.terms.len() as u64);
-    if compact() {
-        // Each var as a zigzag delta from the previous one (terms are usually
-        // ascending, so mostly one byte).
-        let mut prev = 0i64;
-        for t in &lc.terms {
-            put_fieldconst(buf, &t.coeff);
-            put_ivarint(buf, i64::from(t.var) - prev);
-            prev = i64::from(t.var);
-        }
-        return;
-    }
+    // Each var as a zigzag delta from the previous one (terms are usually
+    // ascending, so mostly one byte).
+    let mut prev = 0i64;
     for t in &lc.terms {
         put_fieldconst(buf, &t.coeff);
-        put_vu32(buf, t.var);
+        put_ivarint(buf, i64::from(t.var) - prev);
+        prev = i64::from(t.var);
     }
 }
 
 fn put_var_ids(buf: &mut Vec<u8>, ids: &[VarId]) {
     put_varint(buf, ids.len() as u64);
-    if compact() {
-        let mut prev = 0i64;
-        for &id in ids {
-            put_ivarint(buf, i64::from(id) - prev);
-            prev = i64::from(id);
-        }
-        return;
-    }
+    let mut prev = 0i64;
     for &id in ids {
-        put_vu32(buf, id);
+        put_ivarint(buf, i64::from(id) - prev);
+        prev = i64::from(id);
     }
 }
 
@@ -415,10 +372,8 @@ fn put_opcode(stream: &mut Vec<u8>, op: &Opcode) {
 struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
-    /// Constant pool for [`FC_POOL`] references (compact blobs only).
+    /// Constant pool for [`FC_POOL`] references.
     pool: &'a [FieldConst],
-    /// A compact blob: vars delta-coded (see [`put_lc`]).
-    compact: bool,
 }
 
 impl<'a> Cursor<'a> {
@@ -427,7 +382,6 @@ impl<'a> Cursor<'a> {
             buf,
             pos: 0,
             pool: &[],
-            compact: false,
         }
     }
 
@@ -443,16 +397,6 @@ impl<'a> Cursor<'a> {
 
     fn u8(&mut self) -> Result<u8, BytecodeError> {
         Ok(self.take(1)?[0])
-    }
-    fn u32(&mut self) -> Result<u32, BytecodeError> {
-        let b = self.take(4)?;
-        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    }
-    fn i64(&mut self) -> Result<i64, BytecodeError> {
-        let b = self.take(8)?;
-        Ok(i64::from_le_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-        ]))
     }
     /// LEB128 unsigned varint (paired with [`put_varint`]).
     fn varint(&mut self) -> Result<u64, BytecodeError> {
@@ -526,12 +470,8 @@ impl<'a> Cursor<'a> {
         let mut prev = 0i64;
         for _ in 0..n {
             let coeff = self.fieldconst()?;
-            let var = if self.compact {
-                prev += self.ivarint()?;
-                prev as u32
-            } else {
-                self.vu32()?
-            };
+            prev += self.ivarint()?;
+            let var = prev as u32;
             terms.push(Term { coeff, var });
         }
         Ok(LinearCombination { constant, terms })
@@ -541,12 +481,8 @@ impl<'a> Cursor<'a> {
         let mut ids = Vec::with_capacity(n.min(1 << 20));
         let mut prev = 0i64;
         for _ in 0..n {
-            ids.push(if self.compact {
-                prev += self.ivarint()?;
-                prev as u32
-            } else {
-                self.vu32()?
-            });
+            prev += self.ivarint()?;
+            ids.push(prev as u32);
         }
         Ok(ids)
     }
@@ -1478,23 +1414,9 @@ fn try_build_repeat(
 }
 
 /// Compress a homogeneous opcode run (all `Constraint`, or all `Witness`) with
-/// periodic-run rolling, serialized standalone as `u32(item_count)` + the items.
-/// Round-trips exactly via [`decode_and_expand_ops`].
-pub fn roll_and_encode_ops(ops: Vec<Opcode>) -> Vec<u8> {
-    let items = roll_stream(ops);
-    let mut buf = Vec::new();
-    put_u32(&mut buf, items.len() as u32);
-    for it in &items {
-        put_item(&mut buf, it);
-    }
-    buf
-}
-
-/// [`roll_and_encode_ops`] with every count, length and step as a (zigzag)
-/// varint instead of fixed-width `u32`/`i64`, and a body whose notes all stay
-/// unchanged (the usual case) flagged in one byte. Same rolling, same items —
-/// only the integer encoding differs. Round-trips via
-/// [`decode_and_expand_ops_compact`].
+/// periodic-run rolling and encode it: counts, lengths and steps as (zigzag)
+/// varints, and a body whose notes all stay unchanged (the usual case) flagged in
+/// one byte. Round-trips via [`decode_and_expand_ops_compact`].
 ///
 /// Big constants found in `pool` (the container's constant pool: value → index)
 /// are written as an index.
@@ -1527,7 +1449,6 @@ pub fn decode_and_expand_ops_compact(
 ) -> Result<(Vec<R1csRow>, Vec<WitnessGen>), BytecodeError> {
     let mut c = Cursor::new(bytes);
     c.pool = pool;
-    c.compact = true;
     let n = c.varint()? as usize;
     let mut cons = Vec::new();
     let mut wit = Vec::new();
@@ -1582,102 +1503,7 @@ fn put_item_compact(buf: &mut Vec<u8>, item: &Item) {
     }
 }
 
-/// Inverse of [`roll_and_encode_ops`]: decode a rolled-op blob back to flat
-/// constraints and/or witness ops. A homogeneous blob fills only one vector.
-pub fn decode_and_expand_ops(
-    bytes: &[u8],
-) -> Result<(Vec<R1csRow>, Vec<WitnessGen>), BytecodeError> {
-    let mut c = Cursor::new(bytes);
-    let n = c.u32()? as usize;
-    let mut cons = Vec::new();
-    let mut wit = Vec::new();
-    for _ in 0..n {
-        let it = c.item()?;
-        emit_item(&it, &mut cons, &mut wit);
-    }
-    Ok((cons, wit))
-}
-
-fn put_item(buf: &mut Vec<u8>, item: &Item) {
-    match item {
-        Item::Op(op) => {
-            buf.push(ITEM_OP);
-            put_opcode(buf, op);
-        }
-        Item::Repeat(r) => {
-            buf.push(ITEM_REPEAT);
-            put_u32(buf, r.count);
-            put_u32(buf, r.body.len() as u32);
-            for it in &r.body {
-                put_item(buf, it);
-            }
-            put_u32(buf, r.steps.len() as u32);
-            for s in &r.steps {
-                put_i64(buf, *s);
-            }
-            put_u32(buf, r.notes.len() as u32);
-            for nr in &r.notes {
-                match nr {
-                    NoteRule::NoChange => buf.push(NOTE_NOCHANGE),
-                    NoteRule::Template(runs) => {
-                        buf.push(NOTE_TEMPLATE);
-                        put_u32(buf, runs.len() as u32);
-                        for (ri, st) in runs {
-                            put_u32(buf, *ri);
-                            put_i64(buf, *st);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Cursor<'_> {
-    fn item(&mut self) -> Result<Item, BytecodeError> {
-        match self.u8()? {
-            ITEM_OP => Ok(Item::Op(self.opcode()?)),
-            ITEM_REPEAT => {
-                let count = self.u32()?;
-                let n_body = self.u32()? as usize;
-                let mut body = Vec::with_capacity(n_body);
-                for _ in 0..n_body {
-                    body.push(self.item()?);
-                }
-                let n_steps = self.u32()? as usize;
-                let mut steps = Vec::with_capacity(n_steps);
-                for _ in 0..n_steps {
-                    steps.push(self.i64()?);
-                }
-                let n_notes = self.u32()? as usize;
-                let mut notes = Vec::with_capacity(n_notes);
-                for _ in 0..n_notes {
-                    notes.push(match self.u8()? {
-                        NOTE_NOCHANGE => NoteRule::NoChange,
-                        NOTE_TEMPLATE => {
-                            let nr = self.u32()? as usize;
-                            let mut runs = Vec::with_capacity(nr);
-                            for _ in 0..nr {
-                                let ri = self.u32()?;
-                                let st = self.i64()?;
-                                runs.push((ri, st));
-                            }
-                            NoteRule::Template(runs)
-                        }
-                        t => return Err(BytecodeError::BadTag(t)),
-                    });
-                }
-                Ok(Item::Repeat(Repeat {
-                    count,
-                    body,
-                    steps,
-                    notes,
-                }))
-            }
-            t => Err(BytecodeError::BadTag(t)),
-        }
-    }
-}
+impl Cursor<'_> {}
 
 impl Cursor<'_> {
     fn ivarint(&mut self) -> Result<i64, BytecodeError> {
@@ -1848,6 +1674,9 @@ mod tests {
     /// witness run, and a large periodic run compresses to a handful of bytes.
     #[test]
     fn roll_and_encode_ops_round_trips_and_compresses() {
+        let pool = std::sync::Arc::new(BTreeMap::new());
+        let enc = |ops| roll_and_encode_ops_compact(ops, &pool);
+        let dec = |b: &[u8]| decode_and_expand_ops_compact(b, &[]);
         for n in [1u32, 2, 8, 64, 254] {
             let prim = periodic_program(n);
             let cops: Vec<Opcode> = prim
@@ -1856,7 +1685,7 @@ mod tests {
                 .cloned()
                 .map(Opcode::Constraint)
                 .collect();
-            let (cons, wit) = decode_and_expand_ops(&roll_and_encode_ops(cops)).unwrap();
+            let (cons, wit) = dec(&enc(cops)).unwrap();
             assert_eq!(cons, prim.constraints, "n={n} constraint round-trip");
             assert!(wit.is_empty(), "n={n} constraint blob has no witness");
 
@@ -1866,7 +1695,7 @@ mod tests {
                 .cloned()
                 .map(Opcode::Witness)
                 .collect();
-            let (cons, wit) = decode_and_expand_ops(&roll_and_encode_ops(wops)).unwrap();
+            let (cons, wit) = dec(&enc(wops)).unwrap();
             assert_eq!(wit, prim.witness_gen, "n={n} witness round-trip");
             assert!(cons.is_empty(), "n={n} witness blob has no constraints");
         }
@@ -1878,13 +1707,13 @@ mod tests {
             .cloned()
             .map(Opcode::Constraint)
             .collect();
-        let rolled = roll_and_encode_ops(cops);
+        let rolled = enc(cops);
         assert!(
             rolled.len() < 200,
             "expected tiny rolled blob, got {}",
             rolled.len()
         );
-        let (cons, _) = decode_and_expand_ops(&rolled).unwrap();
+        let (cons, _) = dec(&rolled).unwrap();
         assert_eq!(cons, big.constraints, "1000-run round-trip");
     }
 }

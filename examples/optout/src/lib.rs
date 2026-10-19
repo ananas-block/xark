@@ -1,7 +1,8 @@
 #![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
-// all-Field, called many times → gadget by default, UNLESS the user opts out.
+// `#[inline(never)]` keeps `sq` a separate wasm call. That only affects how the
+// artifact is encoded (a repeated call can become a template), never the circuit.
 #[inline(never)]
 fn sq(x: Field) -> Field {
     x * x
