@@ -138,11 +138,16 @@ jobs:
   example-sweep:
     # Every example on its own test inputs, plus single-leaf mutations of them,
     # each decided by exhaustive witness search: exactly one witness where the
-    # test accepts, none where it rejects (scripts/difftest-examples.sh). Too slow
-    # for every push; a failure names the example and the input.
-    name: adversarial example sweep
+    # test accepts, none where it rejects (scripts/difftest-examples.sh). Split
+    # into four shards that run side by side; a failure names the example and the
+    # input. A whole-ed25519 search peaks near 7 GB.
+    name: adversarial example sweep (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -152,5 +157,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
-      - name: Sweep every example
+      - name: Sweep this shard's examples
+        env:
+          XARK_SWEEP_SHARD: ${{ matrix.shard }}/4
+          XARK_SWEEP_JOBS: "2"
         run: scripts/difftest-examples.sh
