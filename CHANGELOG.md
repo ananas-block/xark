@@ -79,6 +79,8 @@ gadgets now check more:
   (`CircuitProof`, the same bytes `xark prove` writes); `prove_with_key` takes
   another key. The throwaway-keys round trip it used to do is now `prove_dev`.
   `prove_only` / `prove_and_verify` / `check_fields` are no longer public.
+  `circuit` / `circuit_at` load `circuit.xbc` only (the `circuit.json` +
+  `r1cs.json` fallback is gone, like the CLI's).
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).
 - Generated clients for `cube`, `zk_kyc`, `sha256` and `merkle` are committed in

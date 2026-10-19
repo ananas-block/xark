@@ -43,13 +43,12 @@ const BN254_MODULUS: &[u8] =
 ///
 /// Returns `Err` with a descriptive message if `s` is not a valid decimal
 /// integer. Use this on any constant that originates from untrusted input
-/// (e.g. a deserialized `r1cs.json`); it never panics.
+/// (e.g. a deserialized R1CS); it never panics.
 pub fn try_fr_from_decimal(s: &str) -> Result<Fr, String> {
     // Fast path: small integer constants (the vast majority — `0`, `±1`, `±2`,
     // small gadget constants) go straight to `Fr` with no `BigInt` allocation and
     // no modulus reduction (`Fr::from` handles sign + reduction natively). This is
-    // the hot path in both `validate_program_constants` and the constraint
-    // synthesizer, which parse every R1CS coefficient.
+    // the hot path when parsing every coefficient of an R1CS.
     let t = s.trim();
     if let Ok(n) = t.parse::<i64>() {
         let mag = Fr::from(n.unsigned_abs());
@@ -78,9 +77,8 @@ pub fn fr_from_decimal(s: &str) -> Fr {
 
 /// Convert a [`FieldConst`] straight to `Fr`, skipping the `decimal()` round-trip:
 /// the small-integer fast path goes direct, the big path reduces the stored
-/// `BigInt`'s little-endian bytes (`from_le_bytes_mod_order`). Since the Groth16
-/// synthesizer parses every coefficient at both setup and prove, avoiding the
-/// `BigInt→String→BigInt` round-trip is the dominant synthesis speedup. Infallible.
+/// `BigInt`'s little-endian bytes (`from_le_bytes_mod_order`), avoiding a
+/// `BigInt→String→BigInt` round-trip per coefficient. Infallible.
 pub fn fr_from_fieldconst(fc: &FieldConst) -> Fr {
     if let Some(n) = fc.as_i64() {
         let mag = Fr::from(n.unsigned_abs());
@@ -188,7 +186,7 @@ impl XarkCircuit {
 
     /// For Groth16 setup from an **already-minimized** `prog` — skips
     /// `maybe_minimize`. Pair with [`Self::for_proving_preminimized`] so setup and
-    /// prove synthesize the *identical* circuit: re-running `maybe_minimize` here on a
+    /// prove use the *identical* circuit: re-running `maybe_minimize` here on a
     /// circuit the caller already minimized (possibly under a different `XARK_MAX_FILL`)
     /// could reduce it further and desync the proving key from the proof. The caller
     /// owns the minimization policy; both sides consume its exact result.
@@ -199,21 +197,20 @@ impl XarkCircuit {
         }
     }
 
-    /// For proving from an **already-minimized** `prog` (e.g. `xark setup`'s
-    /// cached minimized R1CS) — skips `maybe_minimize`, since re-running it would
+    /// For proving from an **already-minimized** `prog` — skips `maybe_minimize`, since re-running it would
     /// just reproduce the same fixpoint. The `prog` must be the exact minimized
     /// circuit the proving key was generated from.
     pub fn for_proving_preminimized(prog: R1csProgram, assign: BTreeMap<VarId, Fr>) -> Self {
         Self { prog, assign }
     }
 
-    /// The (minimized) R1CS this circuit will synthesize — used by `xark setup`
-    /// to cache exactly what the proving key is keyed to.
     /// The witness values, by variable id (empty for a setup-only circuit).
     pub fn assignment(&self) -> &BTreeMap<VarId, Fr> {
         &self.assign
     }
 
+    /// The (minimized) R1CS this circuit proves — exactly what its proving key
+    /// is generated from.
     pub fn prog(&self) -> &R1csProgram {
         &self.prog
     }
@@ -229,19 +226,18 @@ impl XarkCircuit {
     /// one this returns a descriptive `Err` instead of letting proving panic.
     ///
     /// Call this before handing a circuit built from *untrusted* input (e.g. a
-    /// deserialized `r1cs.json`) to the Groth16 backend.
+    /// deserialized R1CS) to the Groth16 backend.
     pub fn validate(&self) -> Result<(), String> {
         validate_program_constants(&self.prog)
     }
 }
 
-/// Reject an R1CS program that would crash the synthesizer, returning a
-/// descriptive error. Used to fail gracefully on an untrusted program before the
-/// panicking synthesis path runs.
+/// Reject an R1CS program that would crash the prover, returning a descriptive
+/// error. Used to fail gracefully on an untrusted program before proving.
 fn validate_program_constants(prog: &R1csProgram) -> Result<(), String> {
-    // Every term must reference a declared variable: `generate_constraints`
-    // indexes `map[&t.var]`, which panics on a dangling id. Reject it here so a
-    // malformed `r1cs.json` is a clean error, not a crash. Coefficients need no
+    // Every term must reference a declared variable: the prover looks each one
+    // up and would panic on a dangling id. Reject it here so a malformed
+    // program is a clean error, not a crash. Coefficients need no
     // check: a `FieldConst` is already a validated field value (an invalid decimal
     // fails at deserialization), and `fr_from_fieldconst` reduces any value mod p.
     let valid_ids: BTreeSet<VarId> = prog.variables.iter().map(|v| v.id).collect();
@@ -295,7 +291,7 @@ fn prove_only(
     inputs: &BTreeMap<VarId, String>,
 ) -> Result<(VerifyingKey<Bn254>, Proof<Bn254>, Vec<Fr>), String> {
     // Reject a malformed R1CS program (bad decimal constant) up front with a
-    // descriptive error, rather than panicking inside Groth16 synthesis.
+    // descriptive error, rather than panicking inside the prover.
     validate_program_constants(r1cs)?;
     let assign_fp = solver::solve_and_check(circuit, inputs)
         .map_err(|e| format!("witness does not satisfy the circuit: {e:?}"))?;
@@ -367,9 +363,9 @@ pub struct Circuit {
     r1cs: R1csProgram,
     prim: PrimitiveProgram,
     /// Per-constraint source/function attribution, loaded from `profile.json` when
-    /// present (built by `xark test` or `xark build --profile`). Used to explain
-    /// *which* source line / function a failing constraint came from. `None` when
-    /// the circuit was built without `--profile`.
+    /// present (`xark test` and `xark profile` write it; a plain `xark build`
+    /// doesn't). Used to explain *which* source line / function a failing
+    /// constraint came from.
     profile: Option<ProfileProgram>,
 }
 
@@ -525,7 +521,7 @@ fn try_autobuild(dir: &std::path::Path) {
     // taking the lock, re-check — another thread may have just built it.
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if dir.join("circuit.xbc").exists() || dir.join("circuit.json").exists() {
+    if dir.join("circuit.xbc").exists() {
         return;
     }
     let crate_dir = dir
@@ -550,10 +546,9 @@ pub fn circuit(name: &str) -> Circuit {
     circuit_at(std::path::Path::new("target/xark").join(name))
 }
 
-/// Load a circuit from an explicit artifact directory (`<dir>/circuit.xbc`, or the
-/// legacy `circuit.json` + `r1cs.json` pair). [`circuit`] is the sugar for the
-/// conventional `target/xark/<name>/` location. The circuit name (for diagnostics)
-/// is the directory's final component.
+/// Load a circuit from an explicit artifact directory (`<dir>/circuit.xbc`).
+/// [`circuit`] is the sugar for the conventional `target/xark/<name>/` location.
+/// The circuit name (for diagnostics) is the directory's final component.
 pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
     let dir = dir.as_ref();
     let name = dir
@@ -562,51 +557,27 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
         .unwrap_or("circuit")
         .to_string();
     let xbc_path = dir.join("circuit.xbc");
-    let circuit_path = dir.join("circuit.json");
-    let r1cs_path = dir.join("r1cs.json");
 
     // The common failure is "forgot to build". Try a best-effort auto-build so
     // `cargo test` on a `#[circuit]` example just works; if that can't run (no
     // `xark` on `PATH`/`$XARK`), fall through to the clear "run `xark build`"
     // guidance rather than a raw file/parse error from deeper in the load.
-    if !xbc_path.exists() && !circuit_path.exists() {
+    if !xbc_path.exists() {
         try_autobuild(dir);
     }
-    if !xbc_path.exists() && !circuit_path.exists() {
+    if !xbc_path.exists() {
         panic!("{}", not_built_message(&name, &xbc_path));
     }
 
-    // The compact binary `circuit.xbc` that `xark build` always writes is
-    // self-contained: expanding it once yields BOTH the solver's primitive view
-    // and the backend's R1CS. Fall back to the JSON pair (`circuit.json` +
-    // `r1cs.json`) only for older / `--emit-json` builds.
-    let (prim, r1cs) = if xbc_path.exists() {
-        let bytes = std::fs::read(&xbc_path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", xbc_path.display()));
-        let cp = xark_ir::function_decode::expand_function_blob(&bytes)
-            .unwrap_or_else(|e| panic!("expanding {}: {e}", xbc_path.display()));
-        (cp.to_primitive(), cp.to_r1cs())
-    } else {
-        let cj = std::fs::read_to_string(&circuit_path).unwrap_or_else(|_| {
-            panic!(
-                "circuit `{name}` not built — run `xark build` first (expected {})",
-                xbc_path.display()
-            )
-        });
-        let prim = xark_ir::primitive::from_json(&cj)
-            .unwrap_or_else(|e| panic!("parsing {}: {e}", circuit_path.display()));
-        let rj = std::fs::read_to_string(&r1cs_path).unwrap_or_else(|_| {
-            panic!(
-                "circuit `{name}` not built — run `xark build` first (expected {})",
-                r1cs_path.display()
-            )
-        });
-        let r1cs = xark_ir::json::from_json(&rj)
-            .unwrap_or_else(|e| panic!("parsing {}: {e}", r1cs_path.display()));
-        (prim, r1cs)
-    };
+    // `circuit.xbc` is self-contained: expanding it once yields both the
+    // solver's primitive view and the backend's R1CS.
+    let bytes =
+        std::fs::read(&xbc_path).unwrap_or_else(|e| panic!("reading {}: {e}", xbc_path.display()));
+    let cp = xark_ir::function_decode::expand_function_blob(&bytes)
+        .unwrap_or_else(|e| panic!("expanding {}: {e}", xbc_path.display()));
+    let (prim, r1cs) = (cp.to_primitive(), cp.to_r1cs());
     // Best-effort: load the per-constraint attribution if the circuit was built
-    // with `--profile` (as `xark test` does). Absent or malformed → `None`; the
+    // with profiling (as `xark test` does). Absent or malformed → `None`; the
     // failure diagnostic then degrades to the constraint index + its debug note.
     let profile = std::fs::read_to_string(dir.join("profile.json"))
         .ok()
@@ -870,7 +841,7 @@ impl Circuit {
             Ok(true) => Ok(()),
             Ok(false) | Err(_) => Err(ProveError(format!(
                 "circuit `{}` has a satisfying witness but its proof did not verify — the R1CS \
-                 and witness-gen (`r1cs.json` vs `circuit.json`) disagree",
+                 and the witness generator disagree",
                 self.name
             ))),
         }
@@ -1014,8 +985,8 @@ mod tests {
 
     #[test]
     fn validate_rejects_dangling_variable() {
-        // A term referencing an undeclared variable id would panic at
-        // `map[&t.var]` during synthesis; validation must reject it cleanly.
+        // A term referencing an undeclared variable id would panic in the
+        // prover; validation must reject it cleanly.
         let (mut r1cs, _) = demo();
         r1cs.constraints[1].a.terms.push(xark_ir::Term {
             coeff: FieldConst::from_i64(1),
