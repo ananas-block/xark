@@ -62,12 +62,16 @@ gadgets now check more:
   `examples/<name>/client/` with tests that prove and verify through xark-wasm;
   `scripts/client-check.sh` (in CI) keeps them current.
 - Exhaustive witness search (`xark_ir::witness_search`) and
-  `scripts/difftest-examples.sh`, which check that each example accepts exactly
-  the inputs it should, with exactly one witness.
+  `scripts/difftest-examples.sh` (daily in CI), which check that each example
+  accepts exactly the inputs it should, with exactly one witness. It covers every
+  example except the two ECDSA circuits, including the whole ed25519 verify
+  circuit; the ECDSA ones are searched block by block.
 - `xark-groth16` is published.
 
 ### Fixed
 
+- Witness search skips rows it provably can't learn from, so wide circuits decide
+  in seconds instead of timing out (a Grumpkin IPA search: 107 s → 4 s).
 - `xark ceremony init` reads the build's `circuit.xbc` like every other command
   (it required an `r1cs.json`, which `xark build` no longer writes by default),
   and the ceremony has a CLI end-to-end test again.

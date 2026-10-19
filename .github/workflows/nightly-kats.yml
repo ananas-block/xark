@@ -134,3 +134,23 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
         run: scripts/stable-digests.sh --check
+
+  example-sweep:
+    # Every example on its own test inputs, plus single-leaf mutations of them,
+    # each decided by exhaustive witness search: exactly one witness where the
+    # test accepts, none where it rejects (scripts/difftest-examples.sh). Too slow
+    # for every push; a failure names the example and the input.
+    name: adversarial example sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Install stable Rust + wasm32
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Sweep every example
+        run: scripts/difftest-examples.sh

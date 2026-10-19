@@ -361,14 +361,18 @@ phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
   fuzzer whose every verdict is an exhaustive witness search
   (`crates/lang/tests/semantics_fuzz.rs`, `xark_ir::witness_search`), and the same
   search over every example's own test inputs and mutations of them
-  (`scripts/difftest-examples.sh`; the AES-CTR/GCM circuits are searched whole). The
-  ECDSA and EdDSA circuits are too big to search whole, so their building blocks
-  are searched one by one at full size against native references
-  (`signature_blocks_are_sound`, `aes_blocks_are_sound` in `snapshot.rs`); the
-  blocks that need a 256-bit non-native inverse, which search can't decide, are
-  searched over small fields for both curve shapes and proven in Lean. What is not
-  searched is how the blocks are wired together inside the scalar-multiplication
-  loops; the known-answer and tamper tests cover that.
+  (`scripts/difftest-examples.sh`, daily in `nightly-kats.yml`). That includes the
+  AES-CTR/GCM circuits and the whole **EdDSA** circuit (2.4M rows, scalar
+  multiplication included: every valid signature has exactly one witness, every
+  mutated input none), since none of them needs a non-native inverse. The
+  **ECDSA** circuits do (their incomplete-affine point operations hint `λ` modulo a
+  256-bit prime), which search can't decide, so they are checked in pieces: every
+  building block at full size against native references
+  (`signature_blocks_are_sound`, `aes_blocks_are_sound` in `snapshot.rs`), and the
+  inverse-based point operations over small fields for both curve shapes
+  (`small_field_curve_gadgets_are_sound`) and in Lean. What no search covers is how
+  the ECDSA blocks are chained in the scalar-multiplication loop (see
+  [§6](#6-recommended-audit-scope)); the known-answer and tamper tests cover it.
 * **Solana on-chain verifier.** `crates/verifier/` is tested in Mollusk on the real
   `alt_bn128` syscalls (`gadgets/tests/tests/sbpf.rs` — positive across every committed
   circuit plus on-chain negatives) and fuzzed (`fuzz.rs`). **Never deployed to mainnet**;
@@ -436,6 +440,12 @@ External auditors should focus first on:
    The little-endian G2 `(c0, c1)` component order and the 32-byte LE limb encoding
    (`encode_g2_le` / `assemble_*_bytes_le`) are the easiest to get wrong; round-trip
    tests in `solana::tests` pin them.
-3. **The on-chain verifier** — `crates/verifier/src/verifier.rs`. The instruction-data
+3. **ECDSA scalar multiplication** — the secp256k1 (GLV) and secp256r1 verify loops
+   (`double_scalar_mul_incomplete` in `gadgets/xark-curve`, `ecdsa_verify_packed` in
+   `xark-secp256k1`). Each block is searched or proven, but not the loop as a whole:
+   review that the offset accumulator and correction constants keep every
+   incomplete addition away from its exceptional cases (`x₁ = x₂`) for every
+   scalar, and the GLV decomposition's bounds.
+4. **The on-chain verifier** — `crates/verifier/src/verifier.rs`. The instruction-data
    parser (`split_instruction_data`), pairing input assembly, and the pre-negated `A`
    convention should be reviewed against a concrete proof byte-for-byte.
