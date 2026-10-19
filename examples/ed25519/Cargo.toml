@@ -9,7 +9,6 @@ path = "src/lib.rs"
 
 [dependencies]
 xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
-xark-bignum = { path = "../../gadgets/xark-bignum", version = "0.3.0" }
 xark-ed25519 = { path = "../../gadgets/xark-ed25519", version = "0.3.0" }
 
 [dev-dependencies]

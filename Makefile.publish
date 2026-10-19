@@ -10,7 +10,7 @@
 
 .PHONY: publish publish-dry $(addprefix pub-,$(PKGS))
 
-PKGS := xark-curve xark-ir xark-macros xark-verifier xark-frontend xark-groth16 xark-backend xark-prover xark-test-harness xark xark-aes xark-bignum xark-bits xark-cli xark-grumpkin xark-hash xark-mimc xark-pedersen xark-poseidon xark-poseidon2 xark-blake2s xark-blake3 xark-ed25519 xark-keccak xark-merkle xark-secp256k1 xark-secp256r1 xark-sha256
+PKGS := xark-curve xark-ir xark-macros xark-verifier xark-frontend xark-groth16 xark-backend xark-prover xark-test-harness xark xark-cli xark-aes xark-bignum xark-bits xark-grumpkin xark-hash xark-mimc xark-pedersen xark-poseidon xark-poseidon2 xark-blake2s xark-blake3 xark-ed25519 xark-keccak xark-merkle xark-secp256k1 xark-secp256r1 xark-sha256
 
 publish:
 	@echo ">>> publishing xark-curve"
@@ -33,14 +33,14 @@ publish:
 	cargo publish -p xark-test-harness
 	@echo ">>> publishing xark"
 	(cd crates/lang && cargo publish)
+	@echo ">>> publishing xark-cli"
+	cargo publish -p xark-cli
 	@echo ">>> publishing xark-aes"
 	cargo publish -p xark-aes
 	@echo ">>> publishing xark-bignum"
 	cargo publish -p xark-bignum
 	@echo ">>> publishing xark-bits"
 	cargo publish -p xark-bits
-	@echo ">>> publishing xark-cli"
-	cargo publish -p xark-cli
 	@echo ">>> publishing xark-grumpkin"
 	cargo publish -p xark-grumpkin
 	@echo ">>> publishing xark-hash"

@@ -22,7 +22,6 @@ xark-groth16 = { path = "../groth16", version = "0.3.0" }
 
 thiserror.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 hex.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
