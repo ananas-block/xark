@@ -1,9 +1,10 @@
 # xark-groth16
 
-A **streaming Groth16 (BN254) prover**. It proves against the same proving keys
-and produces proofs for the same verifier as the arkworks path — for the same
-randomness `(r, s)` the proof is **byte-identical** — but never materializes the
-constraint system or the proving key.
+xark's **Groth16 (BN254)**: key generation, a **streaming prover**,
+verification, and the key/proof types. Keys and proofs are byte-compatible with
+`ark-groth16` (for the same randomness `(r, s)` the proof is **byte-identical**,
+checked in the tests, where `ark-groth16` is a dev-dependency), but the prover
+never materializes the constraint system or the proving key.
 
 | piece | what it does |
 |---|---|

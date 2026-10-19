@@ -38,6 +38,17 @@ gadgets now check more:
   proofs are compatible with the arkworks path (byte-identical for the same
   randomness).
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
+- **arkworks' Groth16 removed.** `xark-groth16` now owns the whole Groth16 stack:
+  key generation, the prover, verification, and the `Proof` / `VerifyingKey` /
+  `ProvingKey` types, which serialize byte-for-byte like `ark-groth16`'s, so
+  existing key and proof files still load. arkworks is only the BN254 arithmetic
+  (`ark-bn254` / `ark-ff` / `ark-ec`); `ark-groth16`, `ark-relations` and
+  `ark-snark` are test-only, as an independent reference. API changes:
+  `xark_backend::{setup, prove, stream_prove}` are gone;
+  `xark_backend::ptau::setup_from_ptau` takes a constraint source;
+  `xark_prover::XarkCircuit` no longer implements arkworks' circuit trait; and
+  verification rejects a wrong number of public inputs instead of ignoring the
+  difference.
 - **snarkjs output removed.** `xark setup` no longer writes
   `snarkjs-verification_key.json`, `xark prove` no longer writes
   `snarkjs-proof.json` / `snarkjs-public.json`, and xark-wasm drops

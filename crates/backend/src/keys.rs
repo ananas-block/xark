@@ -2,11 +2,11 @@
 
 use ark_bn254::{Bn254, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
-use ark_groth16::{ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use xark_groth16::{ProvingKey, VerifyingKey};
 
 use crate::serialization::{canonical_read_from_file, canonical_write_to_file};
 
@@ -80,8 +80,12 @@ impl Groth16Keys {
     /// by verifiers). Decompression's on-curve check still runs, so a corrupt
     /// point is still rejected.
     pub fn read_proving_key(path: &Path) -> std::io::Result<ProvingKey<Bn254>> {
-        let bytes = std::fs::read(path)?;
-        let (compress, body) = pk_compression(&bytes);
+        Self::decode_proving_key(&std::fs::read(path)?)
+    }
+
+    /// [`Self::read_proving_key`] from bytes already in memory (header included).
+    pub fn decode_proving_key(bytes: &[u8]) -> std::io::Result<ProvingKey<Bn254>> {
+        let (compress, body) = pk_compression(bytes);
         read_proving_key_parallel(body, compress).map_err(|e| std::io::Error::other(e.to_string()))
     }
 

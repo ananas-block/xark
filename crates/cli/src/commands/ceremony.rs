@@ -134,7 +134,8 @@ fn run_init(args: InitArgs) -> Result<()> {
         .with_context(|| format!("reading {}", args.ptau_file.display()))?;
     let ptau = parse_ptau(&ptau_bytes).context("parsing .ptau file")?;
 
-    let keys = xark_backend::ptau::setup_from_ptau(circuit, &ptau, &seed_arr)
+    let src = xark_groth16::ProgramSource::new(circuit.prog());
+    let keys = xark_backend::ptau::setup_from_ptau(&src, &ptau, &seed_arr)
         .map_err(|e| anyhow!("phase-2 setup failed: {e}"))?;
 
     fs::create_dir_all(&args.out).with_context(|| format!("creating {}", args.out.display()))?;

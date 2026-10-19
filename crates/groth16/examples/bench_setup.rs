@@ -14,6 +14,12 @@ use ark_bn254::Bn254;
 use ark_groth16::Groth16;
 use ark_serialize::Compress;
 use ark_snark::SNARK;
+
+#[path = "../tests/support/ark.rs"]
+mod ark;
+#[path = "../tests/support/phase2_ark.rs"]
+mod phase2_ark;
+use ark::{ArkCircuit, convert};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use xark_groth16::BytecodeSource;
@@ -30,12 +36,14 @@ fn main() {
                 .unwrap()
                 .into_r1cs();
             let circ = XarkCircuit::for_setup_preminimized(prog);
-            let (pk, vk) =
-                Groth16::<Bn254>::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(7))
-                    .unwrap();
+            let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
+                ArkCircuit::of(&circ),
+                &mut ChaCha20Rng::seed_from_u64(7),
+            )
+            .unwrap();
             xark_backend::Groth16Keys {
-                proving_key: pk,
-                verifying_key: vk,
+                proving_key: convert(&pk),
+                verifying_key: convert(&vk),
             }
             .write_proving_key_mode(out.as_ref(), Compress::Yes)
             .unwrap();
@@ -62,12 +70,16 @@ fn main() {
                 let prog = xark_ir::function_decode::expand_function_blob_reduced(&xbc)
                     .unwrap()
                     .into_r1cs();
-                let keys = xark_backend::ptau::setup_from_ptau(
-                    XarkCircuit::for_setup_preminimized(prog),
+                let (pk, vk) = phase2_ark::setup_from_ptau(
+                    ArkCircuit::of(&XarkCircuit::for_setup_preminimized(prog)),
                     &ptau,
                     &seed,
                 )
                 .unwrap();
+                let keys = xark_backend::Groth16Keys {
+                    proving_key: convert(&pk),
+                    verifying_key: convert(&vk),
+                };
                 keys.write_proving_key_mode(out.as_ref(), Compress::Yes)
                     .unwrap();
             } else {

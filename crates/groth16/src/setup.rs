@@ -19,11 +19,11 @@
 use std::io::Write;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::types::VerifyingKey;
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::scalar_mul::BatchMulPreprocessing;
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::{Field, One, UniformRand, Zero};
-use ark_groth16::VerifyingKey;
 use ark_poly::{EvaluationDomain, GeneralEvaluationDomain, MixedRadixEvaluationDomain};
 use ark_serialize::{CanonicalSerialize, Compress};
 use rand::{RngCore, SeedableRng};

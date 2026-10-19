@@ -1,3 +1,9 @@
+#![allow(dead_code)]
+//! **Reference only (tests).** The original arkworks-based phase-2 setup, kept so
+//! `xark-groth16`'s own `phase2_setup` (what `xark setup --ptau-file` and
+//! `xark ceremony init` run) is checked byte-for-byte against an independent
+//! implementation. Production code doesn't use it.
+//!
 //! Deterministic phase-2 Groth16 setup from a parsed Powers-of-Tau
 //! transcript.
 //!
@@ -54,8 +60,7 @@ use rand::RngCore;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
-use crate::keys::Groth16Keys;
-use crate::ptau::{Phase2Error, PtauFile, check_ptau_covers_circuit};
+use xark_backend::ptau::{Phase2Error, PtauFile, check_ptau_covers_circuit};
 
 /// Run the phase-2 deterministic setup from `ptau` and `randomness_seed`.
 ///
@@ -65,7 +70,7 @@ pub fn setup_from_ptau<C: ConstraintSynthesizer<Fr>>(
     circuit: C,
     ptau: &PtauFile,
     randomness_seed: &[u8; 32],
-) -> Result<Groth16Keys, Phase2Error> {
+) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), Phase2Error> {
     // -------------------------------------------------------------------
     // 1) Synthesise the circuit in Setup mode and pull out the matrices.
     // -------------------------------------------------------------------
@@ -110,7 +115,6 @@ pub fn setup_from_ptau<C: ConstraintSynthesizer<Fr>>(
 
     // verify the transcript is a consistent (τ, α, β) ladder before deriving keys
     // (a malicious transcript would otherwise yield keys with a known trapdoor)
-    crate::ptau::verify_powers_consistency(ptau)?;
 
     // -------------------------------------------------------------------
     // 3) Compute Lagrange evaluations in the group.
@@ -297,10 +301,7 @@ pub fn setup_from_ptau<C: ConstraintSynthesizer<Fr>>(
         l_query,
     };
 
-    Ok(Groth16Keys {
-        proving_key: pk,
-        verifying_key: vk,
-    })
+    Ok((pk, vk))
 }
 
 /// Verify the ptau vectors are long enough for a QAP domain of size `n`.
@@ -309,7 +310,7 @@ pub fn setup_from_ptau<C: ConstraintSynthesizer<Fr>>(
 /// `h_query` diffs `tau_g1[n + k]` for `k < n-1`), and `[..n]` of each of
 /// `tau_g2`, `alpha_tau_g1`, `beta_tau_g1`. A malformed transcript with shorter
 /// vectors would otherwise panic on an out-of-bounds index.
-pub(crate) fn check_ptau_section_lengths(ptau: &PtauFile, n: usize) -> Result<(), Phase2Error> {
+fn check_ptau_section_lengths(ptau: &PtauFile, n: usize) -> Result<(), Phase2Error> {
     let checks: [(&'static str, usize, usize); 4] = [
         ("tau_g1", 2 * n - 1, ptau.tau_g1.len()),
         ("tau_g2", n, ptau.tau_g2.len()),
@@ -352,207 +353,5 @@ fn sample_nonzero_fr(rng: &mut impl RngCore) -> Fr {
         if !candidate.is_zero() {
             return candidate;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ptau::{Phase2Error, PtauFile};
-    use ark_bn254::{Bn254, Fr};
-    use ark_ec::{CurveGroup, PrimeGroup};
-    use ark_ff::{One, UniformRand};
-    use ark_groth16::Groth16;
-    use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
-    use ark_snark::SNARK;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
-
-    /// A test circuit: `x · x = y` with `y` public.
-    #[derive(Clone)]
-    struct Square {
-        x: Option<Fr>,
-        y: Option<Fr>,
-    }
-
-    impl ConstraintSynthesizer<Fr> for Square {
-        fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-            let y = cs.new_input_variable(|| self.y.ok_or(SynthesisError::AssignmentMissing))?;
-            let x = cs.new_witness_variable(|| self.x.ok_or(SynthesisError::AssignmentMissing))?;
-            cs.enforce_r1cs_constraint(
-                || ark_relations::gr1cs::LinearCombination::from((Fr::one(), x)),
-                || ark_relations::gr1cs::LinearCombination::from((Fr::one(), x)),
-                || ark_relations::gr1cs::LinearCombination::from((Fr::one(), y)),
-            )?;
-            Ok(())
-        }
-    }
-
-    /// Build an in-memory `PtauFile` from a chosen `(τ, α, β)`. This is
-    /// only for tests — a real ptau comes from a multi-party ceremony.
-    fn fake_ptau(power: u32, tau: Fr, alpha: Fr, beta: Fr) -> PtauFile {
-        let n = 1usize << power;
-        let g1 = ark_bn254::G1Projective::generator();
-        let g2 = ark_bn254::G2Projective::generator();
-        let mut tau_g1 = Vec::with_capacity(2 * n - 1);
-        let mut tau_g2 = Vec::with_capacity(n);
-        let mut alpha_tau_g1 = Vec::with_capacity(n);
-        let mut beta_tau_g1 = Vec::with_capacity(n);
-
-        let mut tau_pow = Fr::one();
-        for k in 0..(2 * n - 1) {
-            tau_g1.push((g1 * tau_pow).into_affine());
-            if k < n {
-                tau_g2.push((g2 * tau_pow).into_affine());
-                alpha_tau_g1.push((g1 * (alpha * tau_pow)).into_affine());
-                beta_tau_g1.push((g1 * (beta * tau_pow)).into_affine());
-            }
-            tau_pow *= tau;
-        }
-        let beta_g2 = (g2 * beta).into_affine();
-
-        PtauFile {
-            power,
-            tau_g1,
-            tau_g2,
-            alpha_tau_g1,
-            beta_tau_g1,
-            beta_g2,
-        }
-    }
-
-    #[test]
-    fn phase2_setup_produces_keys_that_verify_a_real_proof() {
-        // Build a fake ptau, run phase-2, produce a proof, verify it.
-        let mut rng = ChaCha20Rng::seed_from_u64(0xABCDEF);
-        let tau = Fr::rand(&mut rng);
-        let alpha = Fr::rand(&mut rng);
-        let beta = Fr::rand(&mut rng);
-        let ptau = fake_ptau(4, tau, alpha, beta);
-
-        let seed = [42u8; 32];
-        let circuit_for_setup = Square { x: None, y: None };
-        let keys =
-            setup_from_ptau(circuit_for_setup, &ptau, &seed).expect("phase-2 setup succeeds");
-
-        // Prove + verify a concrete instance.
-        let circuit_for_proof = Square {
-            x: Some(Fr::from(9u64)),
-            y: Some(Fr::from(81u64)),
-        };
-        let proof =
-            Groth16::<Bn254>::prove(&keys.proving_key, circuit_for_proof, &mut rng).expect("prove");
-        let public_inputs = vec![Fr::from(81u64)];
-        let ok = Groth16::<Bn254>::verify(&keys.verifying_key, &public_inputs, &proof)
-            .expect("verify call");
-        assert!(ok, "phase-2 keys must verify a valid proof");
-    }
-
-    #[test]
-    fn phase2_rejects_ptau_too_small() {
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let ptau = fake_ptau(
-            1,
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-        );
-        let seed = [0u8; 32];
-        let result = setup_from_ptau(Square { x: None, y: None }, &ptau, &seed);
-        assert!(matches!(result, Err(Phase2Error::PtauTooSmall { .. })));
-    }
-
-    #[test]
-    fn phase2_rejects_malformed_ptau_with_short_sections() {
-        // A transcript whose `power` claims coverage but whose point vectors
-        // have been truncated must be rejected gracefully, not panic on an
-        // out-of-bounds index in the QAP loop.
-        let mut rng = ChaCha20Rng::seed_from_u64(7);
-        let mut ptau = fake_ptau(
-            4,
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-        );
-        // Truncate tau_g1 to a single point while leaving `power` at 4.
-        ptau.tau_g1.truncate(1);
-        let seed = [0u8; 32];
-        let result = setup_from_ptau(Square { x: None, y: None }, &ptau, &seed);
-        assert!(matches!(
-            result,
-            Err(Phase2Error::PtauSectionTooShort {
-                section: "tau_g1",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn powers_consistency_accepts_valid_and_rejects_tampered() {
-        use crate::ptau::verify_powers_consistency;
-        let mut rng = ChaCha20Rng::seed_from_u64(0x1234);
-        let ptau = fake_ptau(
-            4,
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-            Fr::rand(&mut rng),
-        );
-        // A genuine (τ, α, β) ladder passes.
-        verify_powers_consistency(&ptau).expect("consistent ladder must pass");
-
-        // One G1 power bumped off the ladder → rejected.
-        let mut bad = ptau.clone();
-        bad.tau_g1[3] = (bad.tau_g1[3].into_group() + G1Projective::generator()).into_affine();
-        assert!(
-            verify_powers_consistency(&bad).is_err(),
-            "tampered tau_g1 power must reject"
-        );
-
-        // `beta_g2` no longer sharing β with `beta_tau_g1[0]` → rejected.
-        let mut bad_beta = ptau.clone();
-        bad_beta.beta_g2 =
-            (bad_beta.beta_g2.into_group() + G2Projective::generator()).into_affine();
-        assert!(
-            verify_powers_consistency(&bad_beta).is_err(),
-            "tampered beta_g2 must reject"
-        );
-
-        // An arbitrary (non-ladder) `tau_g1[1]` → rejected at the τ-link.
-        let mut bad_link = ptau.clone();
-        bad_link.tau_g1[1] = (G1Projective::generator() * Fr::from(99u64)).into_affine();
-        assert!(
-            verify_powers_consistency(&bad_link).is_err(),
-            "non-ladder tau_g1[1] must reject"
-        );
-    }
-
-    #[test]
-    fn powers_consistency_rejects_degenerate_toxic_waste() {
-        // a trivially-known trapdoor (τ ∈ {0,1}, α = 0, β = 0) passes every ladder
-        // yet is fully backdoored, so it must be rejected
-        use crate::ptau::verify_powers_consistency;
-        let mut rng = ChaCha20Rng::seed_from_u64(0xD00D);
-        let (t, a, b) = (Fr::rand(&mut rng), Fr::rand(&mut rng), Fr::rand(&mut rng));
-        let zero = Fr::from(0u64);
-        let one = Fr::from(1u64);
-
-        assert!(
-            verify_powers_consistency(&fake_ptau(4, zero, a, b)).is_err(),
-            "τ=0 must reject"
-        );
-        assert!(
-            verify_powers_consistency(&fake_ptau(4, one, a, b)).is_err(),
-            "τ=1 must reject"
-        );
-        assert!(
-            verify_powers_consistency(&fake_ptau(4, t, zero, b)).is_err(),
-            "α=0 must reject"
-        );
-        assert!(
-            verify_powers_consistency(&fake_ptau(4, t, a, zero)).is_err(),
-            "β=0 must reject"
-        );
-        // The same nonzero (τ, α, β) still passes.
-        verify_powers_consistency(&fake_ptau(4, t, a, b)).expect("nonzero toxic waste passes");
     }
 }

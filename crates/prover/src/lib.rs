@@ -1,19 +1,15 @@
 //! End-to-end Groth16 prover for the xark-lang IR.
 //!
 //! Consumes an [`R1csProgram`] plus a [`PrimitiveProgram`] (witness-gen hints),
-//! runs the [`solver`] to produce the witness, lowers the constraints into
-//! Arkworks `gr1cs`, and runs the Groth16/BN254 stack (ark 0.6).
+//! runs the [`solver`] to produce the witness, and proves with `xark-groth16`
+//! (Groth16 over BN254).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ark_bn254::{Bn254, Fr};
 use ark_ff::{PrimeField, Zero};
-use ark_groth16::{Groth16, Proof, VerifyingKey};
-use ark_relations::gr1cs::{
-    ConstraintSynthesizer, ConstraintSystemRef, LinearCombination, SynthesisError, Variable,
-};
-use ark_snark::SNARK;
 use num_bigint::{BigInt, Sign};
+use xark_groth16::{Proof, VerifyingKey};
 
 use xark_ir::primitive::{PrimitiveProgram, Var, VarRole};
 use xark_ir::profile::ProfileProgram;
@@ -129,12 +125,11 @@ pub fn lower_witness(assign_fp: &BTreeMap<VarId, Fp>) -> BTreeMap<VarId, Fr> {
         .collect()
 }
 
-/// A synthesizable circuit over the xark-lang IR: our R1CS constraints plus a
-/// variable assignment. Implements Arkworks `gr1cs` [`ConstraintSynthesizer`],
-/// so it drops directly into the `xark` backend's generic `setup_from_ptau` /
-/// `Groth16::prove` / `verify` — a generic Groth16 over the constraint system.
-/// Supports both setup mode
-/// (constraint shape only) and proving mode (with the witness assignment).
+/// A circuit over the xark-lang IR: our R1CS constraints plus a variable
+/// assignment — the setup-minimized circuit Groth16 keys are made for, and the
+/// witness to prove it with (`xark-groth16`'s `ProgramSource` over
+/// [`Self::prog`], plus [`Self::assignment`]). Setup mode carries the
+/// constraint shape only; proving mode adds the witness assignment.
 #[derive(Clone)]
 pub struct XarkCircuit {
     prog: R1csProgram,
@@ -214,6 +209,11 @@ impl XarkCircuit {
 
     /// The (minimized) R1CS this circuit will synthesize — used by `xark setup`
     /// to cache exactly what the proving key is keyed to.
+    /// The witness values, by variable id (empty for a setup-only circuit).
+    pub fn assignment(&self) -> &BTreeMap<VarId, Fr> {
+        &self.assign
+    }
+
     pub fn prog(&self) -> &R1csProgram {
         &self.prog
     }
@@ -226,8 +226,7 @@ impl XarkCircuit {
 
     /// Pre-flight validation of the program's field constants. Every constant
     /// and coefficient decimal in the R1CS is parsed; on the first malformed
-    /// one this returns a descriptive `Err` instead of letting the (infallible)
-    /// parse inside [`ConstraintSynthesizer::generate_constraints`] panic.
+    /// one this returns a descriptive `Err` instead of letting proving panic.
     ///
     /// Call this before handing a circuit built from *untrusted* input (e.g. a
     /// deserialized `r1cs.json`) to the Groth16 backend. [`prove_only`] runs it
@@ -264,69 +263,6 @@ fn validate_program_constants(prog: &R1csProgram) -> Result<(), String> {
         check_lc(&con.c)?;
     }
     Ok(())
-}
-
-impl ConstraintSynthesizer<Fr> for XarkCircuit {
-    fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-        // Allocate one arkworks variable per IR var, in id order (Public → input,
-        // else witness). Ids are dense, so the id→var map is a `Vec` (O(1) lookups);
-        // we sort a slice of *references* to avoid cloning `variables`.
-        let mut order: Vec<_> = self.prog.variables.iter().collect();
-        order.sort_by_key(|v| v.id);
-        let max_id = order.last().map_or(0, |v| v.id) as usize;
-        let mut map: Vec<Option<Variable>> = vec![None; max_id + 1];
-        for v in order {
-            let val = self.assign.get(&v.id).copied().unwrap_or_else(Fr::zero);
-            let av = match v.visibility {
-                Visibility::Public => cs.new_input_variable(|| Ok(val))?,
-                _ => cs.new_witness_variable(|| Ok(val))?,
-            };
-            map[v.id as usize] = Some(av);
-        }
-
-        // Cache large-coefficient → `Fr` conversions. Non-native circuits carry
-        // thousands of ~254-bit constants recurring across millions of constraints,
-        // and arkworks runs `generate_constraints` twice (setup + prove), so
-        // interning by value collapses that to one conversion per distinct big
-        // coeff. Small coeffs (`Repr::Small`, incl. ±1) skip the cache entirely.
-        // `FieldConst`'s `Arc` big-int cache doesn't affect its ordering.
-        #[allow(clippy::mutable_key_type)]
-        let mut big_cache: BTreeMap<FieldConst, Fr> = BTreeMap::new();
-        let mut fr_of = |fc: &FieldConst| -> Fr {
-            if let Some(n) = fc.as_i64() {
-                let mag = Fr::from(n.unsigned_abs());
-                return if n < 0 { -mag } else { mag };
-            }
-            if let Some(f) = big_cache.get(fc) {
-                return *f;
-            }
-            let f = fr_from_fieldconst(fc);
-            big_cache.insert(fc.clone(), f);
-            f
-        };
-
-        let mut build = |lc: &IrLc| -> LinearCombination<Fr> {
-            let mut out = LinearCombination::zero();
-            let c = fr_of(&lc.constant);
-            if !c.is_zero() {
-                out += (c, Variable::One);
-            }
-            for t in &lc.terms {
-                // `validate_program_constants` guarantees every term var is a
-                // declared (hence allocated) id.
-                out += (fr_of(&t.coeff), map[t.var as usize].unwrap());
-            }
-            out
-        };
-
-        for con in &self.prog.constraints {
-            let a = build(&con.a);
-            let b = build(&con.b);
-            let c = build(&con.c);
-            cs.enforce_r1cs_constraint(|| a, || b, || c)?;
-        }
-        Ok(())
-    }
 }
 
 /// Public inputs in variable-id order (the order they are allocated), which is
@@ -366,15 +302,42 @@ pub fn prove_only(
     let assign = lower_witness(&assign_fp);
 
     let public = public_inputs(r1cs, &assign);
-    let circ = XarkCircuit::for_proving(r1cs.clone(), assign);
-
-    use rand::SeedableRng;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circ.clone(), &mut rng)
-        .map_err(|e| format!("setup: {e:?}"))?;
-    let proof =
-        Groth16::<Bn254>::prove(&pk, circ, &mut rng).map_err(|e| format!("prove: {e:?}"))?;
+    let (vk, proof) = dev_prove(&maybe_minimize(r1cs.clone()), &assign, 0)?;
     Ok((vk, proof, public))
+}
+
+/// Dev-mode Groth16 on `prog`: keys from a fixed `seed` (a known trapdoor), then a
+/// proof for `assign`. The test/dev round trip [`prove_only`] and
+/// [`Circuit::prove_dev`] share.
+fn dev_prove(
+    prog: &R1csProgram,
+    assign: &BTreeMap<VarId, Fr>,
+    seed: u64,
+) -> Result<(VerifyingKey<Bn254>, Proof<Bn254>), String> {
+    use rand::SeedableRng;
+    use xark_groth16::ConstraintSource;
+    let src = xark_groth16::ProgramSource::new(prog);
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut pk = Vec::new();
+    let vk = xark_groth16::setup::dev_setup(
+        &src,
+        &mut rng,
+        &mut pk,
+        ark_serialize::Compress::No,
+        xark_groth16::DomainKind::Radix2,
+    )
+    .map_err(|e| format!("setup: {e}"))?;
+    let mut pk = xark_groth16::SerializedPk::from_bytes(&pk).map_err(|e| format!("setup: {e}"))?;
+    let z = src.layout().assignment(|id| assign.get(&id).copied());
+    let proof = xark_groth16::prove(
+        &src,
+        &z,
+        &mut pk,
+        &mut rng,
+        &xark_groth16::ProverConfig::default(),
+    )
+    .map_err(|e| format!("prove: {e}"))?;
+    Ok((vk, proof))
 }
 
 /// Run the full pipeline: solve the witness from `inputs`, lower to Groth16, and
@@ -385,7 +348,7 @@ pub fn prove_and_verify(
     inputs: &BTreeMap<VarId, String>,
 ) -> Result<bool, String> {
     let (vk, proof, public) = prove_only(r1cs, circuit, inputs)?;
-    Groth16::<Bn254>::verify(&vk, &public, &proof).map_err(|e| format!("verify: {e:?}"))
+    xark_groth16::verify(&vk, &public, &proof).map_err(|e| format!("verify: {e}"))
 }
 
 // In-crate testing API: lets a circuit author unit-test with plain `cargo test`
@@ -934,27 +897,13 @@ impl Circuit {
         let assign = lower_witness(&assign_fp);
 
         let public = public_inputs(&self.r1cs, &assign);
-        let circ = XarkCircuit::for_proving(self.r1cs.clone(), assign);
 
         // Past here the witness satisfies every constraint, so any backend
         // failure is a genuine circuit/backend inconsistency, not a false
         // statement — surface it rather than swallowing it into a bare `false`.
-        use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-        let (pk, vk) =
-            Groth16::<Bn254>::circuit_specific_setup(circ.clone(), &mut rng).map_err(|e| {
-                ProveError(format!(
-                    "circuit `{}` solved but Groth16 setup failed: {e}",
-                    self.name
-                ))
-            })?;
-        let proof = Groth16::<Bn254>::prove(&pk, circ, &mut rng).map_err(|e| {
-            ProveError(format!(
-                "circuit `{}` solved but Groth16 prove failed: {e}",
-                self.name
-            ))
-        })?;
-        match Groth16::<Bn254>::verify(&vk, &public, &proof) {
+        let (vk, proof) = dev_prove(&maybe_minimize(self.r1cs.clone()), &assign, 1)
+            .map_err(|e| ProveError(format!("circuit `{}` solved but {e}", self.name)))?;
+        match xark_groth16::verify(&vk, &public, &proof) {
             Ok(true) => Ok(()),
             Ok(false) | Err(_) => Err(ProveError(format!(
                 "circuit `{}` has a satisfying witness but its proof did not verify — the R1CS \
@@ -1136,10 +1085,10 @@ mod tests {
         inputs.insert(1u32, "4".to_string());
         inputs.insert(2u32, "12".to_string());
         let (vk, proof, public) = prove_only(&r1cs, &prim, &inputs).unwrap();
-        assert!(Groth16::<Bn254>::verify(&vk, &public, &proof).unwrap());
+        assert!(xark_groth16::verify(&vk, &public, &proof).unwrap());
 
         let tampered = vec![public[0] + Fr::from(1u64)];
-        assert!(!Groth16::<Bn254>::verify(&vk, &tampered, &proof).unwrap());
+        assert!(!xark_groth16::verify(&vk, &tampered, &proof).unwrap());
     }
 
     #[test]

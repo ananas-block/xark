@@ -17,12 +17,12 @@ use std::io::{Read, Seek, SeekFrom};
 use ark_bn254::Bn254;
 use ark_bn254::Fr;
 use ark_ff::{UniformRand, Zero};
-use ark_groth16::ProvingKey;
 use rand::SeedableRng;
 use wasm_bindgen::prelude::*;
 use xark_groth16::accel::{self, Accelerator};
 use xark_groth16::fft::ColOp;
 use xark_groth16::msm::Scalar;
+use xark_groth16::ProvingKey;
 use xark_groth16::{
     BytecodeSource, ConstraintSource, Domain, FftConfig, InMemoryPk, ProverConfig, RowFileSource,
     SerializedPk,

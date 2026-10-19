@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use ark_bn254::{Bn254, Fr};
-use ark_groth16::Proof;
+use xark_groth16::Proof;
 
 use crate::serialization::{canonical_read_from_file, canonical_write_to_file};
 

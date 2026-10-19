@@ -46,7 +46,7 @@
 //! The point at infinity is encoded as `(0, 0)` per the snarkjs convention.
 //!
 //! Phase-2 setup that turns a [`PtauFile`] into Groth16 keys lives in
-//! [`crate::setup_phase2::setup_from_ptau`] (re-exported here). See
+//! [`setup_from_ptau`] (on `xark-groth16`'s phase-2 setup). See
 //! `docs/trusted-setup.md`.
 
 use std::convert::TryFrom;
@@ -92,6 +92,9 @@ pub struct Phase2Coverage {
 /// Errors specific to the phase-2 deterministic setup path.
 #[derive(Debug, Error)]
 pub enum Phase2Error {
+    /// The phase-2 key derivation itself failed.
+    #[error("phase-2 setup: {0}")]
+    Setup(String),
     /// The ptau transcript's power is too small for the circuit.
     #[error(
         "phase-2 setup: ptau covers domain size 2^{ptau_power} = {max_domain_size}, \
@@ -181,23 +184,58 @@ pub fn validate_for_circuit(
     let n = (num_constraints + num_instance_variables)
         .next_power_of_two()
         .max(1);
-    crate::setup_phase2::check_ptau_section_lengths(ptau, n)?;
+    check_ptau_section_lengths(ptau, n)?;
     verify_powers_consistency(ptau)
 }
 
-/// Re-export of [`crate::setup_phase2::setup_from_ptau`].
-///
-/// Consumes the circuit in Setup mode, evaluates the QAP polynomials at τ using
-/// the ptau powers in the group (no scalar τ is ever materialized), derives
-/// `γ, δ` deterministically from `randomness_seed` via ChaCha20, and assembles
-/// a `Groth16Keys` bundle. See `docs/security.md` for the production-readiness
-/// checklist and audit boundary.
-pub fn setup_from_ptau<C: ark_relations::gr1cs::ConstraintSynthesizer<ark_bn254::Fr>>(
-    circuit: C,
+/// Phase-2 keys for the circuit `src` from the transcript `ptau`: every
+/// [`validate_for_circuit`] check, then `xark-groth16`'s phase-2 setup (the one
+/// `xark setup --ptau-file` runs), which evaluates the QAP at τ in the group (no
+/// scalar τ is ever materialized) and derives `γ, δ` from `randomness_seed`. See
+/// `docs/security.md` for the production-readiness checklist and audit boundary.
+pub fn setup_from_ptau(
+    src: &dyn xark_groth16::ConstraintSource,
     ptau: &PtauFile,
     randomness_seed: &[u8; 32],
 ) -> Result<crate::keys::Groth16Keys, Phase2Error> {
-    crate::setup_phase2::setup_from_ptau(circuit, ptau, randomness_seed)
+    use ark_serialize::Compress;
+    validate_for_circuit(ptau, src.num_constraints(), src.layout().num_instance())?;
+    let powers = xark_groth16::setup::PtauPowers {
+        tau_g1: &ptau.tau_g1,
+        tau_g2: &ptau.tau_g2,
+        alpha_tau_g1: &ptau.alpha_tau_g1,
+        beta_tau_g1: &ptau.beta_tau_g1,
+        beta_g2: ptau.beta_g2,
+    };
+    let mut pk = Vec::new();
+    let vk =
+        xark_groth16::setup::phase2_setup(src, &powers, randomness_seed, &mut pk, Compress::No)
+            .map_err(|e| Phase2Error::Setup(e.to_string()))?;
+    let pk = crate::keys::Groth16Keys::decode_proving_key(&pk)
+        .map_err(|e| Phase2Error::Setup(e.to_string()))?;
+    Ok(crate::keys::Groth16Keys {
+        proving_key: pk,
+        verifying_key: vk,
+    })
+}
+
+fn check_ptau_section_lengths(ptau: &PtauFile, n: usize) -> Result<(), Phase2Error> {
+    let checks: [(&'static str, usize, usize); 4] = [
+        ("tau_g1", 2 * n - 1, ptau.tau_g1.len()),
+        ("tau_g2", n, ptau.tau_g2.len()),
+        ("alpha_tau_g1", n, ptau.alpha_tau_g1.len()),
+        ("beta_tau_g1", n, ptau.beta_tau_g1.len()),
+    ];
+    for (section, needed, actual) in checks {
+        if actual < needed {
+            return Err(Phase2Error::PtauSectionTooShort {
+                section,
+                needed,
+                actual,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Verify the powers-of-tau transcript is a consistent geometric τ-ladder (G1

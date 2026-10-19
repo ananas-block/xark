@@ -27,6 +27,7 @@ pub mod r1cs;
 pub mod setup;
 pub mod spill;
 pub mod transcode;
+pub mod types;
 
 pub use accel::{Accelerator, Local};
 pub use fft::{Domain, DomainKind, FftConfig};
@@ -36,3 +37,4 @@ pub use prover::{
 };
 pub use push::PushProver;
 pub use r1cs::{BytecodeSource, ConstraintSource, ProgramSource, RowFileSource, VarLayout};
+pub use types::{Proof, ProvingKey, VerifyError, VerifyingKey, verify};

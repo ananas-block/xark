@@ -9,10 +9,10 @@
 //! states the QAP domain — arrives (or up front, given the domain), so the work
 //! overlaps the rest of the download.
 
+use crate::types::{Proof, VerifyingKey};
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, Zero};
-use ark_groth16::{Groth16, Proof, VerifyingKey};
 use ark_serialize::Compress;
 use rayon::prelude::*;
 
@@ -322,8 +322,7 @@ impl<S: ConstraintSource> PushProver<S> {
         };
         if self.cfg.self_check {
             let ninst = self.src.layout().num_instance();
-            let pvk = ark_groth16::prepare_verifying_key(&vk);
-            if !Groth16::<Bn254>::verify_proof(&pvk, &proof, &self.z[1..ninst]).unwrap_or(false) {
+            if !crate::types::verify(&vk, &self.z[1..ninst], &proof).unwrap_or(false) {
                 return Err(ProveError::SelfCheckFailed);
             }
         }

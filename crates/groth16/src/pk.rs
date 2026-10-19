@@ -12,9 +12,9 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 
+use crate::types::{ProvingKey, VerifyingKey};
 use ark_bn254::{Bn254, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
-use ark_groth16::{ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, Compress, Validate};
 use rayon::prelude::*;
 

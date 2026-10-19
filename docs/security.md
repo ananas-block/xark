@@ -53,9 +53,10 @@ We are explicitly *not* defending against:
   assumes every `hint_*` output witness is pinned by surrounding R1CS constraints
   (see [§2.16](#216-hint-outputs-advice)); constraining every hint value is the
   author's/gadget's responsibility.
-* **A future Arkworks Groth16 regression.** We pin via Cargo.lock; bumping
-  `ark-groth16` requires re-verifying the serialization round-trip test
-  (`gadgets/tests/tests/serialization.rs`).
+* **A future arkworks BN254 regression.** We pin `ark-bn254` / `ark-ff` / `ark-ec`
+  via Cargo.lock; bumping them requires re-running the differential tests against
+  `ark-groth16` (`crates/groth16/tests/prover.rs`) and the serialization round
+  trip (`gadgets/tests/tests/serialization.rs`).
 * **Side-channel leakage in the prover.** No constant-time guarantees; do not run the
   prover on untrusted hardware.
 * **Side-channel leakage in trusted-setup randomness.** `OsRng` is a primitive; if
@@ -269,7 +270,7 @@ original expression as a field-element identity.
 inputs in the *exact same order* the prover provided; a mismatch would silently accept a
 proof for a different statement. **Argument:** the prover allocates public-input
 variables in signature order **before any arithmetic constraint is lowered**, so the
-Arkworks R1CS matches the verifier's expected order. The circuit hash folds public-input
+R1CS matches the verifier's expected order. The circuit hash folds public-input
 variable indices, so any reorder changes circuit identity. **Tests:**
 `lower::tests::circuit_hash_changes_with_public_input_order`. (A prior end-to-end
 public-input tamper matrix was removed on this branch; restoring it is a tracked
@@ -329,7 +330,7 @@ Option<String>`; `phase2_seed_hash: Option<String>` — SHA-256 of the seed used
 ### Dev-mode trapdoor lifecycle
 
 In `--insecure-dev-mode` the trapdoor exists transiently in process memory during
-`ark-groth16`'s `circuit_specific_setup`. The only durable artifacts are the proving key
+`xark-groth16`'s `dev_setup`. The only durable artifacts are the proving key
 (trapdoor *exponentiated into group elements*, not the scalar) and VK; recovering the
 trapdoor requires solving discrete log on BN254. Still insufficient for production: the
 operator is a single point of failure, there's no public transcript, and
@@ -338,8 +339,8 @@ operator is a single point of failure, there's no public transcript, and
 ### Production setup
 
 Requires a Powers-of-Tau transcript plus a phase-2 contribution. Both **implemented**:
-`ptau.rs` parses snarkjs `.ptau` (with admissibility checks), `setup_phase2.rs` derives a
-phase-2 setup, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
+`ptau.rs` parses snarkjs `.ptau` (with admissibility checks), `xark-groth16`'s
+`phase2_setup` derives the phase-2 keys, `ceremony.rs` drives a multi-contributor MPC (Schnorr PoKs +
 δ-consistency), via `xark ceremony {init,contribute,verify,finalize}`. The
 `--insecure-dev-mode` path is local-only (`production_safe: false`). See
 [`docs/trusted-setup.md`](trusted-setup.md).

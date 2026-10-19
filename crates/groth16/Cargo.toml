@@ -11,13 +11,13 @@ rust-version.workspace = true
 
 [dependencies]
 xark-ir = { path = "../ir", version = "0.3.0", default-features = false }
-# Field + curve arithmetic only. The prover itself (MSM, FFT, R1CS→QAP, proof
-# assembly) is implemented here; `ark-groth16` contributes just the key/proof types
-# so keys and proofs stay byte-compatible with every existing xark artifact.
+# Field + curve arithmetic only. The prover itself (setup, MSM, FFT, R1CS→QAP,
+# proof assembly, verification) and the key/proof types are implemented here; the
+# types serialize byte-for-byte like `ark-groth16`'s, which the tests check against
+# (it is a dev-dependency only).
 ark-bn254 = { version = "0.6", default-features = false, features = ["curve"] }
 ark-ff = { version = "0.6", default-features = false, features = ["std"] }
 ark-ec = { version = "0.6", default-features = false, features = ["std"] }
-ark-groth16 = { version = "0.6", default-features = false, features = ["std"] }
 ark-serialize = { version = "0.6", default-features = false, features = ["std"] }
 num-bigint = "0.4"
 rand = "0.8"

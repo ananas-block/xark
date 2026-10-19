@@ -13,10 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ark_bn254::{Bn254, Fr};
 use ark_ff::{UniformRand, Zero};
-use ark_groth16::{
-    Groth16, ProvingKey,
-    r1cs_to_qap::{LibsnarkReduction, R1CSToQAP},
-};
+use ark_groth16::r1cs_to_qap::{LibsnarkReduction, R1CSToQAP};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, OptimizationGoal,
@@ -31,9 +28,51 @@ use xark_groth16::{
     BytecodeSource, ConstraintSource, DomainKind, FftConfig, InMemoryPk, ProgramSource, ProveError,
     ProverConfig, SerializedPk, prove, qap,
 };
+use xark_groth16::{Proof, ProvingKey, VerifyingKey};
 use xark_ir::r1cs::{FieldSpec, R1csConstraint, R1csProgram, Variable, Visibility};
 use xark_ir::{FieldConst, LinearCombination, Term, VarId};
 use xark_prover::XarkCircuit;
+
+#[path = "support/ark.rs"]
+mod ark;
+#[path = "support/phase2_ark.rs"]
+mod phase2_ark;
+use ark::{ArkCircuit, convert};
+
+/// arkworks' Groth16 as the reference oracle, with `xark-groth16`'s key and proof
+/// types (converted through their bytes) and the `Groth16` call shapes.
+struct ArkG16;
+
+impl ArkG16 {
+    fn circuit_specific_setup<R: rand::RngCore + rand::CryptoRng>(
+        c: XarkCircuit,
+        rng: &mut R,
+    ) -> Result<(ProvingKey<Bn254>, VerifyingKey<Bn254>), ark_relations::gr1cs::SynthesisError>
+    {
+        let (pk, vk) =
+            ark_groth16::Groth16::<Bn254>::circuit_specific_setup(ArkCircuit::of(&c), rng)?;
+        Ok((convert(&pk), convert(&vk)))
+    }
+
+    fn prove<R: rand::RngCore + rand::CryptoRng>(
+        pk: &ProvingKey<Bn254>,
+        c: XarkCircuit,
+        rng: &mut R,
+    ) -> Result<Proof<Bn254>, ark_relations::gr1cs::SynthesisError> {
+        let pk: ark_groth16::ProvingKey<Bn254> = convert(pk);
+        let proof = ark_groth16::Groth16::<Bn254>::prove(&pk, ArkCircuit::of(&c), rng)?;
+        Ok(convert(&proof))
+    }
+
+    fn verify(
+        vk: &VerifyingKey<Bn254>,
+        x: &[Fr],
+        proof: &Proof<Bn254>,
+    ) -> Result<bool, ark_relations::gr1cs::SynthesisError> {
+        let vk: ark_groth16::VerifyingKey<Bn254> = convert(vk);
+        ark_groth16::Groth16::<Bn254>::verify(&vk, x, &convert(proof))
+    }
+}
 
 /// A random satisfiable R1CS with public/private/internal ids interleaved, some
 /// unreferenced variables, constants, duplicate terms, and big coefficients.
@@ -138,9 +177,12 @@ fn ark_cs(prog: &R1csProgram, assign: &BTreeMap<VarId, Fr>) -> ConstraintSystemR
         construct_matrices: true,
         generate_lc_assignments: false,
     });
-    XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone())
-        .generate_constraints(cs.clone())
-        .unwrap();
+    ArkCircuit::of(&XarkCircuit::for_proving_preminimized(
+        prog.clone(),
+        assign.clone(),
+    ))
+    .generate_constraints(cs.clone())
+    .unwrap();
     cs.finalize();
     cs
 }
@@ -254,13 +296,10 @@ fn proof_is_byte_identical_to_arkworks_and_verifies() {
         let (prog, assign) = random_program(seed, 60 + 33 * (seed as usize - 20));
         let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
         let public = circ.public_inputs();
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            circ.clone(),
-            &mut ChaCha20Rng::seed_from_u64(seed),
-        )
-        .unwrap();
-        let want =
-            Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(seed + 1)).unwrap();
+        let (pk, vk) =
+            ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(seed))
+                .unwrap();
+        let want = ArkG16::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(seed + 1)).unwrap();
 
         let src = ProgramSource::new(&prog);
         let z = src.layout().assignment_from_map(&assign);
@@ -311,7 +350,7 @@ fn proof_is_byte_identical_to_arkworks_and_verifies() {
                 );
             }
         }
-        assert!(Groth16::<Bn254>::verify(&vk, &public, &want).unwrap());
+        assert!(ArkG16::verify(&vk, &public, &want).unwrap());
     }
 }
 
@@ -319,8 +358,7 @@ fn proof_is_byte_identical_to_arkworks_and_verifies() {
 fn reordering_variables_breaks_the_proof() {
     let (prog, assign) = random_program(30, 80);
     let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
-    let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
+    let (pk, _) = ArkG16::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
 
     // Swap the ids of two internal variables everywhere (rows + witness): the
     // relabelled system is still satisfied, but positions no longer match the key.
@@ -375,7 +413,7 @@ fn reordering_variables_breaks_the_proof() {
 fn key_shape_mismatch_is_reported() {
     let (p1, a1) = random_program(40, 30);
     let (p2, _) = random_program(41, 90);
-    let (pk, _) = Groth16::<Bn254>::circuit_specific_setup(
+    let (pk, _) = ArkG16::circuit_specific_setup(
         XarkCircuit::for_proving_preminimized(p2, BTreeMap::new()),
         &mut ChaCha20Rng::seed_from_u64(1),
     )
@@ -454,14 +492,11 @@ fn bytecode_streamed_proof_matches_arkworks() {
     let minimized = XarkCircuit::for_setup(reduced.clone()).prog().clone();
     for (label, prog) in [("reduced", &reduced), ("minimized", &minimized)] {
         let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
-        let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(
-            circ.clone(),
-            &mut ChaCha20Rng::seed_from_u64(9),
-        )
-        .unwrap();
-        let want = Groth16::<Bn254>::prove(&pk, circ.clone(), &mut ChaCha20Rng::seed_from_u64(10))
-            .unwrap();
-        assert!(Groth16::<Bn254>::verify(&vk, &circ.public_inputs(), &want).unwrap());
+        let (pk, vk) =
+            ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(9))
+                .unwrap();
+        let want = ArkG16::prove(&pk, circ.clone(), &mut ChaCha20Rng::seed_from_u64(10)).unwrap();
+        assert!(ArkG16::verify(&vk, &circ.public_inputs(), &want).unwrap());
         let got = if label == "reduced" {
             let src = BytecodeSource::new(KYC_XBC).unwrap();
             let z = src.layout().assignment_from_map(&assign);
@@ -582,9 +617,8 @@ fn worker_decomposition_is_byte_identical() {
     let (prog, assign) = random_program(50, 700);
     let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
     let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(3))
-            .unwrap();
-    let want = Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(4)).unwrap();
+        ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(3)).unwrap();
+    let want = ArkG16::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(4)).unwrap();
     let src = ProgramSource::new(&prog);
     let z = src.layout().assignment_from_map(&assign);
     let mut rng = ChaCha20Rng::seed_from_u64(4);
@@ -645,12 +679,10 @@ fn row_file_source_matches_arkworks_and_proves() {
         );
         assert_same_matrices(&src, &cs);
         let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
-        let (pk, _) = Groth16::<Bn254>::circuit_specific_setup(
-            circ.clone(),
-            &mut ChaCha20Rng::seed_from_u64(1),
-        )
-        .unwrap();
-        let want = Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
+        let (pk, _) =
+            ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(1))
+                .unwrap();
+        let want = ArkG16::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
         let z = src.layout().assignment_from_map(&assign);
         let got = prove(
             &src,
@@ -669,9 +701,8 @@ fn push_prover_any_chunking_matches_arkworks() {
     let (prog, assign) = random_program(70, 900);
     let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
     let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(1))
-            .unwrap();
-    let want = Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
+        ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
+    let want = ArkG16::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
     let src = ProgramSource::new(&prog);
     let z = src.layout().assignment_from_map(&assign);
     let mut rng = ChaCha20Rng::seed_from_u64(2);
@@ -765,9 +796,8 @@ fn spilled_quotient_and_proof_are_identical() {
 
     let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
     let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(1))
-            .unwrap();
-    let proof = Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
+        ArkG16::circuit_specific_setup(circ.clone(), &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
+    let proof = ArkG16::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(2)).unwrap();
     let cfg = ProverConfig {
         spill_dir: Some(dir),
         ..ProverConfig::default()
@@ -814,8 +844,7 @@ fn compiled_template_evaluation_equals_expansion() {
 fn ark_pk_bytes(prog: &R1csProgram, seed: u64, compress: Compress) -> Vec<u8> {
     let circ = XarkCircuit::for_setup_preminimized(prog.clone());
     let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(seed))
-            .unwrap();
+        ArkG16::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(seed)).unwrap();
     pk_bytes(&pk, compress, true)
 }
 
@@ -893,12 +922,16 @@ fn phase2_setup_is_byte_identical_to_the_backend() {
     let n = (prog.constraints.len() + src.layout().num_instance()).next_power_of_two();
     let ptau = test_ptau(n.trailing_zeros());
     let seed = [7u8; 32];
-    let keys = xark_backend::ptau::setup_from_ptau(
-        XarkCircuit::for_setup_preminimized(prog.clone()),
+    let (pk, vk) = phase2_ark::setup_from_ptau(
+        ArkCircuit::of(&XarkCircuit::for_setup_preminimized(prog.clone())),
         &ptau,
         &seed,
     )
     .unwrap();
+    let keys = xark_backend::Groth16Keys {
+        proving_key: convert(&pk),
+        verifying_key: convert(&vk),
+    };
     let dir = std::env::temp_dir().join(format!("xark-phase2-{}", std::process::id()));
     keys.write_proving_key_mode(&dir, Compress::Yes).unwrap();
     let want = std::fs::read(&dir).unwrap();
@@ -936,8 +969,7 @@ impl std::io::Write for SharedBuf {
 fn transcoding_and_tee_produce_the_uncompressed_key() {
     let (prog, assign) = random_program(100, 500);
     let circ = XarkCircuit::for_proving_preminimized(prog.clone(), assign.clone());
-    let (pk, _) =
-        Groth16::<Bn254>::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
+    let (pk, _) = ArkG16::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(1)).unwrap();
     let want = pk_bytes(&pk, Compress::No, true);
     let mut chop = ChaCha20Rng::seed_from_u64(5);
     for (input, label) in [
@@ -1035,7 +1067,7 @@ impl R1CSToQAP for MixedReduction {
 
 #[test]
 fn smooth_domain_keys_and_proofs_match_arkworks_mixed_radix() {
-    type Mixed = Groth16<Bn254, MixedReduction>;
+    type Mixed = ark_groth16::Groth16<Bn254, MixedReduction>;
     // One domain of each shape: 3·2^k, 9·2^k, and 2^k.
     let mut shapes = BTreeSet::new();
     for (seed, n_cons) in [(80u64, 600usize), (81, 950), (82, 1700)] {
@@ -1056,11 +1088,13 @@ fn smooth_domain_keys_and_proofs_match_arkworks_mixed_radix() {
             DomainKind::Smooth,
         )
         .unwrap();
-        let (pk, ark_vk) = Mixed::circuit_specific_setup(
-            XarkCircuit::for_setup_preminimized(prog.clone()),
+        let (ark_pk, ark_vk) = Mixed::circuit_specific_setup(
+            ArkCircuit::of(&XarkCircuit::for_setup_preminimized(prog.clone())),
             &mut ChaCha20Rng::seed_from_u64(seed),
         )
         .unwrap();
+        let (pk, ark_vk): (ProvingKey<Bn254>, VerifyingKey<Bn254>) =
+            (convert(&ark_pk), convert(&ark_vk));
         assert_eq!(pk.h_query.len() + 1, want_n, "seed {seed}");
         assert_eq!(
             ours,
@@ -1069,8 +1103,15 @@ fn smooth_domain_keys_and_proofs_match_arkworks_mixed_radix() {
         );
         assert_eq!(vk, ark_vk);
 
-        let want = Mixed::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(seed + 1)).unwrap();
-        assert!(Groth16::<Bn254>::verify(&vk, &public, &want).unwrap());
+        let want: Proof<Bn254> = convert(
+            &Mixed::prove(
+                &ark_pk,
+                ArkCircuit::of(&circ),
+                &mut ChaCha20Rng::seed_from_u64(seed + 1),
+            )
+            .unwrap(),
+        );
+        assert!(ArkG16::verify(&vk, &public, &want).unwrap());
         let blocked = ProverConfig {
             fft: FftConfig {
                 tile: 3,

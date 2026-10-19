@@ -15,16 +15,16 @@ use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
+use xark_backend::keys::Groth16Keys;
 use xark_backend::proof::ProofBundle;
 use xark_backend::serialization::write_public_inputs;
-use xark_backend::{keys::Groth16Keys, prove};
 use xark_groth16::{ConstraintSource, PkSource};
 use xark_ir::VarId;
 use xark_prover::{XarkCircuit, fr_from_decimal};
 
 use super::{
     load_backend_r1cs, load_circuit_auto, parse_inputs_arg, resolve_input_ids, setup,
-    soundness_check_r1cs, stream_soundness, synth_err,
+    soundness_check_r1cs, stream_soundness,
 };
 use crate::xark_project::XarkProject;
 
@@ -390,12 +390,27 @@ pub fn run(args: ProveArgs) -> Result<()> {
 
     let mut rng = prove_rng(&args, &pk_path)?;
     let t_prove_start = std::time::Instant::now();
-    let proof = match pk_opt {
-        Some(pk) => prove(&pk, circuit, &public, &mut rng).map_err(synth_err)?,
+    let src = xark_groth16::ProgramSource::new(circuit.prog());
+    let z = src
+        .layout()
+        .assignment(|id| circuit.assignment().get(&id).copied());
+    let cfg = xark_groth16::ProverConfig::default();
+    let proved = match pk_opt {
+        Some(pk) => xark_groth16::prove(
+            &src,
+            &z,
+            &mut xark_groth16::InMemoryPk::new(&pk),
+            &mut rng,
+            &cfg,
+        ),
         // `--stream`: prove without ever materializing the proving key.
-        None => xark_backend::stream_prove(&pk_path, circuit, &public, &mut rng)
-            .map_err(|e| anyhow::anyhow!("streaming prove: {e}"))?,
+        None => {
+            let mut pk = xark_groth16::SerializedPk::open(&pk_path)
+                .with_context(|| format!("reading proving key {}", pk_path.display()))?;
+            xark_groth16::prove(&src, &z, &mut pk, &mut rng, &cfg)
+        }
     };
+    let proof = proved.map_err(|e| anyhow::anyhow!("proving: {e}"))?;
     if timing {
         eprintln!(
             "PROVE_TIME: load+solve+key (concurrent) = {:?}  groth16-prove = {:?}  \
@@ -466,7 +481,7 @@ fn prove_streaming(
     inputs: &BTreeMap<String, String>,
     profile: Option<&xark_ir::profile::ProfileProgram>,
     timing: bool,
-) -> Result<(ark_groth16::Proof<ark_bn254::Bn254>, Vec<ark_bn254::Fr>)> {
+) -> Result<(xark_groth16::Proof<ark_bn254::Bn254>, Vec<ark_bn254::Fr>)> {
     let t = std::time::Instant::now();
     let bytes = std::fs::read(xbc).with_context(|| format!("reading {}", xbc.display()))?;
     let fingerprint = super::sha256_hex(&bytes);
@@ -592,7 +607,7 @@ fn write_outputs(
     args: &ProveArgs,
     proof_out: &std::path::Path,
     out_dir: &std::path::Path,
-    proof: ark_groth16::Proof<ark_bn254::Bn254>,
+    proof: xark_groth16::Proof<ark_bn254::Bn254>,
     public: Vec<ark_bn254::Fr>,
 ) -> Result<()> {
     let bundle = ProofBundle {

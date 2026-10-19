@@ -6,9 +6,9 @@
 //! [`PushProver`]: crate::push::PushProver
 //! [`KeyTranscoder`]: crate::transcode::KeyTranscoder
 
+use crate::types::VerifyingKey;
 use ark_bn254::{Bn254, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
-use ark_groth16::VerifyingKey;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
 
 use crate::pk::{KeyFormat, KeyVector};

@@ -32,14 +32,11 @@ xark-prover = { path = "../prover", default-features = false }
 # The streaming prover (`proveStreaming`) and its worker kernels.
 xark-groth16 = { path = "../groth16" }
 
-# Only the arkworks crates actually named in `lib.rs`. `ark-ff` / `ark-ec` /
-# `ark-relations` / `ark-std` are pulled transitively (via `ark-groth16` etc.)
-# with the right features — the `parallel`-OFF guarantee comes from the `xark-*`
+# Only the arkworks crates actually named in `lib.rs`. `ark-ff` / `ark-ec` are
+# pulled transitively (via `xark-groth16` etc.) with the right features — the `parallel`-OFF guarantee comes from the `xark-*`
 # deps above being built `default-features = false`, not from pinning them here.
 ark-bn254 = { version = "0.6", default-features = false, features = ["curve"] }
-ark-groth16 = { version = "0.6", default-features = false, features = ["std"] }
 ark-serialize = { version = "0.6", default-features = false, features = ["std"] }
-ark-snark = { version = "0.6", default-features = false }
 
 serde-wasm-bindgen = "0.6"
 

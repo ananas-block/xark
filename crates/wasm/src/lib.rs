@@ -52,10 +52,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use ark_bn254::{Bn254, Fr};
-use ark_groth16::{Groth16, Proof, ProvingKey, VerifyingKey};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, Compress, Validate};
-use ark_snark::SNARK;
 use wasm_bindgen::prelude::*;
+use xark_groth16::{Proof, ProvingKey, VerifyingKey};
 
 use xark_ir::VarId;
 use xark_prover::{flatten_inputs, resolve_input_ids, InputValue};
@@ -270,7 +269,7 @@ pub fn verify(
     let vk = deserialize_bytes::<VerifyingKey<Bn254>>(&vk_bytes, "verifying key")?;
     let proof = deserialize_bytes::<Proof<Bn254>>(&proof_bytes, "proof")?;
     let public: Vec<Fr> = deserialize_bytes(&public_inputs_bytes, "public inputs")?;
-    Groth16::<Bn254>::verify(&vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
+    xark_groth16::verify(&vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
 }
 
 /// Decode binary public inputs (the `publicInputs` `Uint8Array` from [`prove`],

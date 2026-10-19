@@ -15,12 +15,9 @@ exclude = ["tests", "benches", "examples"]
 ark-bn254.workspace = true
 ark-ff.workspace = true
 ark-ec.workspace = true
-ark-groth16.workspace = true
-ark-poly.workspace = true
-ark-relations.workspace = true
 ark-serialize.workspace = true
-ark-snark.workspace = true
 ark-std.workspace = true
+xark-groth16 = { path = "../groth16", version = "0.3.0" }
 
 
 thiserror.workspace = true
@@ -33,6 +30,9 @@ num-bigint.workspace = true
 chrono.workspace = true
 sha2.workspace = true
 rayon = "1"
+
+[dev-dependencies]
+xark-ir = { path = "../ir" }
 
 [features]
 default = []

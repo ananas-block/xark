@@ -231,7 +231,7 @@ Deliberately small: **no opcode dispatch.** The circuit's wasm lowers to
 * **Hint/advice reproduction** — the solver reproduces each hint output; `solve_and_check`
   rejects any constraint-violating witness.
 
-### 4. Trusted-setup ceremony (`crates/backend/src/setup_phase2.rs`, `ceremony.rs`, `ptau.rs`)
+### 4. Trusted-setup ceremony (`crates/groth16/src/setup.rs`, `crates/backend/src/ceremony.rs`, `ptau.rs`)
 
 * `.ptau` admissibility — degree match, subgroup membership, pairing-consistency.
 * Phase-2 contribution — Schnorr PoK per δ contribution; chain verification.
@@ -272,7 +272,8 @@ by `.github/workflows/reproducible-build.yml`.
 |---|---|
 | `rustc` codegen (wasm32) | Circuit ops are opaque wasm imports, so the circuit is rustc-independent (CI compares every example's digest on 1.89 / stable / beta); witness branches are guarded (Lean `gated_sat` & co.); the lowering is fuzzed against native Rust with exhaustive witness search. |
 | `solana_nostd_alt_bn128` syscall ↔ Arkworks fallback | Differential test `gadgets/tests/tests/differential_alt_bn128.rs`: same fixed vectors via the Arkworks fallback (host `#[test]`s) and the on-chain syscall path (`#[svm_test]`s through Mollusk + cargo-build-sbf), asserting byte-identical results. Run under the `Solana E2E` CI workflow on every verifier change; each new `G1_ADD`/`G1_MUL`/`G2_ADD`/`PAIRING_2` vector adds an anchor. Extending to OSS-Fuzz CPU-weeks is a follow-up. |
-| Arkworks Groth16 | Cite published Groth16 mechanisations (e.g. Microsoft's verified Groth16 in F*); no in-repo proof. |
+| Groth16 (`xark-groth16`: setup, prover, verifier) | In-repo, not mechanised (cite published Groth16 mechanisations, e.g. Microsoft's verified Groth16 in F*). Cross-checked in tests against `ark-groth16` as an independent implementation: byte-identical keys and proofs for the same randomness, the same verification verdicts, and phase-2 keys byte-identical to an arkworks-based reference. |
+| BN254 arithmetic (`ark-bn254`, `ark-ff`, `ark-ec`) | The field, curve and pairing operations everything above is built on. |
 | Lean kernel + mathlib | Trusted base; replace via Coq cross-check if needed. |
 | `rustc` / `cargo` / `lake` / `Kani` / CBMC | Toolchain trust. |
 

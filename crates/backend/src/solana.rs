@@ -252,7 +252,7 @@ pub fn decode_fr_le(bytes: &[u8; FR_BYTES]) -> Fr {
 /// `(len − 448) / 64`, and on the typed side it is fixed by the
 /// `VerifyingKey<N>` generic (`N + 1` points). One fewer thing that can
 /// disagree with the actual bytes.
-pub fn assemble_vk_bytes_le(vk: &ark_groth16::VerifyingKey<ark_bn254::Bn254>) -> Vec<u8> {
+pub fn assemble_vk_bytes_le(vk: &xark_groth16::VerifyingKey<ark_bn254::Bn254>) -> Vec<u8> {
     let mut out = Vec::with_capacity(G1_BYTES + 3 * G2_BYTES + vk.gamma_abc_g1.len() * G1_BYTES);
     out.extend_from_slice(&encode_g1_le(&vk.alpha_g1));
     out.extend_from_slice(&encode_g2_le(&vk.beta_g2));
@@ -268,7 +268,7 @@ pub fn assemble_vk_bytes_le(vk: &ark_groth16::VerifyingKey<ark_bn254::Bn254>) ->
 /// pre-negated so the on-chain program can feed
 /// `(proof_a_le, proof_b_le)` straight into the pairing without doing the
 /// modular subtraction in BPF.
-pub fn assemble_proof_bytes_le(proof: &ark_groth16::Proof<ark_bn254::Bn254>) -> Vec<u8> {
+pub fn assemble_proof_bytes_le(proof: &xark_groth16::Proof<ark_bn254::Bn254>) -> Vec<u8> {
     let mut out = Vec::with_capacity(G1_BYTES + G2_BYTES + G1_BYTES);
     out.extend_from_slice(&encode_g1_le(&negate_g1(&proof.a)));
     out.extend_from_slice(&encode_g2_le(&proof.b));

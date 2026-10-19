@@ -4699,11 +4699,7 @@ dependencies = [
  "ark-bn254 0.6.0",
  "ark-ec 0.6.0",
  "ark-ff 0.6.0",
- "ark-groth16",
- "ark-poly 0.6.0",
- "ark-relations",
  "ark-serialize 0.6.0",
- "ark-snark",
  "ark-std 0.6.0",
  "chrono",
  "hex",
@@ -4715,6 +4711,8 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.18",
+ "xark-groth16",
+ "xark-ir",
 ]
 
 [[package]]
@@ -4762,7 +4760,6 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "ark-bn254 0.6.0",
- "ark-groth16",
  "ark-serialize 0.6.0",
  "clap",
  "clap_complete",
@@ -4937,13 +4934,8 @@ name = "xark-prover"
 version = "0.3.0"
 dependencies = [
  "ark-bn254 0.6.0",
- "ark-ec 0.6.0",
  "ark-ff 0.6.0",
- "ark-groth16",
- "ark-relations",
  "ark-serialize 0.6.0",
- "ark-snark",
- "ark-std 0.6.0",
  "num-bigint 0.4.8",
  "rand 0.8.6",
  "serde_json",
@@ -5029,6 +5021,7 @@ dependencies = [
  "solana-nostd-alt-bn128",
  "svm-unit-test",
  "xark-backend",
+ "xark-groth16",
  "xark-ir",
  "xark-prover",
  "xark-verifier",
@@ -5048,10 +5041,8 @@ version = "0.3.0"
 dependencies = [
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
- "ark-groth16",
  "ark-poly 0.6.0",
  "ark-serialize 0.6.0",
- "ark-snark",
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "js-sys",

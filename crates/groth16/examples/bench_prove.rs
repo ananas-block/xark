@@ -26,6 +26,10 @@ use xark_groth16::{
 use xark_ir::VarId;
 use xark_prover::XarkCircuit;
 
+#[path = "../tests/support/ark.rs"]
+mod ark;
+use ark::{ArkCircuit, convert};
+
 struct PeakAlloc;
 static CUR: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
@@ -201,9 +205,11 @@ fn main() {
         let prog = reduced(&xbc);
         eprintln!("reduced circuit: {} constraints", prog.constraints.len());
         let circ = XarkCircuit::for_setup_preminimized(prog);
-        let (pk, _) =
-            Groth16::<Bn254>::circuit_specific_setup(circ, &mut ChaCha20Rng::seed_from_u64(7))
-                .unwrap();
+        let (pk, _) = Groth16::<Bn254>::circuit_specific_setup(
+            ArkCircuit::of(&circ),
+            &mut ChaCha20Rng::seed_from_u64(7),
+        )
+        .unwrap();
         let mut buf = b"XKPK\x01\x00".to_vec();
         pk.serialize_with_mode(&mut buf, Compress::Yes).unwrap();
         std::fs::write(&pk_path, buf).unwrap();
@@ -316,9 +322,15 @@ fn main() {
         let circ = XarkCircuit::for_proving_preminimized(reduced(&xbc), assign.clone());
         let src = BytecodeSource::new(&xbc).unwrap();
         let z = src.layout().assignment_from_map(&assign);
+        let ark_pk: ark_groth16::ProvingKey<Bn254> = convert(&pk);
         for i in 0..3 {
             let t = Instant::now();
-            Groth16::<Bn254>::prove(&pk, circ.clone(), &mut ChaCha20Rng::seed_from_u64(i)).unwrap();
+            Groth16::<Bn254>::prove(
+                &ark_pk,
+                ArkCircuit::of(&circ),
+                &mut ChaCha20Rng::seed_from_u64(i),
+            )
+            .unwrap();
             let ark = t.elapsed().as_secs_f64();
             let t = Instant::now();
             xark_groth16::prove(
@@ -349,8 +361,13 @@ fn main() {
         } else {
             XarkCircuit::for_proving(red, assign.clone())
         };
-        let ark =
-            Groth16::<Bn254>::prove(&pk, circ, &mut ChaCha20Rng::seed_from_u64(seed)).unwrap();
+        let ark_pk: ark_groth16::ProvingKey<Bn254> = convert(&pk);
+        let ark = Groth16::<Bn254>::prove(
+            &ark_pk,
+            ArkCircuit::of(&circ),
+            &mut ChaCha20Rng::seed_from_u64(seed),
+        )
+        .unwrap();
         let src = BytecodeSource::new(&xbc).unwrap();
         let z = src.layout().assignment_from_map(&assign);
         let ours = xark_groth16::prove(
@@ -361,11 +378,11 @@ fn main() {
             &ProverConfig::default(),
         )
         .unwrap();
-        let hex = |p: &ark_groth16::Proof<Bn254>| {
+        fn hex(p: &impl CanonicalSerialize) -> String {
             let mut b = Vec::new();
             p.serialize_compressed(&mut b).unwrap();
             b.iter().map(|x| format!("{x:02x}")).collect::<String>()
-        };
+        }
         println!("arkworks  {}", hex(&ark));
         println!("streaming {}", hex(&ours));
         return;
@@ -391,8 +408,14 @@ fn main() {
             ph.mark("expand+minimize");
             let pk = xark_backend::Groth16Keys::read_proving_key(&pk_path).unwrap();
             ph.mark("load_pk");
-            let proof = xark_backend::prove(&pk, circ, &public, &mut ChaCha20Rng::seed_from_u64(1))
-                .unwrap();
+            let ark_pk: ark_groth16::ProvingKey<Bn254> = convert(&pk);
+            let _ = public;
+            let proof = Groth16::<Bn254>::prove(
+                &ark_pk,
+                ArkCircuit::of(&circ),
+                &mut ChaCha20Rng::seed_from_u64(1),
+            )
+            .unwrap();
             ph.mark("groth16_prove");
             drop(pk);
             let _ = proof;

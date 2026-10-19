@@ -31,6 +31,12 @@ use ark_ff::{Field as _, Zero};
 use ark_groth16::Groth16;
 use ark_snark::SNARK;
 
+// Fixtures are keyed with arkworks' own setup (fixed seeds), so regenerating them
+// reproduces the committed bytes.
+#[path = "../../../crates/groth16/tests/support/ark.rs"]
+mod ark;
+use ark::{ArkCircuit, convert};
+
 use xark_backend::Groth16Keys;
 use xark_backend::solana::{
     assemble_proof_bytes_le, assemble_public_inputs_bytes_le, assemble_vk_bytes_le,
@@ -415,13 +421,13 @@ fn setup(r1cs: &R1csProgram) -> Groth16Keys {
     // different (unguarded) policy and desync the proving key from the proof.
     let mut rng = xark_backend::test_rng();
     let (proving_key, verifying_key) = Groth16::<Bn254>::circuit_specific_setup(
-        XarkCircuit::for_setup_preminimized(r1cs.clone()),
+        ArkCircuit::of(&XarkCircuit::for_setup_preminimized(r1cs.clone())),
         &mut rng,
     )
     .expect("circuit_specific_setup");
     Groth16Keys {
-        proving_key,
-        verifying_key,
+        proving_key: convert(&proving_key),
+        verifying_key: convert(&verifying_key),
     }
 }
 
@@ -590,7 +596,9 @@ fn regen_one(spec: &Spec, work: &Path) {
 
     let mut rng = xark_backend::test_rng();
     let t = std::time::Instant::now();
-    let proof = Groth16::<Bn254>::prove(&keys.proving_key, circ, &mut rng).expect("prove");
+    let ark_pk: ark_groth16::ProvingKey<Bn254> = convert(&keys.proving_key);
+    let proof: xark_groth16::Proof<Bn254> =
+        convert(&Groth16::<Bn254>::prove(&ark_pk, ArkCircuit::of(&circ), &mut rng).expect("prove"));
     eprintln!("  [timing] prove: {:.1}s", t.elapsed().as_secs_f64());
     assert!(
         xark_backend::verify(&keys.verifying_key, &proof, &pi).expect("verify"),

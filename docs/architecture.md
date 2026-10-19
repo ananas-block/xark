@@ -78,16 +78,21 @@ arithmetic, used by the EC gadgets), `xark-curve` (shared curve macros), `xark-h
 
 ### `xark-prover` — `crates/prover`
 
-Solves the witness from `--inputs` values, synthesizes the R1CS as an Arkworks
-`ConstraintSynthesizer`, and runs Groth16 `prove` / `verify`.
+Solves the witness from `--inputs` values and proves with `xark-groth16`
+(`circuit("name").prove(inputs)` returns the proof bytes).
+
+### `xark-groth16` — `crates/groth16`
+
+The Groth16 implementation: key generation (dev and Powers-of-Tau phase 2), the
+streaming prover, verification, and the key/proof types, which serialize
+byte-for-byte like `ark-groth16`'s (checked against it in tests).
 
 ### `xark-backend` — `crates/backend`
 
 Frontend-agnostic Groth16 over BN254:
 
-* Groth16 setup / prove / verify. `setup`/`prove` take explicit `CryptoRng + RngCore`
-  bounds; `prove` self-verifies before returning.
-* `ptau.rs` / `setup_phase2.rs` / `ceremony.rs` — the real trusted-setup path:
+* `verify.rs` — Groth16 verification (`xark-groth16`'s pairing check).
+* `ptau.rs` / `ceremony.rs` — the real trusted-setup path:
   ingest a snarkjs `powersoftau` (`.ptau`) transcript, derive a phase-2 setup,
   run a multi-contributor MPC ceremony with Schnorr PoKs and δ-consistency
   pairing checks (see `docs/trusted-setup.md`).

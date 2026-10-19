@@ -9,10 +9,10 @@
 //! 2. `h` — rows streamed twice from the [`ConstraintSource`]; blocked FFT.
 //! 3. `H`, `L` MSMs — streamed the same way; `h` is dropped right after `H`.
 
+use crate::types::Proof;
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand, Zero};
-use ark_groth16::{Groth16, Proof};
 use rand::RngCore;
 
 use crate::accel::{Accelerator, Local, sum_g1, sum_g2};
@@ -329,8 +329,7 @@ where
         c: g_c.into_affine(),
     };
     if cfg.self_check {
-        let pvk = ark_groth16::prepare_verifying_key(&hdr.vk);
-        let ok = Groth16::<Bn254>::verify_proof(&pvk, &proof, &z[1..ninst])
+        let ok = crate::types::verify(&hdr.vk, &z[1..ninst], &proof)
             .map_err(|_| ProveError::SelfCheckFailed)?;
         if !ok {
             return Err(ProveError::SelfCheckFailed);
