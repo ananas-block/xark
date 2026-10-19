@@ -47,6 +47,11 @@ for the canonical encoder.
 
 - Off-curve / non-subgroup proof points are rejected by the syscalls.
 - Non-canonical public inputs (`>= r`) are rejected (prevents encoding malleability).
+- The `*_strict` entry points also reject non-canonical proof/VK coordinates.
+  Neither makes a proof unique: Groth16 proofs are re-randomizable, so anyone
+  holding a valid proof can make a different valid proof of the same public
+  inputs. Never use proof bytes as a replay or dedup key; bind a nullifier,
+  nonce or signer into the public inputs instead.
 - Every public input is cryptographically bound (`binding` test).
 - `verify_groth16` never panics and never accepts adversarial bytes (`fuzz` test).
 - The entrypoint is fail-closed (anything not `Ok(true)` → reject).

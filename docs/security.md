@@ -40,6 +40,18 @@ constrain into the R1CS is enforced; what we leave outside is unconstrained and 
 prover chooses freely.** So the soundness argument reduces to: *for every gadget, the
 emitted R1CS constraints imply the claimed input/output relation.*
 
+### Proofs are not unique (replay)
+
+A Groth16 proof attests to a statement (the public inputs), not to one byte
+string: anyone holding a valid proof can re-randomize it into a different valid
+proof of the same public inputs, without any secret. The verifier's `*_strict`
+entry points reject non-canonical *encodings* of the proof's points; they can't
+reject a re-randomized proof, which is canonical. So an application must never
+use proof bytes (or their hash) as a replay or "already used" key. Replay
+protection belongs in the public inputs: a nullifier or nonce the circuit
+derives from a secret, or the signer or context the proof is for, recorded by
+the application. The generated verifier crate's README says the same.
+
 ### Trusted setup
 
 We assume τ (Powers-of-Tau toxic waste) and the circuit-specific γ, δ were and remain

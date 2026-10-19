@@ -108,6 +108,12 @@ gadgets now check more:
 
 ### Fixed
 
+- The verifier docs no longer suggest `verify_strict` makes proof bytes safe
+  as a replay or dedup key. It only rejects non-canonical encodings; Groth16
+  proofs are re-randomizable, so anyone holding a valid proof can make another
+  for the same public inputs. The exported crate's README, xark-verifier and
+  `docs/security.md` now say to put replay protection in the public inputs (a
+  nullifier, nonce or signer) instead.
 - A mistyped path is reported (`no such directory: …`) by every command.
   `xark prove` used to build the crate in the current directory instead, and
   `xark test` passed the path to `cargo test` as a test filter.

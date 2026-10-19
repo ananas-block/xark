@@ -292,9 +292,12 @@ pub const VK_BYTES: &[u8] = include_bytes!("../verifying_key.solana.bin");
 /// a non-holding pairing, a malformed point, or a non-canonical public input.
 ///
 /// This matches the on-chain `alt_bn128` syscall, which masks the unused top
-/// bits of each coordinate limb. If you need to reject non-canonical
-/// *coordinate* encodings as well — e.g. when proof bytes are hashed, signed,
-/// or used as a replay/dedup key — use [`verify_strict`].
+/// bits of each coordinate limb. To also reject non-canonical *coordinate*
+/// encodings, use [`verify_strict`]. Neither makes a proof's bytes unique:
+/// Groth16 proofs are re-randomizable, so anyone holding a valid proof can
+/// derive a different valid proof of the same statement. Never key replay
+/// protection on proof bytes; put it in the public inputs (a nullifier, nonce
+/// or signer the circuit binds).
 #[inline]
 pub fn verify(proof: &Proof, public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> bool {{
     VERIFIER.verify(proof, public_inputs)
@@ -302,8 +305,9 @@ pub fn verify(proof: &Proof, public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> b
 
 /// Strict [`verify`]: additionally rejects any proof/VK coordinate whose
 /// encoding is non-canonical (`>= q`, e.g. an unused top bit set). `xark`
-/// proofs are always canonical, so this never rejects an honest proof — it
-/// only removes byte-level proof malleability.
+/// proofs are always canonical, so this never rejects an honest proof. It
+/// removes *encoding* malleability only: a re-randomized proof is still
+/// accepted (see [`verify`]).
 #[inline]
 pub fn verify_strict(proof: &Proof, public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> bool {{
     VERIFIER.verify_strict(proof, public_inputs)
@@ -366,6 +370,15 @@ Or, with proof and public inputs already separated:
 ```rust
 let ok = {ident}::verify(&proof, &public_inputs); // public_inputs: &[[u8; 32]; {n}]
 ```
+
+## Replay protection
+
+A valid proof is not unique: anyone holding one can re-randomize it into a
+different valid proof of the same public inputs (a property of Groth16;
+`verify_strict` does not change it). So never use proof bytes, or their hash,
+as a replay or "already used" key. Put replay protection in the public inputs
+instead: a nullifier or nonce the circuit derives from a secret, or the signer
+or context the proof is for, and record *that* on-chain.
 
 `cargo test` in this crate verifies the bundled sample proof against the
 embedded VK. `client_call_example.rs` shows how to submit a proof off-chain.
