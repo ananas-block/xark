@@ -146,3 +146,31 @@ fn stale_proving_key_is_named() {
         "{err}"
     );
 }
+
+/// Like cargo, the commands find the crate from a directory inside it (`xark
+/// build` from `src/`); a directory named explicitly is taken as given.
+#[test]
+fn commands_find_the_crate_from_a_subdirectory() {
+    let tmp = tempdir();
+    let src = common::circuit_crate("arithmetic_square").join("src");
+    let out = tmp.path().join("out");
+    let o = Command::new(xark_bin())
+        .args(["build", "--out"])
+        .arg(&out)
+        .current_dir(&src)
+        .env("CARGO_TARGET_DIR", tmp.path().join("target"))
+        .output()
+        .expect("invoke xark");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "build from src/ failed:\n{err}");
+    assert!(
+        err.contains("building circuit `arithmetic_square`"),
+        "{err}"
+    );
+    let (ok, out_log) = run_in(&src, &["check"]);
+    assert!(ok, "check from src/ failed:\n{out_log}");
+
+    // Named, a non-crate directory is an error, not a walk up.
+    let (ok, out_log) = run_in(&src.join(".."), &["build", "src"]);
+    assert!(!ok && out_log.contains("no Cargo.toml in src"), "{out_log}");
+}

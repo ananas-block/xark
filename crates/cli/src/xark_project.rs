@@ -25,7 +25,8 @@ impl XarkProject {
     pub fn resolve(path: Option<PathBuf>) -> Result<Self> {
         let base = match path {
             Some(p) if !p.exists() => bail!("no such directory: {}", p.display()),
-            Some(p) => p,
+            // Absolute, so the walk up to the crate root below can leave it.
+            Some(p) => p.canonicalize().unwrap_or(p),
             None => std::env::current_dir().context("resolving current directory")?,
         };
         Ok(Self {

@@ -127,6 +127,10 @@ gadgets now check more:
   for the same public inputs. The exported crate's README, xark-verifier and
   `docs/security.md` now say to put replay protection in the public inputs (a
   nullifier, nonce or signer) instead.
+- `xark build`, `test`, `check` and `profile` find the crate from inside it,
+  as cargo does (`xark test` from `src/` used to fail with "no Cargo.toml"), and
+  a project path given as a relative directory is found by walking up from it
+  (`xark profile` from `src/` couldn't find the build).
 - A mistyped path is reported (`no such directory: …`) by every command.
   `xark prove` used to build the crate in the current directory instead, and
   `xark test` passed the path to `cargo test` as a test filter.

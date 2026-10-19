@@ -48,7 +48,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         eprintln!("error: `xark build <crate-dir>` requires a crate directory");
         return 2;
     };
-    let crate_dir = PathBuf::from(crate_dir);
+    let crate_dir = PathBuf::from(crate_root(&crate_dir));
     let cwd = std::env::current_dir().expect("cwd");
     let crate_abs = cwd.join(&crate_dir);
     if !crate_abs.join("Cargo.toml").is_file() {
@@ -239,7 +239,7 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
 pub fn cmd_test(args: &[String]) -> i32 {
     // `args[0]` is the crate dir; the rest goes to `cargo test` verbatim, so
     // `xark test . -- --include-ignored` is `cargo test -- --include-ignored`.
-    let crate_dir = args.first().cloned().unwrap_or_else(|| ".".to_string());
+    let crate_dir = crate_root(args.first().map_or(".", String::as_str));
     let forwarded = args.get(1..).unwrap_or(&[]);
     let build_argv = vec![crate_dir.clone()];
 
@@ -273,6 +273,26 @@ pub fn cmd_test(args: &[String]) -> i32 {
     }
 }
 
+/// The circuit crate for a directory argument: `dir` itself, or, as cargo
+/// finds it, the nearest enclosing package of the current directory (`xark
+/// test` from `src/`). A named directory is taken as given, as cargo takes a
+/// manifest path. Unchanged when there's none, for the caller to report.
+fn crate_root(dir: &str) -> String {
+    let p = std::path::Path::new(dir);
+    if dir != "." || p.join("Cargo.toml").is_file() {
+        return dir.to_string();
+    }
+    p.canonicalize()
+        .ok()
+        .and_then(|abs| {
+            abs.ancestors()
+                .skip(1)
+                .find(|a| crate::xark_project::read_pkg_name(a).is_some())
+                .map(|a| a.display().to_string())
+        })
+        .unwrap_or_else(|| dir.to_string())
+}
+
 /// `xark check <crate-dir>`
 ///
 /// Fast, artifact-free validation of a circuit crate for editor diagnostics (see
@@ -293,7 +313,7 @@ pub fn cmd_check(args: &[String]) -> i32 {
         eprintln!("error: `xark check <crate-dir>` requires a crate directory");
         return 2;
     };
-    let crate_dir = PathBuf::from(crate_dir);
+    let crate_dir = PathBuf::from(crate_root(&crate_dir));
     let crate_abs = std::env::current_dir().expect("cwd").join(&crate_dir);
     check_stable(&crate_abs, json)
 }
