@@ -3,7 +3,7 @@
 //! Reads the `circuit.xbc` produced by `xark build` and runs either the insecure
 //! dev-mode setup (`--insecure-dev-mode`) or the production phase-2 setup from a
 //! Powers-of-Tau transcript (`--ptau-file`, or one auto-detected under
-//! `target/xark/`). Keys land next to the build output as `pk.bin` / `vk.bin`.
+//! `target/xark/<name>/`). Keys land next to the build output as `pk.bin` / `vk.bin`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -24,12 +24,12 @@ use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
 pub struct SetupArgs {
-    /// Circuit crate directory (or its `target/xark/` output dir). Defaults to
-    /// the current directory; paths are inferred from `target/xark/`.
+    /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
+    /// the current directory; paths are inferred from `target/xark/<name>/`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
-    /// Output directory for keys and metadata. Inferred as `target/xark/`.
+    /// Output directory for keys and metadata. Inferred as `target/xark/<name>/`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
     /// Required to run Groth16 setup with locally generated randomness.
@@ -47,8 +47,8 @@ pub struct SetupArgs {
     pub deterministic_rng: Option<u64>,
     /// Production phase-2 setup from a Powers-of-Tau (`.ptau`) transcript.
     /// Mutually exclusive with `--insecure-dev-mode`. When neither is supplied,
-    /// `setup` auto-detects a `.ptau` under `target/xark/`, `target/xark/ptau/`,
-    /// the crate root, or `<root>/ptau/`.
+    /// `setup` auto-detects a `.ptau` in `target/xark/<name>/`, `target/xark/`, the
+    /// crate root, or a `ptau/` directory in any of them.
     #[arg(long, value_name = "PATH", value_hint = clap::ValueHint::FilePath)]
     pub ptau_file: Option<PathBuf>,
     /// 32-byte randomness seed (hex) for the phase-2 `(γ, δ)` derivation.
@@ -90,8 +90,7 @@ pub struct SetupArgs {
     ///   can prove against the key — not snarkjs or rapidsnark. Dev-mode only: a
     ///   Powers-of-Tau transcript's Lagrange bases are radix-2.
     /// * `radix2` — `2^k` points, what every Groth16 prover expects.
-    /// * `auto` (default) — `smooth`, except `radix2` for a Powers-of-Tau setup or
-    ///   an explicit `--r1cs` program (whose proofs use the arkworks prover).
+    /// * `auto` (default) — `smooth`, except `radix2` for a Powers-of-Tau setup.
     #[arg(long, value_enum, default_value_t = QapDomain::Auto)]
     pub domain: QapDomain,
 }
@@ -105,12 +104,11 @@ pub enum QapDomain {
 }
 
 impl QapDomain {
-    /// The concrete domain kind for a setup with/without a `.ptau` and an
-    /// explicit `--r1cs` program.
-    fn resolve(self, ptau: bool, explicit_r1cs: bool) -> xark_groth16::DomainKind {
+    /// The concrete domain kind for a setup with/without a `.ptau`.
+    fn resolve(self, ptau: bool) -> xark_groth16::DomainKind {
         match self {
             QapDomain::Smooth => xark_groth16::DomainKind::Smooth,
-            QapDomain::Auto if !ptau && !explicit_r1cs => xark_groth16::DomainKind::Smooth,
+            QapDomain::Auto if !ptau => xark_groth16::DomainKind::Smooth,
             _ => xark_groth16::DomainKind::Radix2,
         }
     }
@@ -168,22 +166,22 @@ impl RngCore for SetupRng {
 impl CryptoRng for SetupRng {}
 
 /// The circuit the key is generated for, the form's metadata name, and why.
-/// `prog` is the template-reduced R1CS (or an explicit `--r1cs` program, which has
-/// no bytecode to stream and is always minimized).
+/// `prog` is the template-reduced R1CS (or a debug flat build's, which is always
+/// minimized).
 fn keyed_circuit(
     prog: &xark_ir::R1csProgram,
     form: R1csForm,
-    explicit_r1cs: bool,
+    flat: bool,
     kind: xark_groth16::DomainKind,
 ) -> (XarkCircuit, &'static str, String) {
     let domain =
         |p: &xark_ir::R1csProgram| kind.size(p.constraints.len() + num_public_inputs(p) + 1);
     let reduced = || XarkCircuit::for_setup_preminimized(prog.clone());
     match form {
-        _ if explicit_r1cs => (
+        _ if flat => (
             XarkCircuit::for_setup(prog.clone()),
             "minimized",
-            "explicit --r1cs program".into(),
+            "debug flat build".into(),
         ),
         R1csForm::Reduced => (reduced(), "reduced", "requested".into()),
         R1csForm::Minimized => (
@@ -240,7 +238,7 @@ fn write_row_file(out_dir: &std::path::Path, fingerprint: &str, circuit: &XarkCi
 enum Keyed {
     /// The template-reduced rows, streamed straight from `circuit.xbc`.
     Bytecode(xark_groth16::BytecodeSource),
-    /// The boundary-minimized program (small circuits, or an explicit `--r1cs`).
+    /// The boundary-minimized program (small circuits, or a debug flat build).
     Program(XarkCircuit),
 }
 
@@ -276,7 +274,7 @@ fn plan_keyed(
     let xbc = project.circuit_xbc();
     let flat = super::dbg_flag("XARK_FLAT_MINIMIZE") || super::dbg_flag("XARK_NO_MINIMIZE");
     if xbc.exists() && !flat {
-        let kind = args.domain.resolve(ptau, false);
+        let kind = args.domain.resolve(ptau);
         let bytes = fs::read(&xbc).with_context(|| format!("reading {}", xbc.display()))?;
         if !super::is_function_artifact(&bytes) {
             bail!(
@@ -320,7 +318,7 @@ fn plan_keyed(
     // A debug flat build (`XARK_FLAT_MINIMIZE` / `XARK_NO_MINIMIZE`): materialized.
     let (prog, hash) = load_backend_r1cs(&xbc)?;
     let (rows, num_pi) = (prog.constraints.len(), num_public_inputs(&prog));
-    let kind = args.domain.resolve(ptau, true);
+    let kind = args.domain.resolve(ptau);
     let (circuit, name, why) = keyed_circuit(&prog, form, true, kind);
     Ok((Keyed::Program(circuit), name, why, hash, rows, num_pi, kind))
 }
@@ -405,8 +403,10 @@ pub fn run(args: SetupArgs) -> Result<()> {
     let rows = keyed.with_source(|src| src.num_constraints() + src.layout().num_instance());
     let domain_size = kind.size(rows);
     metadata.qap_domain_size = Some(domain_size);
-    if kind == xark_groth16::DomainKind::Smooth {
-        let radix2 = xark_groth16::DomainKind::Radix2.size(rows);
+    // A smooth domain of `2^k` points is the radix-2 one: only a smaller,
+    // mixed-radix one needs xark's provers.
+    let radix2 = xark_groth16::DomainKind::Radix2.size(rows);
+    if domain_size != radix2 {
         println!(
             "QAP domain: {domain_size} points (radix-2 would be {radix2}); only xark's provers \
              can prove against this key (`--domain radix2` for snarkjs / rapidsnark)"

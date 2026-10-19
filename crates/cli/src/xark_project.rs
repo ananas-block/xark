@@ -60,8 +60,8 @@ impl XarkProject {
 
     /// Auto-detect a Powers-of-Tau (`.ptau`) transcript for production setup.
     ///
-    /// Searches `target/xark/`, `target/xark/ptau/`, the crate root, and
-    /// `<root>/ptau/`, returning the first `*.ptau` found.
+    /// Searches `target/xark/<name>/`, `target/xark/`, and the crate root, each
+    /// with its `ptau/` subdir, returning the first `*.ptau` found.
     pub fn find_ptau(&self) -> Option<PathBuf> {
         let mut dirs = vec![self.xark_dir.clone(), self.xark_dir.join("ptau")];
         // `target/xark/<pkg>/` → the shared `target/xark/` is one level up …

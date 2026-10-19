@@ -113,6 +113,14 @@ gadgets now check more:
   didn't build.
 - `xark build` / `xark test` with no path name the circuit after its package
   (`building circuit cube`), not `circuit`.
+- `xark clean` no longer follows symlinks (which could reach build output
+  outside the current directory) and skips `node_modules`.
+- `xark setup` says a key needs xark's provers only when its QAP domain is
+  actually mixed-radix; a smooth domain of `2^k` points is the standard one.
+- `xark verify` reports a public-input count mismatch as such, not as an "R1CS
+  synthesis error".
+- `--help` gives the default artifact paths as `target/xark/<name>/…` (where
+  they are), and no longer mentions the removed `--r1cs` flag.
 - `xark verify` suggests running `xark prove` only when `public_inputs.bin` is
   missing, not when it's corrupt. `xark export` gives the same "run `xark setup`
   first?" hint as the other commands when the key is missing.

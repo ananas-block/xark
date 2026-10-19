@@ -100,3 +100,26 @@ fn corrupt_public_inputs_get_no_prove_hint() {
     let (ok, _, err) = run(&["verify", out_s]);
     assert!(!ok && err.contains("run `xark prove` first"), "{err}");
 }
+
+/// `xark clean` removes build output under the current directory only: never
+/// through a symlink, which can lead anywhere.
+#[cfg(unix)]
+#[test]
+fn clean_does_not_follow_symlinks() {
+    let tmp = tempdir();
+    let (inside, outside) = (tmp.path().join("in"), tmp.path().join("out"));
+    for d in [inside.join("a/target/xark"), outside.join("b/target/xark")] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::os::unix::fs::symlink(&outside, inside.join("link")).unwrap();
+    let (ok, out) = run_in(&inside, &["clean"]);
+    assert!(ok, "{out}");
+    assert!(
+        !inside.join("a/target/xark").exists(),
+        "not cleaned:\n{out}"
+    );
+    assert!(
+        outside.join("b/target/xark").exists(),
+        "cleaned through a symlink:\n{out}"
+    );
+}

@@ -184,10 +184,12 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
             return;
         };
         for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
+            // Not through symlinks: they can lead outside the current directory
+            // (or loop).
+            if !entry.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
+            let path = entry.path();
             match path.file_name().and_then(|s| s.to_str()) {
                 // Remove `target/xark{,-wasm}` here; don't descend into `target/`.
                 Some("target") => {
@@ -207,7 +209,7 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
                         }
                     }
                 }
-                Some(".git") => {} // skip VCS noise
+                Some(".git" | "node_modules") => {} // never holds a circuit build
                 _ => walk(&path, removed, errors),
             }
         }

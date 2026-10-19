@@ -41,24 +41,24 @@ use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
 pub struct ExportArgs {
-    /// Circuit crate directory (or its `target/xark/` output dir). Defaults to
-    /// the current directory; paths are inferred from `target/xark/`.
+    /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
+    /// the current directory; paths are inferred from `target/xark/<name>/`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
-    /// Verifying key. Inferred as `target/xark/vk.bin` when omitted.
+    /// Verifying key. Inferred as `target/xark/<name>/vk.bin` when omitted.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub verifying_key: Option<PathBuf>,
     /// Proof, bundled as the generated crate's self-test vector. Inferred as
-    /// `target/xark/proof.bin`.
+    /// `target/xark/<name>/proof.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub proof: Option<PathBuf>,
     /// Public inputs file produced by `xark prove`. Inferred as
-    /// `target/xark/public_inputs.bin`.
+    /// `target/xark/<name>/public_inputs.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub public_inputs: Option<PathBuf>,
     /// Output directory — the root of the generated verifier crate. Inferred as
-    /// `target/xark/verifier`.
+    /// `target/xark/<name>/verifier`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
     /// Name for the generated crate. Defaults to the `--out` directory name.

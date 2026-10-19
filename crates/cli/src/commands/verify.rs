@@ -18,8 +18,8 @@ use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
-    /// Circuit crate directory (or its `target/xark/` output dir). Defaults to
-    /// the current directory; paths are inferred from `target/xark/`.
+    /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
+    /// the current directory; paths are inferred from `target/xark/<name>/`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
@@ -29,13 +29,13 @@ pub struct VerifyArgs {
     #[arg(long = "inputs", value_name = "JSON|FILE")]
     pub inputs: Option<String>,
 
-    /// Verifying key. Inferred as `target/xark/vk.bin` when omitted.
+    /// Verifying key. Inferred as `target/xark/<name>/vk.bin` when omitted.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub verifying_key: Option<PathBuf>,
-    /// Proof file. Inferred as `target/xark/proof.bin` when omitted.
+    /// Proof file. Inferred as `target/xark/<name>/proof.bin` when omitted.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub proof: Option<PathBuf>,
-    /// Public inputs file. Inferred as `target/xark/public_inputs.bin`.
+    /// Public inputs file. Inferred as `target/xark/<name>/public_inputs.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub public_inputs: Option<PathBuf>,
 }
@@ -82,7 +82,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
         }
     };
 
-    let ok = verify(&vk, &proof, &public).map_err(super::synth_err)?;
+    let ok = verify(&vk, &proof, &public)?;
     println!(
         "{}",
         if ok {

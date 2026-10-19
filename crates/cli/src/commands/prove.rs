@@ -25,8 +25,8 @@ use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
 pub struct ProveArgs {
-    /// Circuit crate directory (or its `target/xark/` output dir). Defaults to
-    /// the current directory; paths are inferred from `target/xark/`.
+    /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
+    /// the current directory; paths are inferred from `target/xark/<name>/`.
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
@@ -39,10 +39,10 @@ pub struct ProveArgs {
     #[arg(long = "inputs", value_name = "JSON|FILE")]
     pub inputs: Option<String>,
 
-    /// Proving key. Inferred as `target/xark/pk.bin` when omitted.
+    /// Proving key. Inferred as `target/xark/<name>/pk.bin` when omitted.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub proving_key: Option<PathBuf>,
-    /// Output path for the proof. Inferred as `target/xark/proof.bin`.
+    /// Output path for the proof. Inferred as `target/xark/<name>/proof.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub out: Option<PathBuf>,
     /// Reproducible-randomness escape hatch for test fixtures **only**. Groth16

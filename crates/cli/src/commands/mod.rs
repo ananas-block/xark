@@ -45,13 +45,6 @@ pub mod prove;
 pub mod setup;
 pub mod verify;
 
-/// Wrap an Arkworks `gr1cs` `SynthesisError` (or any backend error) into an
-/// `anyhow::Error`. The ark error types are `no_std` and don't implement
-/// `std::error::Error`, so we wrap via their `Display` impl.
-pub fn synth_err<E: std::fmt::Display>(e: E) -> anyhow::Error {
-    anyhow::anyhow!("R1CS synthesis error: {e}")
-}
-
 /// `xark` — write, compile, prove and verify zero-knowledge circuits in Rust.
 #[derive(Parser, Debug)]
 #[command(
@@ -82,7 +75,8 @@ pub enum Command {
     Check(CheckArgs),
     /// Build the circuit, then run its `cargo test` circuit tests.
     Test(TestArgs),
-    /// Remove all xark build output (every `target/xark/` under the current dir).
+    /// Remove all xark build output (every `target/xark/` and `target/xark-wasm/`
+    /// under the current dir).
     Clean(CleanArgs),
     /// Generate Groth16 proving and verifying keys.
     Setup(setup::SetupArgs),
