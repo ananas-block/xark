@@ -162,6 +162,13 @@ fn run_init(args: InitArgs) -> Result<()> {
 
 fn run_contribute(args: ContributeArgs) -> Result<()> {
     let dir = &args.ceremony_dir;
+    if dir.join("metadata.json").exists() {
+        bail!(
+            "{} is finalized; a contribution now would change keys its metadata.json \
+             already describes",
+            dir.display()
+        );
+    }
     let mut keys = load_keys(&dir.join("proving_key.bin"), &dir.join("verifying_key.bin"))?;
     let mut rng = OsRng;
     let contribution = contribute(&mut keys, &args.label, &mut rng)
@@ -170,15 +177,27 @@ fn run_contribute(args: ContributeArgs) -> Result<()> {
     let count = read_contribution_count(dir)?;
     let new_index = count + 1;
 
-    keys.write_proving_key(&dir.join("proving_key.bin"))?;
-    keys.write_verifying_key(&dir.join("verifying_key.bin"))?;
-
-    let attestation_path = dir.join(format!("contribution_{new_index:04}.json"));
+    // Everything is written under a temporary name first, then swapped in, so an
+    // interrupted contribution leaves the ceremony as it was (keys, attestation
+    // and count agreeing), not keys the recorded chain doesn't explain.
+    let attestation = format!("contribution_{new_index:04}.json");
+    let tmp = |name: &str| dir.join(format!("{name}.tmp"));
+    keys.write_proving_key(&tmp("proving_key.bin"))?;
+    keys.write_verifying_key(&tmp("verifying_key.bin"))?;
     fs::write(
-        &attestation_path,
+        tmp(&attestation),
         serde_json::to_string_pretty(&contribution)?,
     )?;
-    write_contribution_count(dir, new_index)?;
+    fs::write(tmp("contribution_count"), format!("{new_index}\n"))?;
+    for name in [
+        attestation.as_str(),
+        "proving_key.bin",
+        "verifying_key.bin",
+        "contribution_count",
+    ] {
+        fs::rename(tmp(name), dir.join(name))
+            .with_context(|| format!("writing {}", dir.join(name).display()))?;
+    }
 
     println!("Contribution #{new_index} ({}) recorded.", args.label);
     println!("Updated keys + attestation written to {}", dir.display());

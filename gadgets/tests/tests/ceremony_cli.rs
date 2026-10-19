@@ -63,6 +63,26 @@ fn ceremony_keys_prove_and_verify() {
     let log = step(&["ceremony", "verify", "--ceremony-dir", cer_s]);
     assert!(log.contains("alice") && log.contains("bob"), "{log}");
     step(&["ceremony", "finalize", "--ceremony-dir", cer_s]);
+    // A finalized ceremony takes no more contributions …
+    let (ok, log) = xark(
+        &[
+            "ceremony",
+            "contribute",
+            "--ceremony-dir",
+            cer_s,
+            "--label",
+            "late",
+        ],
+        &out,
+    );
+    assert!(!ok && log.contains("finalized"), "{log}");
+    // … and contributions leave no temporary files behind.
+    let stray: Vec<_> = std::fs::read_dir(&cer)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(stray.is_empty(), "{stray:?}");
 
     let (pk, vk) = (cer.join("proving_key.bin"), cer.join("verifying_key.bin"));
     let proof = tmp.path().join("proof").join("proof.bin");

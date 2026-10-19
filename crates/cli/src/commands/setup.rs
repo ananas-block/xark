@@ -393,9 +393,19 @@ pub fn run(args: SetupArgs) -> Result<()> {
     } else {
         Compress::Yes
     };
+    // Keys and metadata are written under temporary names and swapped in at the
+    // end, so a failed or interrupted setup never leaves a new key beside old
+    // metadata (which could mark a dev key `production_safe`).
+    let tmp = |p: &std::path::Path| {
+        p.with_extension(format!(
+            "{}.tmp",
+            p.extension().and_then(|e| e.to_str()).unwrap_or_default()
+        ))
+    };
+    let (pk_tmp, vk_tmp, meta_tmp) = (tmp(&pk_path), tmp(&vk_path), tmp(&meta_path));
     let pk_out = || -> Result<std::io::BufWriter<fs::File>> {
-        let f = fs::File::create(&pk_path)
-            .with_context(|| format!("creating {}", pk_path.display()))?;
+        let f =
+            fs::File::create(&pk_tmp).with_context(|| format!("creating {}", pk_tmp.display()))?;
         Ok(std::io::BufWriter::with_capacity(1 << 20, f))
     };
     let mut metadata = KeyMetadata::new_dev(hash, num_pi, num_constraints);
@@ -494,9 +504,24 @@ pub fn run(args: SetupArgs) -> Result<()> {
     }
     drop(keyed);
 
-    canonical_write_to_file(&vk, &vk_path)?;
-    fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)
-        .with_context(|| format!("writing {}", meta_path.display()))?;
+    canonical_write_to_file(&vk, &vk_tmp)?;
+    fs::write(&meta_tmp, serde_json::to_string_pretty(&metadata)?)
+        .with_context(|| format!("writing {}", meta_tmp.display()))?;
+    // The old metadata goes first: until the new one is in place, the keys have
+    // none, which every command reads as "not production-safe".
+    match fs::remove_file(&meta_path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(e).with_context(|| format!("removing {}", meta_path.display()));
+        }
+        _ => {}
+    }
+    for (from, to) in [
+        (&pk_tmp, &pk_path),
+        (&vk_tmp, &vk_path),
+        (&meta_tmp, &meta_path),
+    ] {
+        fs::rename(from, to).with_context(|| format!("writing {}", to.display()))?;
+    }
 
     println!("Wrote {}", pk_path.display());
     println!("Wrote {}", vk_path.display());

@@ -127,6 +127,13 @@ gadgets now check more:
   for the same public inputs. The exported crate's README, xark-verifier and
   `docs/security.md` now say to put replay protection in the public inputs (a
   nullifier, nonce or signer) instead.
+- `xark setup` writes the keys and `metadata.json` under temporary names and
+  swaps them in at the end. A failed or interrupted setup used to be able to
+  leave a new dev key next to old metadata marking it `production_safe`, which
+  `xark export` would then accept without `--allow-insecure`.
+- `xark ceremony contribute` likewise swaps its files in at the end (an
+  interruption could leave keys the recorded chain didn't explain, ruining the
+  ceremony), and refuses to contribute to a finalized ceremony.
 - `xark build`, `test`, `check` and `profile` find the crate from inside it,
   as cargo does (`xark test` from `src/` used to fail with "no Cargo.toml"), and
   a project path given as a relative directory is found by walking up from it

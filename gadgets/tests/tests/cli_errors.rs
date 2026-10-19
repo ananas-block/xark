@@ -174,3 +174,39 @@ fn commands_find_the_crate_from_a_subdirectory() {
     let (ok, out_log) = run_in(&src.join(".."), &["build", "src"]);
     assert!(!ok && out_log.contains("no Cargo.toml in src"), "{out_log}");
 }
+
+/// A failed setup leaves the previous keys and metadata as they were (never a
+/// new key beside old metadata), and no temporary files.
+#[test]
+fn failed_setup_keeps_the_previous_keys() {
+    let tmp = tempdir();
+    let out = tmp.path().join("out");
+    let (ok, err) = xark_build("arithmetic_square", &out, &tmp.path().join("target"));
+    assert!(ok, "build failed: {err}");
+    let (ok, err) = xark_setup(&out);
+    assert!(ok, "setup failed: {err}");
+    let read = |f: &str| std::fs::read(out.join(f)).unwrap();
+    let before = (read("pk.bin"), read("vk.bin"), read("metadata.json"));
+
+    // A transcript too small for any circuit: setup fails partway.
+    let ptau = tmp.path().join("tiny.ptau");
+    std::fs::write(&ptau, common::build_valid_ptau(1)).unwrap();
+    let (ok, _, err) = run(&[
+        "setup",
+        out.to_str().unwrap(),
+        "--ptau-file",
+        ptau.to_str().unwrap(),
+    ]);
+    assert!(!ok, "setup with a 2-point transcript succeeded");
+    assert_eq!(
+        (read("pk.bin"), read("vk.bin"), read("metadata.json")),
+        before,
+        "a failed setup changed the keys: {err}"
+    );
+    let stray: Vec<_> = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .collect();
+    assert!(stray.is_empty(), "{stray:?}");
+}
