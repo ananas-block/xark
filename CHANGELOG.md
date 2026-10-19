@@ -138,10 +138,11 @@ gadgets now check more:
   didn't generate. An `--out` naming your own program's crate used to replace
   its `Cargo.toml` and `src/lib.rs` without a word; regenerating an earlier
   export or client still works.
-- `xark ceremony init` refuses a directory that already holds a ceremony. It
-  used to overwrite its keys and reset the count, discarding every
-  contribution, and could leave a finalized ceremony's production-safe
-  `metadata.json` beside the fresh keys.
+- `xark ceremony init` refuses a directory that already holds a ceremony
+  unless given `--force`, which then removes all of it first. It used to
+  overwrite the keys and reset the count, discarding every contribution, and
+  could leave a finalized ceremony's production-safe `metadata.json` beside the
+  fresh keys.
 - `xark build`, `test`, `check` and `profile` find the crate from inside it,
   as cargo does (`xark test` from `src/` used to fail with "no Cargo.toml"), and
   a project path given as a relative directory is found by walking up from it

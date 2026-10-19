@@ -49,7 +49,10 @@ fn ceremony_keys_prove_and_verify() {
         &["ceremony", "init", "--ptau-file", ptau_s, "--out", cer_s],
         &out,
     );
-    assert!(!ok && log.contains("already holds a ceremony"), "{log}");
+    assert!(
+        !ok && log.contains("already holds a ceremony") && log.contains("--force"),
+        "{log}"
+    );
     step(&[
         "ceremony",
         "contribute",
@@ -138,4 +141,30 @@ fn ceremony_keys_prove_and_verify() {
         verifier.to_str().unwrap(),
     ]);
     assert!(verifier.join("Cargo.toml").is_file());
+
+    // `--force` replaces the finalized ceremony with a fresh one: no
+    // contributions, and no metadata.json left to call the new keys
+    // production-safe.
+    step(&[
+        "ceremony",
+        "init",
+        "--ptau-file",
+        ptau_s,
+        "--out",
+        cer_s,
+        "--force",
+    ]);
+    assert!(
+        !cer.join("metadata.json").exists(),
+        "metadata.json survived --force"
+    );
+    assert!(!cer.join("contribution_0001.json").exists());
+    assert_eq!(
+        std::fs::read_to_string(cer.join("contribution_count"))
+            .unwrap()
+            .trim(),
+        "0"
+    );
+    let log = step(&["ceremony", "verify", "--ceremony-dir", cer_s]);
+    assert!(log.contains("Verified 0 contribution"), "{log}");
 }

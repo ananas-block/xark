@@ -66,6 +66,10 @@ pub struct InitArgs {
     /// and every later `xark ceremony` step takes it as `--ceremony-dir`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: PathBuf,
+    /// Replace a ceremony already in `--out`, discarding its keys and every
+    /// contribution (and its `metadata.json`, if finalized).
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -102,21 +106,20 @@ pub fn run(args: CeremonyArgs) -> Result<()> {
 }
 
 fn run_init(args: InitArgs) -> Result<()> {
-    // Never over an existing ceremony: that would discard its contributions,
-    // and leave a finalized one's `metadata.json` (production-safe) beside fresh
-    // keys whose secrets the initiator knows.
-    for f in [
-        "proving_key.bin",
-        "verifying_key.bin",
-        "contribution_count",
-        "metadata.json",
-    ] {
-        if args.out.join(f).exists() {
-            bail!(
-                "{} already holds a ceremony ({f}); pick a new --out directory",
-                args.out.display()
-            );
-        }
+    // Not over an existing ceremony unless asked (`--force`): that discards its
+    // contributions. And then all of it goes, so a finalized one's
+    // `metadata.json` (production-safe) can't survive beside fresh keys whose
+    // secrets the initiator knows.
+    let existing = ceremony_files(&args.out);
+    if let Some(f) = existing.first()
+        && !args.force
+    {
+        bail!(
+            "{} already holds a ceremony ({}); pick a new --out directory, or pass \
+             --force to discard it and every contribution",
+            args.out.display(),
+            f.file_name().unwrap_or_default().to_string_lossy()
+        );
     }
     // The build's `circuit.xbc`, loaded as `xark setup` does.
     let project = XarkProject::resolve(args.path.clone())?;
@@ -148,6 +151,17 @@ fn run_init(args: InitArgs) -> Result<()> {
     let keys = xark_backend::ptau::setup_from_ptau(&src, &ptau, &seed_arr)
         .map_err(|e| anyhow!("phase-2 setup failed: {e}"))?;
 
+    // The new keys exist, so `--force` can now clear the old ceremony.
+    for f in &existing {
+        fs::remove_file(f).with_context(|| format!("removing {}", f.display()))?;
+    }
+    if !existing.is_empty() {
+        println!(
+            "Discarded the ceremony in {} ({} files)",
+            args.out.display(),
+            existing.len()
+        );
+    }
     fs::create_dir_all(&args.out).with_context(|| format!("creating {}", args.out.display()))?;
 
     // Record the initial delta_g1 baseline for verifier re-anchoring.
@@ -278,6 +292,33 @@ fn run_finalize(args: FinalizeArgs) -> Result<()> {
     fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
     println!("Finalized; metadata.json written.");
     Ok(())
+}
+
+/// Every file a ceremony keeps in `dir` (none if it doesn't exist).
+fn ceremony_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    const FIXED: [&str; 6] = [
+        "proving_key.bin",
+        "verifying_key.bin",
+        "contribution_count",
+        "metadata.json",
+        "baseline_delta_g1.bin",
+        "circuit_meta.json",
+    ];
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy();
+            FIXED.contains(&name.as_ref())
+                || (name.starts_with("contribution_") && name.ends_with(".json"))
+                || name.ends_with(".tmp")
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 fn write_contribution_count(dir: &std::path::Path, n: usize) -> Result<()> {
