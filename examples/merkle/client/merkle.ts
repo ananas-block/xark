@@ -13,8 +13,6 @@
 export type FieldLike = bigint | number | string;
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
-/** A calendar day: a `Date` (read as its UTC day) or `"YYYY-MM-DD"`. */
-export type DateLike = Date | string;
 
 /** Every input of `merkle`. */
 export interface MerkleInputs {
@@ -109,7 +107,7 @@ function decodePublic(v: any): MerklePublicValues {
   };
 }
 
-/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day, bytes as hex. */
+/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
 function toJson(value: unknown): string {
   return JSON.stringify(value, function (this: any, key: string, v: unknown) {
     const raw = this[key];

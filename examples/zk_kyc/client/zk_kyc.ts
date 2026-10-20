@@ -13,8 +13,6 @@
 export type FieldLike = bigint | number | string;
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
-/** A calendar day: a `Date` (read as its UTC day) or `"YYYY-MM-DD"`. */
-export type DateLike = Date | string;
 
 /** A `Country` flag (the circuit's `flags!` enum), in bit order. */
 export type Country =
@@ -44,14 +42,14 @@ export type Country =
 export interface Identity {
   /** `Text`: at most 31 UTF-8 bytes. */
   document: string;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  born: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  born: Date;
   /** One `Country`, or a list of them. */
   nationality: Country | readonly Country[];
   /** `u64`: an integer in [0, 2^64). */
   netWorth: bigint | number;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  expires: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  expires: Date;
   salt: FieldLike;
 }
 
@@ -59,12 +57,12 @@ export interface Identity {
 export interface ZkKycInputs {
   id: Identity;
   commitment: FieldLike;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  bornBefore: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  bornBefore: Date;
   /** `u64`: an integer in [0, 2^64). */
   minNetWorth: bigint | number;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  today: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  today: Date;
   /** One `Country`, or a list of them. */
   allowed: Country | readonly Country[];
 }
@@ -72,12 +70,12 @@ export interface ZkKycInputs {
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface ZkKycPublicInputs {
   commitment: FieldLike;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  bornBefore: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  bornBefore: Date;
   /** `u64`: an integer in [0, 2^64). */
   minNetWorth: bigint | number;
-  /** A calendar day: a `Date` (its UTC day) or `"YYYY-MM-DD"`. */
-  today: DateLike;
+  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
+  today: Date;
   /** One `Country`, or a list of them. */
   allowed: Country | readonly Country[];
 }
@@ -168,7 +166,7 @@ function decodePublic(v: any): ZkKycPublicValues {
   };
 }
 
-/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day, bytes as hex. */
+/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
 function toJson(value: unknown): string {
   return JSON.stringify(value, function (this: any, key: string, v: unknown) {
     const raw = this[key];

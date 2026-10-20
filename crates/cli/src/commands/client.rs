@@ -191,7 +191,7 @@ impl<'a> Gen<'a> {
         }
         let r = ty["ref"].as_str().unwrap_or_default();
         match self.kind(r) {
-            Kind::Date => "DateLike".into(),
+            Kind::Date => "Date".into(),
             Kind::Text => "string".into(),
             Kind::Flags(f) => format!("{f} | readonly {f}[]"),
             Kind::Number => "FieldLike | Uint8Array".into(),
@@ -286,7 +286,9 @@ impl<'a> Gen<'a> {
         }
         let r = ty["ref"].as_str()?;
         Some(match self.kind(r) {
-            Kind::Date => "A calendar day: a `Date` (its UTC day) or `\"YYYY-MM-DD\"`.".into(),
+            Kind::Date => "A calendar day: the `Date`'s UTC day, as `toISOString()` shows it \
+                 (`new Date(\"1990-01-01\")`)."
+                .into(),
             Kind::Text => "`Text`: at most 31 UTF-8 bytes.".into(),
             Kind::Flags(f) => format!("One `{f}`, or a list of them."),
             Kind::Number => format!("`{r}`: the number, or its big-endian bytes."),
@@ -371,9 +373,7 @@ pub fn typescript(schema: &Value) -> Result<String> {
         "/** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */\n\
          export type FieldLike = bigint | number | string;\n\
          /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */\n\
-         export type Bytes = Uint8Array | readonly number[] | string;\n\
-         /** A calendar day: a `Date` (read as its UTC day) or `\"YYYY-MM-DD\"`. */\n\
-         export type DateLike = Date | string;\n\n",
+         export type Bytes = Uint8Array | readonly number[] | string;\n\n",
     );
 
     // Flag sets.
@@ -591,7 +591,7 @@ export class __NAME__ {
 
 "#;
 
-const HELPERS: &str = r#"/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day, bytes as hex. */
+const HELPERS: &str = r#"/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
 function toJson(value: unknown): string {
   return JSON.stringify(value, function (this: any, key: string, v: unknown) {
     const raw = this[key];
@@ -652,7 +652,7 @@ mod tests {
             "export type Country =\n  | \"AD\" | \"US\";",
             "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
             "  pair: readonly [FieldLike, number];",
-            "  bornBefore: DateLike;",
+            "  bornBefore: Date;",
             "  allowed: Country | readonly Country[];",
             "  doc: Bytes;",
             "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: bigint;\n}",

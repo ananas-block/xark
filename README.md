@@ -68,8 +68,8 @@ crate needs only the `xark` dependency.
 `xark` ships the types most credential-style circuits need, each one field wide
 and each with its natural form in tests, `--inputs` and the TypeScript client:
 
-- `Date`: a calendar day (`"1990-01-01"` on the host, compared with `<`/`>=` in
-  the circuit as a 27-bit comparison).
+- `Date`: a calendar day: `"1990-01-01"` in Rust and `--inputs`, a `Date` (its
+  UTC day) in TypeScript, and a 27-bit comparison for `<`/`>=` in the circuit.
 - `Text`: a short string, up to 31 bytes (a document number, a name).
 - `Bitfield<F>`: a set of flags from an enum declared with `xark::flags!`, such as
   the allowed countries: `require_single`, `require_one_of`, `contains`.
@@ -156,10 +156,10 @@ export type Country = | "AD" | "AE" | /* … */ "US" | "ZW";
 
 export interface Identity {
   document: string;            // Text
-  born: DateLike;              // Date | "YYYY-MM-DD"
+  born: Date;                  // its UTC day
   nationality: Country | readonly Country[];
   netWorth: bigint | number;   // u64
-  expires: DateLike;
+  expires: Date;
   salt: FieldLike;
 }
 ```
@@ -170,9 +170,9 @@ import { ZkKyc } from "./zk_kyc";
 
 const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey });
 const { proof, publicInputs } = kyc.prove({
-  id: { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: "2030-01-01", salt },
+  id: { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: new Date("2030-01-01"), salt },
   commitment,
-  bornBefore: "2008-10-20",
+  bornBefore: new Date("2008-10-20"),
   minNetWorth: 500_000,
   today: new Date(),
   allowed: ["US", "GB", "FR", "DE"],
@@ -183,8 +183,7 @@ kyc.verify(proof, publicInputs); // true
 
 The client holds no encoding logic of its own: xark-wasm encodes values against
 the embedded schema with the same Rust code as `xark prove --inputs`, so the two
-can't drift, and a mistake names its input (`today: "2026-02-30" is not a calendar
-day`). `examples/{zk_kyc,cube,sha256,merkle}/client/` hold generated clients and
+can't drift, and a mistake names its input (`id.document: "…" is longer than 31 bytes`). `examples/{zk_kyc,cube,sha256,merkle}/client/` hold generated clients and
 their vitest tests; `scripts/client-check.sh` (run in CI) regenerates them, fails
 if a committed one is stale, and runs the tests.
 
