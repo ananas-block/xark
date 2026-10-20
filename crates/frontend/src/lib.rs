@@ -16,7 +16,6 @@ mod error;
 mod host;
 mod interp;
 mod output;
-mod schema;
 mod templates;
 
 pub use error::{CompileError, CompileResult, ErrorSite};
@@ -73,7 +72,7 @@ pub fn lower_module(
         );
         eprintln!("FRONTEND_TIME: forks {}", machine.forks);
     }
-    let schema = host.schema(module.entry.as_deref().unwrap_or("circuit"));
+    let schema = host.schema(module.entry.as_deref().unwrap_or("circuit"))?;
     let sites = std::mem::take(&mut host.sites);
     let t = std::time::Instant::now();
     let mut output = host.finish(field).map_err(|e| locate(&module, e))?;

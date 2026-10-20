@@ -270,6 +270,7 @@ fn is_internal(function: &str) -> bool {
         || p.starts_with("alloc::")
         || p.starts_with("compiler_builtins::")
         || p.starts_with("xark::wasm::")
+        || p.starts_with("xark::input::")
         || p.starts_with("xark::intrinsics::")
         || function == "__xark_main"
         || function.starts_with("__xark_")

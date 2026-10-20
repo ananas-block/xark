@@ -49,7 +49,7 @@ pub struct Field {
 
 /// Prints the field's **decimal value** (e.g. `Field(19900101)`) rather than the
 /// raw limbs, so you can read the value straight out of a `{:?}` dump — of a bare
-/// `Field`, a `#[derive(CircuitInput)]` struct, or a generated `<Fn>Inputs` — and
+/// `Field`, a `#[derive(Input)]` struct, or a generated `<Fn>Inputs` — and
 /// feed it to `xark prove`. Like [`Field::to_decimal`], the value is meaningful
 /// on the host, or for a constant (in a circuit, a witness is symbolic).
 impl core::fmt::Debug for Field {
@@ -1090,24 +1090,6 @@ impl<const N: usize, A: Copy + RequireEqCircuit<B>, B: Copy> RequireEqCircuit<[B
             self[i].require_eq_circuit(rhs[i]);
             i += 1;
         }
-    }
-}
-
-/// A circuit input type's `Field` leaves, in the compiler's structural-flatten
-/// order. `#[derive(CircuitInput)]` implements it and uses it for nested fields, and
-/// the gadgets' input types (points, hashes, bignums) implement it too, so a derived
-/// struct can hold any of them and still flatten (`to_fields`) for hashing.
-pub trait ToFields {
-    /// The number of `Field` leaves.
-    const FIELD_LEN: usize;
-    /// Write the leaves to `out[..FIELD_LEN]`.
-    fn write_fields(&self, out: &mut [Field]);
-}
-
-impl ToFields for Field {
-    const FIELD_LEN: usize = 1;
-    fn write_fields(&self, out: &mut [Field]) {
-        out[0] = *self;
     }
 }
 

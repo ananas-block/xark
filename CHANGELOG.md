@@ -41,14 +41,35 @@ gadgets now check more:
   streaming API as `options.sources`), and the generated client as
   `keys.sources`. Recording it costs about 10% of lowering time (0.25s on
   the 1.6M-constraint `secp256k1_ecdsa`).
-- **`Date`, `Text`, `Bitfield<F>` and `flags!`** in `xark`: a calendar day, a
-  short string and a set of enum flags, each one field, with natural forms in
-  tests (`"1990-01-01"`, `[US, GB]`), `--inputs` and the TypeScript client. They
-  appear in `schema.json` as named types (`{"newtype": "field", "encoding": …}`).
-  `examples/zk_kyc` uses them: an `Identity` with a document number, birth date,
-  nationality and net worth, checked against a public policy.
+- **One `Input` trait for every circuit input.** A type is a circuit input when
+  it implements `xark::Input`: its `TYPE` (how clients see it, built from a fixed
+  set of standard types), and `read`/`write` of its field elements in order. The
+  one impl serves the circuit build and the host (the prover's leaves,
+  `to_fields()` for hashing, decoding values back), so a hand-written impl is a
+  few lines with no `cfg`s. `#[derive(Input)]` implements it for a struct, and
+  with `#[input(number(bits = B))]` or `#[input(bytes)]` gives one a standard
+  encoding plus its host conversions. On a fieldless enum the same derive
+  implements `xark::Enum`. This replaces `#[derive(CircuitInput)]`,
+  `#[derive(Transparent)]`, `xark::flags!`, `ToFields`, `NativeInput` and the
+  per-gadget `wasm::Input` impls. `schema.json` is now version 2, written from
+  each parameter's `TYPE`; a build fails if one type name would stand for two
+  different types (two widths of `Bignum`), since clients look types up by name.
+- **Everyday input types** in `xark`: `Date`, `Text`, `Choice<E>` (one variant
+  of an enum) and `Bitfield<E>` (a set of them), each one field, with natural
+  forms in tests (`"1990-01-01"`, `[US, GB]`), `--inputs` and clients. `xark`
+  ships the ISO 3166 `Country` enum. Each compares with `require_eq` and `==`
+  (`choice == Country::US`), as does a derived struct (every field element), and
+  `Bitfield::of([US, GB])` builds a constant set inside a circuit too.
+  `Choice::require_in(set)` costs about 570 constraints over `Country`. `examples/zk_kyc` uses them: an `Identity`
+  with a document number, birth date, nationality and net worth, checked
+  against a public policy.
+- **Clients are generated per language from one model.** `xark client`
+  resolves `schema.json` into the standard types once, and a target per
+  language maps them to its own types (TypeScript today: `Date`, string unions
+  of variant names, `bigint`, bytes). Values are encoded by the one Rust codec,
+  so a Python or Go client is one more target, not a second encoder.
 - **A cleaner TypeScript client.** `xark client` emits plain types (`Date`,
-  string unions of flag names, `bigint`, bytes) and a thin class; encoding and
+  string unions of variant names, `bigint`, bytes) and a thin class; encoding and
   decoding run in xark-wasm (`encodeInputs`, `encodePublicInputs`,
   `decodePublicValues`) on the same code as the CLI (`xark_prover::schema`), so a
   generated client is ~150 lines instead of ~350 and the two can't disagree. The
@@ -75,11 +96,10 @@ gadgets now check more:
   string; values `>= p` or negative are rejected), and a gadget type takes its
   natural form (`PointL` an Ed25519 key's 32 bytes, secp `Point` its 64 / 65
   bytes, scalars their 32 bytes, `Affine` an `(x, y)`, bignums a number). Input
-  leaves carry field elements, not decimal strings. `NativeInput` lost its
-  `Native` type: a value fans out its own leaves.
-- `#[derive(CircuitInput)]` structs can hold gadget types (`Affine`, `PointL`,
-  `Hash`, …), and `#[circuit]` parameters can be arrays of them (`[Affine; 4]`).
-  New `ToFields` trait for flattening any input type. `xark-grumpkin` gains
+  leaves carry field elements, not decimal strings.
+- Derived input structs can hold gadget types (`Affine`, `PointL`, `Hash`, …),
+  and `#[circuit]` parameters can be arrays of them (`[Affine; 4]`).
+  `xark-grumpkin` gains
   `Instance`, `WideScalar` and `wide_scalar_mul`; the grumpkin examples use them
   (`grumpkin_ivc`: 20 parameters → 8). `grumpkin_nova_fold`'s inputs are now
   grouped by instance, so its circuit (and keys) change.

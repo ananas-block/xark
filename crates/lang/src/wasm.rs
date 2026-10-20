@@ -89,10 +89,8 @@ mod ffi {
         pub fn xark_input_field(out: *mut Field, name: *const u8, len: usize, vis: u32);
         #[cfg_attr(target_arch = "wasm32", link_name = "input_uint")]
         pub fn xark_input_uint(name: *const u8, len: usize, vis: u32, width: u32) -> u64;
-        #[cfg_attr(target_arch = "wasm32", link_name = "input_struct")]
-        pub fn xark_input_struct(path: *const u8, path_len: usize, ty: *const u8, ty_len: usize);
-        #[cfg_attr(target_arch = "wasm32", link_name = "input_encoding")]
-        pub fn xark_input_encoding(ty: *const u8, ty_len: usize, json: *const u8, json_len: usize);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_schema")]
+        pub fn xark_input_schema(json: *const u8, len: usize);
         #[cfg_attr(target_arch = "wasm32", link_name = "input_uint_hi")]
         pub fn xark_input_uint_hi() -> u64;
         #[cfg_attr(target_arch = "wasm32", link_name = "inputs_done")]
@@ -247,175 +245,31 @@ pub(crate) fn to_bits_record<const N: usize>(x: &Field, bits: &[Field; N]) {
 
 // --- inputs ------------------------------------------------------------------
 
-/// A circuit input's leaf name under construction (`id.tags[1]`), built in place.
-pub struct NameBuf {
-    buf: [u8; 256],
-    len: usize,
+/// Bind the input leaf `name` (a field element). See [`crate::input::bind`].
+pub(crate) fn bind_field(name: &str, public: bool) -> Field {
+    out1(|o| unsafe { ffi::xark_input_field(o, name.as_ptr(), name.len(), public as u32) })
 }
 
-impl Default for NameBuf {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Bind the input leaf `name` as a `bits`-bit unsigned integer (`bits ≤ 64`).
+pub(crate) fn bind_uint(name: &str, public: bool, bits: u32) -> u64 {
+    unsafe { ffi::xark_input_uint(name.as_ptr(), name.len(), public as u32, bits) }
 }
 
-impl NameBuf {
-    pub const fn new() -> Self {
-        NameBuf {
-            buf: [0; 256],
-            len: 0,
-        }
-    }
-    pub fn len(&self) -> usize {
-        self.len
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    pub fn as_str(&self) -> &str {
-        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
-    }
-    pub fn truncate(&mut self, len: usize) {
-        self.len = len;
-    }
-    pub fn push_str(&mut self, s: &str) {
-        let n = s.len().min(self.buf.len() - self.len);
-        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
-        self.len += n;
-    }
-    pub fn push_index(&mut self, i: usize) {
-        self.push_str("[");
-        self.push_usize(i);
-        self.push_str("]");
-    }
-    pub fn push_usize(&mut self, mut i: usize) {
-        let mut digits = [0u8; 20];
-        let mut n = 0;
-        loop {
-            digits[n] = b'0' + (i % 10) as u8;
-            n += 1;
-            i /= 10;
-            if i == 0 {
-                break;
-            }
-        }
-        while n > 0 {
-            n -= 1;
-            if self.len < self.buf.len() {
-                self.buf[self.len] = digits[n];
-                self.len += 1;
-            }
-        }
-    }
+/// Bind the input leaf `name` as a `u128`: two wasm registers, the low half first,
+/// then the high half of the same input.
+pub(crate) fn bind_u128(name: &str, public: bool) -> u128 {
+    let lo = unsafe { ffi::xark_input_uint(name.as_ptr(), name.len(), public as u32, 128) };
+    let hi = unsafe { ffi::xark_input_uint_hi() };
+    (hi as u128) << 64 | lo as u128
 }
 
-/// A circuit input type: bound leaf by leaf, in the compiler's structural-flatten
-/// order (fields in declaration order, arrays by index), named `name.field[i]`.
-pub trait Input: Sized {
-    fn input(name: &mut NameBuf, vis: u32) -> Self;
-}
-
-impl Input for Field {
-    fn input(name: &mut NameBuf, vis: u32) -> Self {
-        out1(|o| unsafe { ffi::xark_input_field(o, name.buf.as_ptr(), name.len, vis) })
-    }
-}
-
-macro_rules! uint_input {
-    ($($t:ty => $w:literal),*) => {$(
-        impl Input for $t {
-            fn input(name: &mut NameBuf, vis: u32) -> Self {
-                unsafe { ffi::xark_input_uint(name.buf.as_ptr(), name.len, vis, $w) as $t }
-            }
-        }
-    )*};
-}
-uint_input!(u8 => 8, u16 => 16, u32 => 32, u64 => 64);
-
-impl Input for u128 {
-    fn input(name: &mut NameBuf, vis: u32) -> Self {
-        // Two wasm registers: the low half first, then the high half of the same input.
-        let lo = unsafe { ffi::xark_input_uint(name.buf.as_ptr(), name.len, vis, 128) };
-        let hi = unsafe { ffi::xark_input_uint_hi() };
-        (hi as u128) << 64 | lo as u128
-    }
-}
-
-impl<T: Input, const N: usize> Input for [T; N] {
-    fn input(name: &mut NameBuf, vis: u32) -> Self {
-        core::array::from_fn(|i| {
-            let at = name.len();
-            name.push_index(i);
-            let v = T::input(name, vis);
-            name.truncate(at);
-            v
-        })
-    }
-}
-
-macro_rules! tuple_input {
-    ($(($($i:tt $t:ident),+))*) => {$(
-        impl<$($t: Input),+> Input for ($($t,)+) {
-            fn input(name: &mut NameBuf, vis: u32) -> Self {
-                ($({
-                    let at = name.len();
-                    name.push_str(".");
-                    name.push_usize($i);
-                    let v = $t::input(name, vis);
-                    name.truncate(at);
-                    v
-                },)+)
-            }
-        }
-    )*};
-}
-tuple_input!((0 A) (0 A, 1 B) (0 A, 1 B, 2 C) (0 A, 1 B, 2 C, 3 D));
-
-/// Bind one named entry parameter (used by the `#[circuit]` entry shim).
-pub fn input<T: Input>(name: &mut NameBuf, root: &str, public: bool) -> T {
-    name.truncate(0);
-    name.push_str(root);
-    T::input(name, public as u32)
-}
-
-/// Record that the input at the current path is the struct type `ty` (for the
-/// compiler's `schema.json`); called first by every struct's [`Input::input`].
-pub fn input_struct(name: &NameBuf, ty: &str) {
-    unsafe { ffi::xark_input_struct(name.buf.as_ptr(), name.len, ty.as_ptr(), ty.len()) }
-}
-
-/// Record the struct type `ty`'s natural encoding (a JSON object, `schema.json`'s
-/// `encoding`), so clients and `xark prove --inputs` accept a value in that form.
-/// Called from a gadget type's [`Input::input`] after [`input_struct`].
-pub fn input_encoding(ty: &str, json: &str) {
-    unsafe { ffi::xark_input_encoding(ty.as_ptr(), ty.len(), json.as_ptr(), json.len()) }
-}
-
-/// [`input_encoding`] for a value split into `n` little-endian `bits`-bit limbs:
-/// the struct's field leaves, in flatten order, are the limbs of the number (a
-/// big-endian byte string of [`crate::natural_bytes`]`(n, bits)` bytes).
-pub fn input_encoding_limbs(ty: &str, n: usize, bits: usize) {
-    let mut j = NameBuf::new();
-    j.push_str("{\"bytes\":");
-    j.push_usize(crate::natural_bytes(n, bits));
-    j.push_str(",\"limbs\":");
-    j.push_usize(bits);
-    j.push_str("}");
-    input_encoding(ty, j.as_str());
-}
-
-/// Bind a struct field during [`Input::input`] (used by the derives).
-pub fn input_field<T: Input>(name: &mut NameBuf, field: &str, vis: u32) -> T {
-    let at = name.len();
-    name.push_str(".");
-    name.push_str(field);
-    let v = T::input(name, vis);
-    name.truncate(at);
-    v
+/// Hand the compiler the circuit's `schema.json`.
+pub(crate) fn record_schema(json: &str) {
+    unsafe { ffi::xark_input_schema(json.as_ptr(), json.len()) }
 }
 
 /// All inputs are bound: the compiler range-checks the `uN` ones now.
-pub fn inputs_done() {
+pub(crate) fn inputs_done() {
     unsafe { ffi::xark_inputs_done() }
 }
 

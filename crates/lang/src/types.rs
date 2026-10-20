@@ -1,11 +1,13 @@
 //! Everyday input types with a natural form on both sides: a [`Date`], a short
-//! [`Text`], and a [`Bitfield`] of named [`Flags`]. Each is one `Field` in the circuit
-//! and its plain value off it (`Date::new(1990, 1, 1)` in Rust, a JS `Date` in a
-//! generated client), with the encoding recorded in `schema.json`.
+//! [`Text`], one variant of an [`Enum`] ([`Choice`]) and a set of them
+//! ([`Bitfield`]). Each is one `Field` in the circuit and its plain value off it
+//! (`Date::new(1990, 1, 1)` in Rust, a JS `Date` in a generated client), with its
+//! standard type recorded in `schema.json`.
 
 use core::cmp::Ordering;
 use core::marker::PhantomData;
 
+use crate::input::{Encoding, Enum, Input, Layout, Reader, Type, Writer};
 use crate::lang::{Field, require, require_eq};
 
 // ---- Date ---------------------------------------------------------------------
@@ -117,75 +119,143 @@ impl Text {
     }
 }
 
-// ---- Bitfield -------------------------------------------------------------------
+// ---- Choice and Bitfield ----------------------------------------------------------
 
-/// A fixed set of named flags, each a bit of a [`Bitfield`]: declare one with
-/// [`flags!`](crate::flags). Append only: a flag's position is its bit.
-pub trait Flags: Copy {
-    /// Every flag's name, in bit order.
-    const NAMES: &'static [&'static str];
-    /// The bitfield's `schema.json` type name (`Bitfield<Country>`).
-    const SET: &'static str;
-    /// The bitfield's `schema.json` encoding (the flag names).
-    const ENCODING: &'static str;
-    /// This flag's bit.
-    fn bit(self) -> usize;
-}
-
-/// Declare a set of named flags for a [`Bitfield`]: an enum whose variants are bits
-/// `0, 1, …` in order (at most 253: one `Field`). Append only, never reorder: a
-/// variant's position is its bit in every stored value.
+/// One variant of an [`Enum`] in one `Field` (its position): a status, a document
+/// kind. Off-circuit it's built from the variant (`Kind::Passport.into()`); a
+/// generated client takes its name (`"Passport"`).
 ///
-/// ```ignore
-/// xark::flags! {
-///     /// ISO 3166-1 alpha-2 countries.
-///     pub enum Country { AD, AE, AF, /* … */ }
-/// }
-/// ```
-#[macro_export]
-macro_rules! flags {
-    ($(#[$m:meta])* $vis:vis enum $name:ident { $($(#[$vm:meta])* $v:ident),+ $(,)? }) => {
-        $(#[$m])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        #[repr(u8)]
-        $vis enum $name {
-            $($(#[$vm])* $v),+
-        }
-        impl $crate::Flags for $name {
-            const NAMES: &'static [&'static str] = &[$(stringify!($v)),+];
-            const SET: &'static str = concat!("Bitfield<", stringify!($name), ">");
-            const ENCODING: &'static str = concat!(
-                "{\"flags\":\"", stringify!($name), "\",\"names\":\"", $(stringify!($v), ",",)+ "\"}"
-            );
-            fn bit(self) -> usize {
-                const { assert!(<$name as $crate::Flags>::NAMES.len() <= 253, "at most 253 flags") };
-                self as usize
-            }
-        }
-    };
-}
+/// In the circuit, [`Choice::is`] compares it with a variant. A value outside the
+/// enum equals none of them; [`Choice::require_valid`] rules it out.
+pub struct Choice<E: Enum>(Field, PhantomData<E>);
 
-/// A set of [`Flags`] in one `Field` (bit `i` = flag `i`): a holder's nationality, a
-/// verifier's allow-list. Off-circuit it's built from flags (`Bitfield::of([US, GB])`,
-/// `Country::US.into()`); a generated client takes `"US"` or `["US", "GB"]`.
-///
-/// In the circuit, each check decomposes the value into its bits (253 constraints) and
-/// proves no bit outside the flags is set, so a value can't name a flag that isn't
-/// declared.
-pub struct Bitfield<F: Flags>(Field, PhantomData<F>);
-
-impl<F: Flags> Clone for Bitfield<F> {
+impl<E: Enum> Clone for Choice<E> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<F: Flags> Copy for Bitfield<F> {}
+impl<E: Enum> Copy for Choice<E> {}
 
-impl<F: Flags> Bitfield<F> {
-    /// The value's bits, with every bit past the declared flags constrained to zero.
+impl<E: Enum> Choice<E> {
+    /// The choice of `variant`.
+    pub fn of(variant: E) -> Self {
+        Choice(Field::from_u64(variant.index() as u64), PhantomData)
+    }
+
+    /// Whether this is `variant`: a `{0, 1}` circuit wire.
+    pub fn is(self, variant: E) -> bool {
+        self.0 == Field::from_u64(variant.index() as u64)
+    }
+
+    /// Constrain this to be `variant`.
+    pub fn require_is(self, variant: E) {
+        require_eq(self.0, Field::from_u64(variant.index() as u64));
+    }
+
+    /// Constrain this to be one of the enum's variants (`< 2⁶⁴` and below the
+    /// variant count: about 70 constraints).
+    pub fn require_valid(self) {
+        require(
+            self.0
+                .lt::<64>(Field::from_u64(E::VARIANTS.names.len() as u64)),
+        );
+    }
+
+    /// Constrain this to be in `allowed` (so a valid variant too).
+    ///
+    /// `∏ᵢ (self − i + (1 − allowedᵢ)·2⁶⁴) = 0`: a factor vanishes only where `self`
+    /// is variant `i` and `i` is allowed, since with `self < 2⁶⁴` (checked) a
+    /// disallowed variant's factor lies in `(2⁶⁴ − 253, 2⁶⁵)`. About 570 constraints
+    /// over [`Country`](crate::Country): the set's 253 bits, the 64-bit check, one
+    /// product per variant.
+    pub fn require_in(self, allowed: Bitfield<E>) {
+        let a = allowed.bits();
+        let _ = self.0.to_bits::<64>();
+        let k = Field::from_u128(1 << 64);
+        let mut product = Field::from_u8(1);
+        let mut i = 0;
+        while i < E::VARIANTS.names.len() {
+            product *= self.0 - Field::from_u64(i as u64) + (Field::from_u8(1) - a[i]) * k;
+            i += 1;
+        }
+        require_eq(product, Field::from_u8(0));
+    }
+
+    /// The choice's `Field` (the variant's position).
+    pub const fn field(self) -> Field {
+        self.0
+    }
+}
+
+/// Constant sets (an allow-list fixed in the circuit, or a value on the host).
+impl<E: Enum> Bitfield<E> {
+    /// No variants set.
+    pub fn empty() -> Self {
+        Bitfield(Field::from_u8(0), PhantomData)
+    }
+    /// Every variant set (an allow-list that allows everything).
+    pub fn all() -> Self {
+        Self::from_bits(0..E::VARIANTS.names.len())
+    }
+    /// These variants set.
+    pub fn of(variants: impl IntoIterator<Item = E>) -> Self {
+        Self::from_bits(variants.into_iter().map(E::index))
+    }
+    fn from_bits(bits: impl Iterator<Item = usize>) -> Self {
+        let mut b = [0u8; 32];
+        for i in bits {
+            b[i / 8] |= 1 << (i % 8);
+        }
+        Bitfield(Field::from_le_bytes(&b), PhantomData)
+    }
+}
+
+impl<E: Enum> From<E> for Bitfield<E> {
+    fn from(variant: E) -> Self {
+        Self::of([variant])
+    }
+}
+
+impl<E: Enum, const N: usize> From<[E; N]> for Bitfield<E> {
+    fn from(variants: [E; N]) -> Self {
+        Self::of(variants)
+    }
+}
+
+impl<E: Enum> From<E> for Choice<E> {
+    fn from(variant: E) -> Self {
+        Self::of(variant)
+    }
+}
+
+/// A set of an [`Enum`]'s variants in one `Field` (bit `i` = variant `i`): a holder's
+/// nationality, a verifier's allow-list. Off-circuit it's built from variants
+/// (`Bitfield::of([US, GB])`, `Country::US.into()`); a generated client takes `"US"`
+/// or `["US", "GB"]`.
+///
+/// In the circuit, each check decomposes the value into its bits (253 constraints) and
+/// proves no bit outside the enum is set, so a value can't name a variant that isn't
+/// declared.
+pub struct Bitfield<E: Enum>(Field, PhantomData<E>);
+
+impl<E: Enum> Clone for Bitfield<E> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<E: Enum> Copy for Bitfield<E> {}
+
+impl<E: Enum> Bitfield<E> {
+    const FITS: () = assert!(
+        E::VARIANTS.names.len() <= 253,
+        "a Bitfield holds at most 253 variants"
+    );
+
+    /// The value's bits, with every bit past the declared variants constrained to zero.
     fn bits(self) -> [Field; 253] {
+        let () = Self::FITS;
         let bits = self.0.to_bits::<253>();
-        let mut i = F::NAMES.len();
+        let mut i = E::VARIANTS.names.len();
         while i < 253 {
             require_eq(bits[i], Field::from_u8(0));
             i += 1;
@@ -193,51 +263,52 @@ impl<F: Flags> Bitfield<F> {
         bits
     }
 
-    /// Constrain exactly one flag to be set (a one-hot value: one nationality).
+    /// Constrain exactly one variant to be set (a one-hot value: one nationality).
     pub fn require_single(self) {
         let bits = self.bits();
         let mut n = Field::from_u8(0);
         let mut i = 0;
-        while i < F::NAMES.len() {
+        while i < E::VARIANTS.names.len() {
             n += bits[i];
             i += 1;
         }
         require_eq(n, Field::from_u8(1));
     }
 
-    /// Constrain exactly one flag to be set, and that one to be in `allowed` (a holder's
-    /// one nationality against an allow-list: 2 × 253 constraints, plus one per flag).
-    pub fn require_one_of(self, allowed: Bitfield<F>) {
+    /// Constrain exactly one variant to be set, and that one to be in `allowed` (a
+    /// holder's one nationality against an allow-list: 2 × 253 constraints, plus one
+    /// per variant).
+    pub fn require_one_of(self, allowed: Bitfield<E>) {
         let (c, a) = (self.bits(), allowed.bits());
         let (mut hot, mut hit) = (Field::from_u8(0), Field::from_u8(0));
         let mut i = 0;
-        while i < F::NAMES.len() {
+        while i < E::VARIANTS.names.len() {
             hot += c[i];
             hit += c[i] * a[i];
             i += 1;
         }
-        require_eq(hot, Field::from_u8(1)); // exactly one flag
+        require_eq(hot, Field::from_u8(1)); // exactly one variant
         require_eq(hit, Field::from_u8(1)); // and it is allowed
     }
 
-    /// Constrain every flag set in `self` to be set in `other` too.
-    pub fn require_subset_of(self, other: Bitfield<F>) {
+    /// Constrain every variant set in `self` to be set in `other` too.
+    pub fn require_subset_of(self, other: Bitfield<E>) {
         let (a, b) = (self.bits(), other.bits());
         let mut i = 0;
-        while i < F::NAMES.len() {
+        while i < E::VARIANTS.names.len() {
             require_eq(a[i] * b[i], a[i]); // a ⇒ b
             i += 1;
         }
     }
 
-    /// Whether `flag` is set: a `{0, 1}` circuit wire.
-    pub fn contains(self, flag: F) -> bool {
-        !self.bits()[flag.bit()].is_zero()
+    /// Whether `variant` is set: a `{0, 1}` circuit wire.
+    pub fn contains(self, variant: E) -> bool {
+        !self.bits()[variant.index()].is_zero()
     }
 
-    /// Constrain `flag` to be set.
-    pub fn require_contains(self, flag: F) {
-        require(self.contains(flag));
+    /// Constrain `variant` to be set.
+    pub fn require_contains(self, variant: E) {
+        require(self.contains(variant));
     }
 
     /// The set's `Field`.
@@ -246,59 +317,92 @@ impl<F: Flags> Bitfield<F> {
     }
 }
 
-// ---- shared: flattening, circuit input binding, host side -------------------------
+// ---- inputs ---------------------------------------------------------------------
 
-macro_rules! newtype_common {
-    ($t:ident $(<$g:ident: $b:ident>)?, $name:expr, $enc:expr) => {
-        impl$(<$g: $b>)? crate::ToFields for $t$(<$g>)? {
-            const FIELD_LEN: usize = 1;
-            fn write_fields(&self, out: &mut [Field]) {
-                out[0] = self.0;
-            }
-        }
-
-        /// A circuit input: one leaf at the parameter's own path, its type and natural
-        /// encoding recorded for `schema.json`.
-        #[cfg(all(xark, target_arch = "wasm32"))]
-        impl$(<$g: $b>)? crate::wasm::Input for $t$(<$g>)? {
-            fn input(n: &mut crate::wasm::NameBuf, vis: u32) -> Self {
-                crate::wasm::input_struct(n, $name);
-                crate::wasm::input_encoding($name, $enc);
-                Self::wrap(<Field as crate::wasm::Input>::input(n, vis))
-            }
-        }
-
-        #[cfg(not(xark))]
-        impl$(<$g: $b>)? xark_prover::NativeInput for $t$(<$g>)? {
-            fn leaves(value: &Self, prefix: &str) -> alloc::vec::Vec<(alloc::string::String, xark_prover::Fr)> {
-                alloc::vec![(alloc::string::String::from(prefix), value.0.into())]
-            }
-        }
-    };
-}
-
-impl Date {
-    #[cfg_attr(not(all(xark, target_arch = "wasm32")), allow(dead_code))]
-    fn wrap(f: Field) -> Self {
-        Date(f)
+impl Input for Date {
+    const TYPE: Type =
+        Type::Named(&Type::named("Date", Layout::Newtype(Type::Field)).encoded(Encoding::Date));
+    fn read(r: &mut Reader<'_>) -> Self {
+        Date(r.field())
     }
-}
-impl Text {
-    #[cfg_attr(not(all(xark, target_arch = "wasm32")), allow(dead_code))]
-    fn wrap(f: Field) -> Self {
-        Text(f)
-    }
-}
-impl<F: Flags> Bitfield<F> {
-    #[cfg_attr(not(all(xark, target_arch = "wasm32")), allow(dead_code))]
-    fn wrap(f: Field) -> Self {
-        Bitfield(f, PhantomData)
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(self.0)
     }
 }
 
-newtype_common!(Date, "Date", "{\"date\":\"yyyymmdd\"}");
-newtype_common!(Text, "Text", "{\"text\":31}");
-newtype_common!(Bitfield<F: Flags>, F::SET, F::ENCODING);
+impl Input for Text {
+    const TYPE: Type =
+        Type::Named(&Type::named("Text", Layout::Newtype(Type::Field)).encoded(Encoding::Text(31)));
+    fn read(r: &mut Reader<'_>) -> Self {
+        Text(r.field())
+    }
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(self.0)
+    }
+}
+
+impl<E: Enum> Input for Choice<E> {
+    const TYPE: Type = Type::Named(
+        &Type::named("Choice", Layout::Newtype(Type::Field))
+            .with_arg(E::VARIANTS.name)
+            .encoded(Encoding::Choice(&E::VARIANTS)),
+    );
+    fn read(r: &mut Reader<'_>) -> Self {
+        Choice(r.field(), PhantomData)
+    }
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(self.0)
+    }
+}
+
+impl<E: Enum> Input for Bitfield<E> {
+    const TYPE: Type = Type::Named(
+        &Type::named("Bitfield", Layout::Newtype(Type::Field))
+            .with_arg(E::VARIANTS.name)
+            .encoded(Encoding::Set(&E::VARIANTS)),
+    );
+    fn read(r: &mut Reader<'_>) -> Self {
+        Bitfield(r.field(), PhantomData)
+    }
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(self.0)
+    }
+}
+
+// ---- equality -------------------------------------------------------------------
+
+// Each is one field, so `==` and `require_eq` compare that field: one equality
+// constraint (`==` gives a `{0, 1}` wire, as on `Field`).
+macro_rules! one_field_eq {
+    ($($t:ident $(<$g:ident: $b:ident>)?),*) => {$(
+        impl$(<$g: $b>)? crate::RequireEqCircuit<$t$(<$g>)?> for $t$(<$g>)? {
+            #[inline]
+            #[cfg_attr(not(xark), track_caller)]
+            fn require_eq_circuit(self, rhs: Self) {
+                crate::lang::__xark_require_eq_scalar(self.0, rhs.0)
+            }
+        }
+    )*};
+}
+one_field_eq!(Date, Text, Choice<E: Enum>, Bitfield<E: Enum>);
+
+macro_rules! one_field_partial_eq {
+    ($($t:ident $(<$g:ident: $b:ident>)?),*) => {$(
+        impl$(<$g: $b>)? PartialEq for $t$(<$g>)? {
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+    )*};
+}
+one_field_partial_eq!(Text, Choice<E: Enum>, Bitfield<E: Enum>);
+
+/// `choice == Country::US`: whether it is that variant (see [`Choice::is`]).
+impl<E: Enum> PartialEq<E> for Choice<E> {
+    fn eq(&self, variant: &E) -> bool {
+        self.is(*variant)
+    }
+}
 
 // In the circuit build `Debug` only has to exist (a derived `Debug` on a struct of
 // these compiles there too); the host's renders the value.
@@ -318,7 +422,12 @@ mod circuit_debug {
             write!(f, "Text({:?})", self.0)
         }
     }
-    impl<F: Flags> fmt::Debug for Bitfield<F> {
+    impl<E: Enum> fmt::Debug for Choice<E> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "Choice({:?})", self.0)
+        }
+    }
+    impl<E: Enum> fmt::Debug for Bitfield<E> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "Bitfield({:?})", self.0)
         }
@@ -396,49 +505,42 @@ mod host {
         b
     }
 
-    impl<F: Flags> Bitfield<F> {
-        /// No flags set.
-        pub fn empty() -> Self {
-            Bitfield(Field::from_u8(0), PhantomData)
+    impl<E: Enum> Choice<E> {
+        /// The variant chosen (`None` for a value outside the enum).
+        pub fn variant(self) -> Option<E> {
+            let l = self.0.to_limbs();
+            if l[1..].iter().any(|&x| x != 0) {
+                return None;
+            }
+            E::from_index(usize::try_from(l[0]).ok()?)
         }
-        /// Every flag set (an allow-list that allows everything).
-        pub fn all() -> Self {
-            Self::from_bits((0..F::NAMES.len()).map(Some))
+    }
+
+    impl<E: Enum + fmt::Debug> fmt::Debug for Choice<E> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.variant() {
+                Some(v) => write!(f, "Choice({v:?})"),
+                None => write!(f, "Choice({:?})", self.0),
+            }
         }
-        /// These flags set.
-        pub fn of(flags: impl IntoIterator<Item = F>) -> Self {
-            Self::from_bits(flags.into_iter().map(|f| Some(f.bit())))
-        }
-        /// The flags set, in bit order.
-        pub fn names(self) -> alloc::vec::Vec<&'static str> {
+    }
+
+    impl<E: Enum> Bitfield<E> {
+        /// The variants set, in order.
+        pub fn variants(self) -> alloc::vec::Vec<E> {
             let b = le_bytes(self.0);
-            (0..F::NAMES.len())
+            (0..E::VARIANTS.names.len())
                 .filter(|&i| b[i / 8] >> (i % 8) & 1 == 1)
-                .map(|i| F::NAMES[i])
+                .filter_map(E::from_index)
                 .collect()
         }
-        fn from_bits(bits: impl Iterator<Item = Option<usize>>) -> Self {
-            let mut b = [0u8; 32];
-            for i in bits.flatten() {
-                b[i / 8] |= 1 << (i % 8);
-            }
-            Bitfield(Field::from_le_bytes(&b), PhantomData)
+        /// The names of the variants set, in order.
+        pub fn names(self) -> alloc::vec::Vec<&'static str> {
+            self.variants().into_iter().map(E::name).collect()
         }
     }
 
-    impl<F: Flags> From<F> for Bitfield<F> {
-        fn from(flag: F) -> Self {
-            Self::of([flag])
-        }
-    }
-
-    impl<F: Flags, const N: usize> From<[F; N]> for Bitfield<F> {
-        fn from(flags: [F; N]) -> Self {
-            Self::of(flags)
-        }
-    }
-
-    impl<F: Flags> fmt::Debug for Bitfield<F> {
+    impl<E: Enum> fmt::Debug for Bitfield<E> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             write!(f, "Bitfield{:?}", self.names())
         }
@@ -449,8 +551,11 @@ mod host {
 mod tests {
     use super::*;
 
-    crate::flags! {
-        enum Color { Red, Green, Blue }
+    #[derive(Clone, Copy, Debug, PartialEq, crate::Input)]
+    enum Color {
+        Red,
+        Green,
+        Blue,
     }
 
     #[test]
@@ -470,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn text_and_flags() {
+    fn text_choices_and_sets() {
         assert_eq!(
             alloc::format!("{:?}", Text::from("A1938274")),
             "Text(\"A1938274\")"
@@ -480,10 +585,14 @@ mod tests {
         assert_eq!(s.names(), ["Red", "Blue"]);
         assert_eq!(Bitfield::from(Color::Green).field().to_decimal(), "2");
         assert_eq!(Bitfield::<Color>::all().names().len(), 3);
+        let c = Choice::from(Color::Blue);
+        assert_eq!(c.field().to_decimal(), "2");
+        assert_eq!(alloc::format!("{c:?}"), "Choice(Blue)");
+        assert!(c.is(Color::Blue) && !c.is(Color::Red));
+        assert_eq!(Color::from_name("Green"), Some(Color::Green));
         assert_eq!(
-            <Color as Flags>::ENCODING,
-            r#"{"flags":"Color","names":"Red,Green,Blue,"}"#
+            crate::input::schema_json("c", &[("c", true, <Choice<Color>>::TYPE)]),
+            r#"{"version":2,"circuit":"c","inputs":[{"name":"c","visibility":"public","type":{"ref":"Choice<Color>"}}],"types":{"Choice<Color>":{"newtype":"field","encoding":{"choice":"Color"}},"Color":{"enum":["Red","Green","Blue"]}},"public_inputs":["c"]}"#
         );
-        assert_eq!(<Color as Flags>::SET, "Bitfield<Color>");
     }
 }

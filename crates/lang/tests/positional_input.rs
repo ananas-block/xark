@@ -1,19 +1,17 @@
-//! Demonstrates the `Into<[Field; N]>` positional input path — the replacement for the
-//! `NativeInput` (name-keyed decimal + `String` mirror) machinery. The host builds its
-//! domain struct with `Field` values, `#[derive(CircuitInput)]` flattens it to
-//! `[Field; N]`, `Field::to_decimal` renders each, and the prover binds them
-//! POSITIONALLY to the circuit's inputs (flatten order = input-var order). No leaf
-//! names, no parallel mirror struct.
+//! The positional input path: the host builds its domain struct with `Field` values,
+//! `#[derive(Input)]`'s `to_fields` flattens it, `Field::to_decimal` renders each, and
+//! they bind POSITIONALLY to the circuit's inputs (input order = input-var order). No
+//! leaf names, no parallel mirror struct.
 
 use std::collections::BTreeMap;
 
-use xark::{CircuitInput, Field};
+use xark::{Field, Input};
 use xark_ir::solver;
 
 /// The host-side domain type — real `Field` values, one derive. In a real crate this is
 /// the *same* struct the circuit body uses (cfg-split), here a standalone copy so the
 /// test can build it host-side.
-#[derive(CircuitInput)]
+#[derive(Input)]
 struct ZkId {
     id: Field,
     dob: Field,
@@ -91,7 +89,7 @@ fn const_integer_construction() {
 fn positional_input_flattens_and_solves() {
     // Toy relation over a struct input: the four fields must sum to a public total.
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(CircuitInput)]\n\
+        #[derive(Input)]\n\
         struct ZkId { id: Field, dob: Field, country: Field, nonce: Field }\n\
         pub fn circuit(u: Private<ZkId>, total: Public<Field>) {\n\
         require_eq(u.id + u.dob + u.country + u.nonce, total);\n\
@@ -107,7 +105,7 @@ fn positional_input_flattens_and_solves() {
         nonce: Field::from(4u64),
     };
     // …flattens via the derive, and renders each field to a decimal — no leaf names.
-    let flat: [Field; 4] = user.into();
+    let flat: [Field; 4] = user.to_fields();
     let mut decimals: Vec<String> = flat.iter().map(|f| f.to_decimal()).collect();
 
     // Bind positionally to the circuit's inputs (flatten order == input-var id order).

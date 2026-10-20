@@ -21,15 +21,10 @@
 pub use xark::Field;
 use xark::require_eq;
 
-/// Re-exported so the [`fp!`] macro can name `xark` items (`ToFields`, the host
+/// Re-exported so the [`fp!`] macro can name `xark` items (`Input`, the host
 /// helpers) from the caller's crate.
 #[doc(hidden)]
 pub use xark as __xark;
-/// Host-only re-export so the [`fp!`] macro can generate a decimal `NativeInput`
-/// without the caller depending on the prover by name.
-#[cfg(not(xark))]
-#[doc(hidden)]
-pub use xark::prover as __prover;
 
 // Width-generic non-native modular arithmetic (`Bignum<LIMBS, BITS>`).
 
@@ -50,27 +45,34 @@ pub struct Bignum<const LIMBS: usize, const BITS: usize> {
     pub limbs: [Field; LIMBS],
 }
 
-/// Stable-frontend input binding (`<prefix>.limbs[i]`); re-exported for `fp!`.
-#[cfg(all(xark, target_arch = "wasm32"))]
-#[doc(hidden)]
-pub use xark::wasm as __wasm;
-
-#[cfg(all(xark, target_arch = "wasm32"))]
-impl<const LIMBS: usize, const BITS: usize> xark::wasm::Input for Bignum<LIMBS, BITS> {
-    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
-        xark::wasm::input_struct(n, "Bignum");
-        xark::wasm::input_encoding_limbs("Bignum", LIMBS, BITS);
-        Bignum {
-            limbs: xark::wasm::input_field(n, "limbs", vis),
-        }
+/// A circuit input given as a whole number (a decimal or `0x`-hex string in a
+/// client), split into `LIMBS` little-endian `BITS`-bit limbs `<name>.limbs[i]`.
+impl<const LIMBS: usize, const BITS: usize> xark::Input for Bignum<LIMBS, BITS> {
+    const TYPE: xark::input::Type = crate::number_type!("Bignum", LIMBS, BITS);
+    fn read(r: &mut xark::input::Reader<'_>) -> Self {
+        Bignum { limbs: r.read() }
+    }
+    fn write(&self, w: &mut xark::input::Writer<'_>) {
+        w.write(&self.limbs)
     }
 }
 
-impl<const LIMBS: usize, const BITS: usize> xark::ToFields for Bignum<LIMBS, BITS> {
-    const FIELD_LEN: usize = LIMBS;
-    fn write_fields(&self, out: &mut [Field]) {
-        out[..LIMBS].copy_from_slice(&self.limbs);
-    }
+/// The `Input::TYPE` of a limbed number type `$name`: `{ limbs: [Field; $limbs] }`,
+/// given as a whole number of `$bits`-bit limbs. What [`fp!`] types use.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! number_type {
+    ($name:expr, $limbs:expr, $bits:expr) => {
+        $crate::__xark::input::Type::Named(&$crate::__xark::input::Named {
+            name: $name,
+            arg: ::core::option::Option::None,
+            layout: $crate::__xark::input::Layout::Struct(&[$crate::__xark::input::Member::new(
+                "limbs",
+                <[$crate::Field; $limbs] as $crate::__xark::Input>::TYPE,
+            )]),
+            encoding: $crate::__xark::input::Encoding::Number { bits: $bits },
+        })
+    };
 }
 
 // Host side: a `Bignum` value is one whole number, from a decimal or `0x`-hex string
@@ -81,12 +83,6 @@ impl<const LIMBS: usize, const BITS: usize> xark::ToFields for Bignum<LIMBS, BIT
 const _: () = {
     extern crate std;
     use std::string::String;
-    use std::vec::Vec;
-    impl<const LIMBS: usize, const BITS: usize> xark::prover::NativeInput for Bignum<LIMBS, BITS> {
-        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
-            xark::host::limbs_leaves(&value.limbs, prefix)
-        }
-    }
     impl<const LIMBS: usize, const BITS: usize> xark::host::FromBeBytes for Bignum<LIMBS, BITS> {
         const BYTES: usize = xark::host::natural_bytes(LIMBS, BITS);
         fn from_be_bytes(bytes: &[u8]) -> Self {
@@ -325,8 +321,8 @@ macro_rules! fp {
         $crate::fp!(@build $vis $name, $modulus, 3, 86);
         $crate::fp!(@host $name, 3, 86);
     };
-    // Same, but WITHOUT a `NativeInput` host impl: for callers that supply their own
-    // (e.g. curves give a byte host via `curve_host_inputs!`), so the two don't clash.
+    // Same, but WITHOUT the host conversions: for callers that supply their own (e.g.
+    // curves give a byte host via `curve_host_inputs!`), so the two don't clash.
     (no_host $vis:vis $name:ident, $modulus:literal) => {
         $crate::fp!(@build $vis $name, $modulus, 3, 86);
     };
@@ -338,20 +334,7 @@ macro_rules! fp {
         $vis struct $name {
             pub limbs: [$crate::Field; $limbs],
         }
-        #[cfg(all(xark, target_arch = "wasm32"))]
-        impl $crate::__wasm::Input for $name {
-            fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
-                $crate::__wasm::input_struct(n, stringify!($name));
-                $crate::__wasm::input_encoding_limbs(stringify!($name), $limbs, $bits);
-                Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
-            }
-        }
-        impl $crate::__xark::ToFields for $name {
-            const FIELD_LEN: usize = $limbs;
-            fn write_fields(&self, out: &mut [$crate::Field]) {
-                out[..$limbs].copy_from_slice(&self.limbs);
-            }
-        }
+        $crate::fp!(@input $name, $limbs, $bits);
         #[allow(dead_code)]
         impl $name {
             /// Wrap `LIMBS` little-endian `BITS`-bit limbs.
@@ -379,19 +362,28 @@ macro_rules! fp {
         $crate::fp!(@build $vis $name, $modulus, $limbs, $bits);
         $crate::fp!(@host $name, $limbs, $bits);
     };
-    // Host-side `NativeInput`: take the element as one decimal (or `0x`-hex) string,
-    // split into `$limbs` little-endian `$bits`-bit limbs. Host-only.
+    // A circuit input given as one whole number (a decimal or `0x`-hex string in a
+    // client), split into `$limbs` little-endian `$bits`-bit limbs `<name>.limbs[i]`.
+    (@input $name:ident, $limbs:expr, $bits:expr) => {
+        impl $crate::__xark::Input for $name {
+            const TYPE: $crate::__xark::input::Type =
+                $crate::number_type!(stringify!($name), $limbs, $bits);
+            fn read(r: &mut $crate::__xark::input::Reader<'_>) -> Self {
+                Self { limbs: r.read() }
+            }
+            fn write(&self, w: &mut $crate::__xark::input::Writer<'_>) {
+                w.write(&self.limbs)
+            }
+        }
+    };
+    // Host conversions: the element from its 32 big-endian bytes, a decimal (or
+    // `0x`-hex) string, or an integer, split into `$limbs` little-endian `$bits`-bit
+    // limbs. Host-only.
     (@host $name:ident, $limbs:expr, $bits:expr) => {
         #[cfg(not(xark))]
         const _: () = {
             extern crate std;
             use std::string::String;
-            use std::vec::Vec;
-            impl $crate::__prover::NativeInput for $name {
-                fn leaves(value: &Self, prefix: &str) -> Vec<(String, $crate::__prover::Fr)> {
-                    $crate::__xark::host::limbs_leaves(&value.limbs, prefix)
-                }
-            }
             impl $crate::__xark::host::FromBeBytes for $name {
                 const BYTES: usize = 32;
                 fn from_be_bytes(bytes: &[u8]) -> Self {
@@ -438,20 +430,7 @@ macro_rules! fp {
         $vis struct $name {
             pub limbs: [$crate::Field; $limbs],
         }
-        #[cfg(all(xark, target_arch = "wasm32"))]
-        impl $crate::__wasm::Input for $name {
-            fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
-                $crate::__wasm::input_struct(n, stringify!($name));
-                $crate::__wasm::input_encoding_limbs(stringify!($name), $limbs, $bits);
-                Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
-            }
-        }
-        impl $crate::__xark::ToFields for $name {
-            const FIELD_LEN: usize = $limbs;
-            fn write_fields(&self, out: &mut [$crate::Field]) {
-                out[..$limbs].copy_from_slice(&self.limbs);
-            }
-        }
+        $crate::fp!(@input $name, $limbs, $bits);
         #[allow(dead_code)]
         impl $name {
             const M: [$crate::Field; $limbs] = {

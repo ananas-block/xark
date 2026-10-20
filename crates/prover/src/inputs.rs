@@ -249,7 +249,7 @@ pub fn resolve_input_ids(
 
         // 5. Non-native scalar `name.limbs[i]` — a 256-bit value (a `0x`-hex crypto
         //    scalar or a decimal) fanned out to its `N` little-endian limbs via the
-        //    same `limb_leaves` the gadget's host `NativeInput` uses. `N` picks the
+        //    same `limb_leaves` split the gadgets' `Input` impls use. `N` picks the
         //    layout: 2 → 128-bit halves (packed secp), 3 → 86-bit limbs.
         let n_scalar = count_limbs(vars, k);
         if n_scalar > 0 {

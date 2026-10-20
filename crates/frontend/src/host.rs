@@ -52,8 +52,7 @@ enum Intr {
     InputField,
     InputUint,
     InputsDone,
-    InputStruct,
-    InputEncoding,
+    InputSchema,
     InputUintHi,
     Panic,
 }
@@ -86,8 +85,7 @@ fn intrinsic(name: &str) -> Option<Intr> {
         "input_field" => Intr::InputField,
         "input_uint" => Intr::InputUint,
         "inputs_done" => Intr::InputsDone,
-        "input_struct" => Intr::InputStruct,
-        "input_encoding" => Intr::InputEncoding,
+        "input_schema" => Intr::InputSchema,
         "input_uint_hi" => Intr::InputUintHi,
         "panic" => Intr::Panic,
         _ => return None,
@@ -130,12 +128,10 @@ pub struct Host {
     /// Native-`uN` inputs awaiting their entry range check.
     uint_inputs: Vec<(u32, u32)>,
     n_inputs: usize,
-    /// Input leaves in binding order: `(name, public, uint width)`, and struct
-    /// type names by path — for `schema.json`.
+    /// Input leaves in binding order: `(name, public, uint width)`.
     pub(crate) leaves: Vec<(String, bool, Option<u32>)>,
-    pub(crate) structs: Vec<(String, String)>,
-    /// Struct type → its natural encoding (JSON), from `input_encoding`.
-    pub(crate) encodings: Vec<(String, String)>,
+    /// `schema.json`, as the entry shim describes its parameters (`input_schema`).
+    pub(crate) schema: Option<String>,
     /// `(p, p/2)`: reduce large constants into `(−p/2, p/2]` (when the field is known).
     reduce: Option<(BigInt, BigInt)>,
     /// Comparison intrinsics executed (`==`/`<` on witnesses), for stats.
@@ -203,8 +199,7 @@ impl Host {
             pending_hi: None,
             n_inputs: 0,
             leaves: Vec::new(),
-            structs: Vec::new(),
-            encodings: Vec::new(),
+            schema: None,
             cmp_calls: 0,
             muxes: HashMap::new(),
             sites: Vec::new(),
@@ -214,10 +209,41 @@ impl Host {
         }
     }
 
-    /// The circuit's input interface as `schema.json`:
-    /// rebuilt from the bound leaves' names plus the struct markers.
-    pub fn schema(&self, circuit: &str) -> serde_json::Value {
-        crate::schema::build(circuit, &self.leaves, &self.structs, &self.encodings)
+    /// The circuit's input interface as `schema.json`: the entry shim's description
+    /// of its parameters (each parameter type's `Input::TYPE`), checked against the
+    /// leaves it bound. A module without one (no `#[circuit]` shim) gets a schema of
+    /// its public leaves alone.
+    pub fn schema(&self, circuit: &str) -> CompileResult<serde_json::Value> {
+        let public: Vec<&str> = self
+            .leaves
+            .iter()
+            .filter(|l| l.1)
+            .map(|l| l.0.as_str())
+            .collect();
+        let Some(text) = &self.schema else {
+            return Ok(serde_json::json!({
+                "version": 2,
+                "circuit": circuit,
+                "inputs": [],
+                "types": {},
+                "public_inputs": public,
+            }));
+        };
+        let v: serde_json::Value = serde_json::from_str(text)
+            .map_err(|e| CompileError::new(format!("internal error: the input schema: {e}")))?;
+        if v["public_inputs"].as_array().map(|p| p.len()) != Some(public.len())
+            || v["public_inputs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .zip(&public)
+                .any(|(a, b)| a != b)
+        {
+            return Err(CompileError::new(
+                "an `Input` impl binds its leaves in a different order than its `TYPE` names                  them (the public inputs don't match the schema)",
+            ));
+        }
+        Ok(v)
     }
 
     pub fn finish(self, field: FieldSpec) -> CompileResult<LowerOutput> {
@@ -1489,6 +1515,7 @@ impl crate::interp::Host for Host {
                 | Intr::Panic
                 | Intr::RequireEq
                 | Intr::ToBitsLookup
+                | Intr::InputSchema
         ) && !(matches!(
             intr,
             Intr::Ult
@@ -1871,27 +1898,12 @@ impl crate::interp::Host for Host {
                     return Ok(Some(self.new_wire(m, LinearCombination::var(id), width)));
                 }
             }
-            Intr::InputStruct => {
-                let path = String::from_utf8_lossy(
-                    &m.read_bytes(ptr_of(a[0])?, int_of(a[1], "len")? as u32)?,
-                )
-                .into_owned();
-                let ty = String::from_utf8_lossy(
-                    &m.read_bytes(ptr_of(a[2])?, int_of(a[3], "len")? as u32)?,
-                )
-                .into_owned();
-                self.structs.push((path, ty));
-            }
-            Intr::InputEncoding => {
-                let ty = String::from_utf8_lossy(
-                    &m.read_bytes(ptr_of(a[0])?, int_of(a[1], "len")? as u32)?,
-                )
-                .into_owned();
+            Intr::InputSchema => {
                 let json = String::from_utf8_lossy(
-                    &m.read_bytes(ptr_of(a[2])?, int_of(a[3], "len")? as u32)?,
+                    &m.read_bytes(ptr_of(a[0])?, int_of(a[1], "len")? as u32)?,
                 )
                 .into_owned();
-                self.encodings.push((ty, json));
+                self.schema = Some(json);
             }
             Intr::InputUintHi => {
                 let hi = self.pending_hi.take().ok_or_else(|| {

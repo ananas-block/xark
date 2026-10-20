@@ -6,7 +6,7 @@
 // `xark build` records the circuit's parameter types in target/xark/merkle/schema.json
 // and `xark client` turns them into the types below. Don't edit this file: change
 // the circuit, then rebuild and rerun `xark client`. Values go in their natural
-// forms (dates, strings, flag names, bytes); xark-wasm encodes them against the
+// forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
 /** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */
@@ -75,7 +75,7 @@ export interface MerkleKeys {
  */
 export class Merkle {
   /** The circuit's `schema.json`. */
-  static readonly schema = "{\"circuit\":\"merkle\",\"inputs\":[{\"name\":\"leaf\",\"type\":\"field\",\"visibility\":\"private\"},{\"name\":\"siblings\",\"type\":{\"array\":{\"len\":4,\"of\":\"field\"}},\"visibility\":\"private\"},{\"name\":\"index_bits\",\"type\":{\"array\":{\"len\":4,\"of\":\"field\"}},\"visibility\":\"private\"},{\"name\":\"root\",\"type\":\"field\",\"visibility\":\"public\"}],\"public_inputs\":[\"root\"],\"types\":{},\"version\":1}";
+  static readonly schema = "{\"circuit\":\"merkle\",\"inputs\":[{\"name\":\"leaf\",\"type\":\"field\",\"visibility\":\"private\"},{\"name\":\"siblings\",\"type\":{\"array\":{\"len\":4,\"of\":\"field\"}},\"visibility\":\"private\"},{\"name\":\"index_bits\",\"type\":{\"array\":{\"len\":4,\"of\":\"field\"}},\"visibility\":\"private\"},{\"name\":\"root\",\"type\":\"field\",\"visibility\":\"public\"}],\"public_inputs\":[\"root\"],\"types\":{},\"version\":2}";
 
   constructor(
     private readonly wasm: XarkWasm,

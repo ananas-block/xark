@@ -30,18 +30,28 @@ extern crate alloc;
 #[cfg(not(xark))]
 extern crate std;
 
-// Self-alias so the `#[derive(CircuitInput)]` macro's generated `::xark::Field`
-// paths resolve *inside* this crate (where the derive is used on `Digest`), the
-// same way they resolve in downstream circuit crates. Standard proc-macro pattern.
+// Self-alias so `#[derive(Input)]`'s generated `::xark::…` paths resolve *inside*
+// this crate (where it derives `Country`), the same way they resolve in downstream
+// circuit crates. Standard proc-macro pattern.
 extern crate self as xark;
 
 /// The `xark` language markers: `Field`, `Private`, `Public`, `require_eq`, the
 /// `Field` methods and operator impls, and the recognized intrinsics.
 pub mod lang;
 
-/// Everyday input types: [`Date`], [`Text`], [`Bitfield`] (of [`flags!`] flags).
+/// Circuit inputs: the [`Input`] trait and the standard [`input::Type`]s clients map
+/// to their own types.
+pub mod input;
+pub use input::{Enum, Input};
+
+/// Everyday input types: [`Date`], [`Text`], [`Choice`] and [`Bitfield`] (of an
+/// [`Enum`]).
 pub mod types;
-pub use types::{Bitfield, Date, Flags, Text};
+pub use types::{Bitfield, Choice, Date, Text};
+
+/// ISO 3166-1 [`Country`] codes.
+pub mod country;
+pub use country::Country;
 
 /// The compiler intrinsics — `#[inline(never)]` functions that, in the circuit
 /// build, call the frontend's `xark.*` wasm imports (the `Field` operator/hint ABI). See the module doc
@@ -50,7 +60,7 @@ pub use types::{Bitfield, Date, Flags, Text};
 pub mod intrinsics;
 
 /// The stable-frontend circuit build (`--cfg xark` on `wasm32`): the `xark.*` imports
-/// the intrinsics call, input binding for the `#[circuit]` entry, and the runtime.
+/// the intrinsics and [`input`]'s binding call, and the runtime.
 #[cfg(all(xark, target_arch = "wasm32"))]
 #[doc(hidden)]
 pub mod wasm;
@@ -61,10 +71,12 @@ pub mod prelude {
         Field, Private, Public, require, require_eq, require_ge, require_gt, require_le,
         require_lt, require_ne, witness_begin, witness_end,
     };
-    // `CircuitInput` makes a `Field`-composed struct a circuit input (the everyday way to
-    // group inputs); `circuit` is the entry attribute.
-    pub use crate::types::{Bitfield, Date, Flags, Text};
-    pub use xark_macros::{CircuitInput, circuit};
+    // `Input` (the trait and its derive) makes a struct a circuit input and an enum
+    // a `Choice`/`Bitfield` of variants; `circuit` is the entry attribute.
+    pub use crate::country::Country;
+    pub use crate::input::{Enum, Input};
+    pub use crate::types::{Bitfield, Choice, Date, Text};
+    pub use xark_macros::{Input, circuit};
 }
 
 // Same surface as `prelude`, re-exported at the crate root so both
@@ -76,8 +88,6 @@ pub use crate::lang::{
 // `require_eq` dispatches through `RequireEqCircuit`, comparing scalars, fixed
 // arrays, and composite types; downstream crates impl it for their own shapes.
 pub use crate::lang::RequireEqCircuit;
-// A circuit input type's `Field` leaves: derived structs and gadget input types.
-pub use crate::lang::ToFields;
 
 /// The natural encoding length of a value held in `limbs` × `bits`-bit limbs: 32
 /// bytes for a field-sized value (up to 264 bits of limbs, e.g. 3 × 86: the value
@@ -105,9 +115,7 @@ pub use crate::lang::bytes_to_fields;
 // name. Authors never touch it; they write `require_eq`.
 #[doc(hidden)]
 pub use crate::lang::__xark_require_eq_scalar;
-// `#[derive(CircuitInput)]` makes a `Field`-composed struct a circuit input: it
-// generates the `Into<[Field; N]>` flatten AND the host-side `NativeInput` fan-out
-// (`Native = Self`, each field rendered via `Field::to_decimal`) — so the host builds
-// the same struct with `Field` values, no `String` mirror. `#[derive(Transparent)]`
-// does the same for a byte-backed gadget type (`limbs`/native-bytes form).
-pub use xark_macros::{CircuitInput, Transparent, circuit};
+// `#[derive(Input)]`: `xark::Input` for a struct (its fields in order; with
+// `#[input(number(bits = B))]` or `#[input(bytes)]` a standard encoding and its host
+// conversions), `xark::Enum` for a fieldless enum.
+pub use xark_macros::{Input, circuit};

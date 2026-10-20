@@ -6,7 +6,7 @@
 // `xark build` records the circuit's parameter types in target/xark/zk_kyc/schema.json
 // and `xark client` turns them into the types below. Don't edit this file: change
 // the circuit, then rebuild and rerun `xark client`. Values go in their natural
-// forms (dates, strings, flag names, bytes); xark-wasm encodes them against the
+// forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
 /** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */
@@ -14,7 +14,7 @@ export type FieldLike = bigint | number | string;
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
 
-/** A `Country` flag (the circuit's `flags!` enum), in bit order. */
+/** A `Country` (an enum in the circuit), its variants in order. */
 export type Country =
   | "AD" | "AE" | "AF" | "AG" | "AI" | "AL" | "AM" | "AO" | "AQ" | "AR" | "AS" | "AT"
   | "AU" | "AW" | "AX" | "AZ" | "BA" | "BB" | "BD" | "BE" | "BF" | "BG" | "BH" | "BI"
@@ -44,7 +44,7 @@ export interface Identity {
   document: string;
   /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
   born: Date;
-  /** One `Country`, or a list of them. */
+  /** A set of `Country`: one, or a list of them. */
   nationality: Country | readonly Country[];
   /** `u64`: an integer in [0, 2^64). */
   netWorth: bigint | number;
@@ -63,7 +63,7 @@ export interface ZkKycInputs {
   minNetWorth: bigint | number;
   /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
   today: Date;
-  /** One `Country`, or a list of them. */
+  /** A set of `Country`: one, or a list of them. */
   allowed: Country | readonly Country[];
 }
 
@@ -76,7 +76,7 @@ export interface ZkKycPublicInputs {
   minNetWorth: bigint | number;
   /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
   today: Date;
-  /** One `Country`, or a list of them. */
+  /** A set of `Country`: one, or a list of them. */
   allowed: Country | readonly Country[];
 }
 
@@ -130,7 +130,7 @@ export interface ZkKycKeys {
  */
 export class ZkKyc {
   /** The circuit's `schema.json`. */
-  static readonly schema = "{\"circuit\":\"zk_kyc\",\"inputs\":[{\"name\":\"id\",\"type\":{\"ref\":\"Identity\"},\"visibility\":\"private\"},{\"name\":\"commitment\",\"type\":\"field\",\"visibility\":\"public\"},{\"name\":\"born_before\",\"type\":{\"ref\":\"Date\"},\"visibility\":\"public\"},{\"name\":\"min_net_worth\",\"type\":{\"uint\":64},\"visibility\":\"public\"},{\"name\":\"today\",\"type\":{\"ref\":\"Date\"},\"visibility\":\"public\"},{\"name\":\"allowed\",\"type\":{\"ref\":\"Bitfield<Country>\"},\"visibility\":\"public\"}],\"public_inputs\":[\"commitment\",\"born_before\",\"min_net_worth\",\"today\",\"allowed\"],\"types\":{\"Bitfield<Country>\":{\"encoding\":{\"flags\":\"Country\",\"names\":\"AD,AE,AF,AG,AI,AL,AM,AO,AQ,AR,AS,AT,AU,AW,AX,AZ,BA,BB,BD,BE,BF,BG,BH,BI,BJ,BL,BM,BN,BO,BQ,BR,BS,BT,BV,BW,BY,BZ,CA,CC,CD,CF,CG,CH,CI,CK,CL,CM,CN,CO,CR,CU,CV,CW,CX,CY,CZ,DE,DJ,DK,DM,DO,DZ,EC,EE,EG,EH,ER,ES,ET,FI,FJ,FK,FM,FO,FR,GA,GB,GD,GE,GF,GG,GH,GI,GL,GM,GN,GP,GQ,GR,GS,GT,GU,GW,GY,HK,HM,HN,HR,HT,HU,ID,IE,IL,IM,IN,IO,IQ,IR,IS,IT,JE,JM,JO,JP,KE,KG,KH,KI,KM,KN,KP,KR,KW,KY,KZ,LA,LB,LC,LI,LK,LR,LS,LT,LU,LV,LY,MA,MC,MD,ME,MF,MG,MH,MK,ML,MM,MN,MO,MP,MQ,MR,MS,MT,MU,MV,MW,MX,MY,MZ,NA,NC,NE,NF,NG,NI,NL,NO,NP,NR,NU,NZ,OM,PA,PE,PF,PG,PH,PK,PL,PM,PN,PR,PS,PT,PW,PY,QA,RE,RO,RS,RU,RW,SA,SB,SC,SD,SE,SG,SH,SI,SJ,SK,SL,SM,SN,SO,SR,SS,ST,SV,SX,SY,SZ,TC,TD,TF,TG,TH,TJ,TK,TL,TM,TN,TO,TR,TT,TV,TW,TZ,UA,UG,UM,US,UY,UZ,VA,VC,VE,VG,VI,VN,VU,WF,WS,YE,YT,ZA,ZM,ZW,\"},\"newtype\":\"field\"},\"Date\":{\"encoding\":{\"date\":\"yyyymmdd\"},\"newtype\":\"field\"},\"Identity\":{\"struct\":[{\"name\":\"document\",\"type\":{\"ref\":\"Text\"}},{\"name\":\"born\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"nationality\",\"type\":{\"ref\":\"Bitfield<Country>\"}},{\"name\":\"net_worth\",\"type\":{\"uint\":64}},{\"name\":\"expires\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"salt\",\"type\":\"field\"}]},\"Text\":{\"encoding\":{\"text\":31},\"newtype\":\"field\"}},\"version\":1}";
+  static readonly schema = "{\"circuit\":\"zk_kyc\",\"inputs\":[{\"name\":\"id\",\"type\":{\"ref\":\"Identity\"},\"visibility\":\"private\"},{\"name\":\"commitment\",\"type\":\"field\",\"visibility\":\"public\"},{\"name\":\"born_before\",\"type\":{\"ref\":\"Date\"},\"visibility\":\"public\"},{\"name\":\"min_net_worth\",\"type\":{\"uint\":64},\"visibility\":\"public\"},{\"name\":\"today\",\"type\":{\"ref\":\"Date\"},\"visibility\":\"public\"},{\"name\":\"allowed\",\"type\":{\"ref\":\"Bitfield<Country>\"},\"visibility\":\"public\"}],\"public_inputs\":[\"commitment\",\"born_before\",\"min_net_worth\",\"today\",\"allowed\"],\"types\":{\"Bitfield<Country>\":{\"encoding\":{\"set\":\"Country\"},\"newtype\":\"field\"},\"Country\":{\"enum\":[\"AD\",\"AE\",\"AF\",\"AG\",\"AI\",\"AL\",\"AM\",\"AO\",\"AQ\",\"AR\",\"AS\",\"AT\",\"AU\",\"AW\",\"AX\",\"AZ\",\"BA\",\"BB\",\"BD\",\"BE\",\"BF\",\"BG\",\"BH\",\"BI\",\"BJ\",\"BL\",\"BM\",\"BN\",\"BO\",\"BQ\",\"BR\",\"BS\",\"BT\",\"BV\",\"BW\",\"BY\",\"BZ\",\"CA\",\"CC\",\"CD\",\"CF\",\"CG\",\"CH\",\"CI\",\"CK\",\"CL\",\"CM\",\"CN\",\"CO\",\"CR\",\"CU\",\"CV\",\"CW\",\"CX\",\"CY\",\"CZ\",\"DE\",\"DJ\",\"DK\",\"DM\",\"DO\",\"DZ\",\"EC\",\"EE\",\"EG\",\"EH\",\"ER\",\"ES\",\"ET\",\"FI\",\"FJ\",\"FK\",\"FM\",\"FO\",\"FR\",\"GA\",\"GB\",\"GD\",\"GE\",\"GF\",\"GG\",\"GH\",\"GI\",\"GL\",\"GM\",\"GN\",\"GP\",\"GQ\",\"GR\",\"GS\",\"GT\",\"GU\",\"GW\",\"GY\",\"HK\",\"HM\",\"HN\",\"HR\",\"HT\",\"HU\",\"ID\",\"IE\",\"IL\",\"IM\",\"IN\",\"IO\",\"IQ\",\"IR\",\"IS\",\"IT\",\"JE\",\"JM\",\"JO\",\"JP\",\"KE\",\"KG\",\"KH\",\"KI\",\"KM\",\"KN\",\"KP\",\"KR\",\"KW\",\"KY\",\"KZ\",\"LA\",\"LB\",\"LC\",\"LI\",\"LK\",\"LR\",\"LS\",\"LT\",\"LU\",\"LV\",\"LY\",\"MA\",\"MC\",\"MD\",\"ME\",\"MF\",\"MG\",\"MH\",\"MK\",\"ML\",\"MM\",\"MN\",\"MO\",\"MP\",\"MQ\",\"MR\",\"MS\",\"MT\",\"MU\",\"MV\",\"MW\",\"MX\",\"MY\",\"MZ\",\"NA\",\"NC\",\"NE\",\"NF\",\"NG\",\"NI\",\"NL\",\"NO\",\"NP\",\"NR\",\"NU\",\"NZ\",\"OM\",\"PA\",\"PE\",\"PF\",\"PG\",\"PH\",\"PK\",\"PL\",\"PM\",\"PN\",\"PR\",\"PS\",\"PT\",\"PW\",\"PY\",\"QA\",\"RE\",\"RO\",\"RS\",\"RU\",\"RW\",\"SA\",\"SB\",\"SC\",\"SD\",\"SE\",\"SG\",\"SH\",\"SI\",\"SJ\",\"SK\",\"SL\",\"SM\",\"SN\",\"SO\",\"SR\",\"SS\",\"ST\",\"SV\",\"SX\",\"SY\",\"SZ\",\"TC\",\"TD\",\"TF\",\"TG\",\"TH\",\"TJ\",\"TK\",\"TL\",\"TM\",\"TN\",\"TO\",\"TR\",\"TT\",\"TV\",\"TW\",\"TZ\",\"UA\",\"UG\",\"UM\",\"US\",\"UY\",\"UZ\",\"VA\",\"VC\",\"VE\",\"VG\",\"VI\",\"VN\",\"VU\",\"WF\",\"WS\",\"YE\",\"YT\",\"ZA\",\"ZM\",\"ZW\"]},\"Date\":{\"encoding\":{\"date\":\"yyyymmdd\"},\"newtype\":\"field\"},\"Identity\":{\"struct\":[{\"name\":\"document\",\"type\":{\"ref\":\"Text\"}},{\"name\":\"born\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"nationality\",\"type\":{\"ref\":\"Bitfield<Country>\"}},{\"name\":\"net_worth\",\"type\":{\"uint\":64}},{\"name\":\"expires\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"salt\",\"type\":\"field\"}]},\"Text\":{\"encoding\":{\"text\":31},\"newtype\":\"field\"}},\"version\":2}";
 
   constructor(
     private readonly wasm: XarkWasm,

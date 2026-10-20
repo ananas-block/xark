@@ -1,10 +1,9 @@
-//! Validate the `#[derive(Transparent)]`-generated host side for `Scalar` (a 2×128
-//! leaf) and `Point`/`Signature` (composites): `From` their big-endian bytes, then
-//! the leaves, against the exact leaf-name / limb contract the compiler's
-//! structural flatten produces.
+//! Validate the `#[derive(Input)]`-generated host side for `Scalar` (a number in
+//! 2×128-bit limbs) and `Point`/`Signature` (byte-encoded composites): `From` their
+//! big-endian bytes, then the leaves, against the exact leaf-name / limb contract the
+//! compiler binds.
 #![cfg(not(xark))]
 
-use xark::prover::NativeInput;
 use xark_secp256k1::{Point, Scalar, Signature};
 
 /// Leaves with decimal values, for comparison.
@@ -21,7 +20,7 @@ fn scalar_splits_into_two_128bit_limbs() {
     let mut native = [0u8; 32];
     native[15] = 2; // 256^(31-15) = 2^128
     native[31] = 3; // 256^0
-    let leaves = dec(<Scalar as NativeInput>::leaves(&Scalar::from(native), "f"));
+    let leaves = dec(xark::input::leaves::<Scalar>(&Scalar::from(native), "f"));
     assert_eq!(
         leaves,
         vec![
@@ -37,7 +36,7 @@ fn point_recurses_into_x_then_y() {
     let mut native = [0u8; 64];
     native[31] = 7;
     native[63] = 9;
-    let leaves = dec(<Point as NativeInput>::leaves(&Point::from(native), "q"));
+    let leaves = dec(xark::input::leaves::<Point>(&Point::from(native), "q"));
     assert_eq!(
         leaves,
         vec![
@@ -54,7 +53,7 @@ fn signature_recurses_into_r_then_s() {
     let mut native = [0u8; 64];
     native[31] = 4; // r low
     native[63] = 6; // s low
-    let leaves = dec(<Signature as NativeInput>::leaves(
+    let leaves = dec(xark::input::leaves::<Signature>(
         &Signature::from(native),
         "sig",
     ));

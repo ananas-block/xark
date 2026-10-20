@@ -35,4 +35,5 @@ done
 cd "$root/clients/check"
 [ -d node_modules ] || npm ci --silent
 npx tsc --noEmit
+npx tsc --noEmit -p ../../examples/tsconfig.json # the config editors pick up
 npx vitest run

@@ -76,12 +76,15 @@ circuit does. `zk_kyc`'s tests make the issuer's commitment with
 `pubkey.verify(sig, digest)` checks an ECDSA signature off-circuit. (Calling the
 `#[circuit]` fn itself still checks the circuit through the prover.)
 
-Inputs can be grouped into structs with `#[derive(CircuitInput)]`, including
-gadget types: `examples/grumpkin_ivc` takes a few `Instance { cw, ce, u, x }`
-values instead of twenty separate parameters, and `to_fields()` hashes one in
-a single call. The generated `<Fn>Inputs` struct holds the same values for
-`xark::prover::circuit(..).check(..)`, `.prove(..)` and friends. A circuit
-crate needs only the `xark` dependency.
+### Inputs
+
+Every circuit parameter's type implements `xark::Input`, which says how its value
+maps to field elements and how clients see it. Group inputs into structs with
+`#[derive(Input)]`, including gadget types: `examples/grumpkin_ivc` takes a few
+`Instance { cw, ce, u, x }` values instead of twenty separate parameters, and
+`to_fields()` hashes one in a single call. The generated `<Fn>Inputs` struct
+holds the same values for `xark::prover::circuit(..).check(..)`, `.prove(..)`
+and friends. A circuit crate needs only the `xark` dependency.
 
 ### Everyday input types
 
@@ -91,13 +94,13 @@ and each with its natural form in tests, `--inputs` and the TypeScript client:
 - `Date`: a calendar day: `"1990-01-01"` in Rust and `--inputs`, a `Date` (its
   UTC day) in TypeScript, and a 27-bit comparison for `<`/`>=` in the circuit.
 - `Text`: a short string, up to 31 bytes (a document number, a name).
-- `Bitfield<F>`: a set of flags from an enum declared with `xark::flags!`, such as
-  the allowed countries: `require_single`, `require_one_of`, `contains`.
+- `Choice<E>` and `Bitfield<E>`: one variant of an enum, or a set of them, such
+  as a nationality and the allowed countries: `choice == Country::US`,
+  `require_in`, `require_one_of`, `contains`. Any fieldless enum with `#[derive(Input)]` works;
+  `xark` ships ISO 3166 `Country`.
 
 ```rust
-xark::flags! { pub enum Country { AD, AE, /* … */ US, ZW } }
-
-#[derive(Clone, Copy, Debug, CircuitInput)]
+#[derive(Clone, Copy, Debug, Input)]
 pub struct Identity { document: Text, born: Date, nationality: Bitfield<Country>, net_worth: u64, expires: Date, salt: Field }
 
 #[circuit]
@@ -114,6 +117,25 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, born_before: Public<
 ```
 
 `examples/zk_kyc` is this circuit in full.
+
+A type the derive doesn't cover implements `Input` by hand, in one impl that
+serves the circuit and the host alike:
+
+```rust
+impl Input for Hash {
+    const TYPE: Type = Type::Named(
+        &Type::named("Hash", Layout::fields(&[Member::new("hi", Type::Field), Member::new("lo", Type::Field)]))
+            .encoded(Encoding::Bytes(Bytes::Split(&[16, 16]))), // clients give its 32 bytes
+    );
+    fn read(r: &mut Reader) -> Self { Hash { hi: r.field(), lo: r.field() } }
+    fn write(&self, w: &mut Writer) { w.field(self.hi); w.field(self.lo) }
+}
+```
+
+A `TYPE` is built from the standard types (field, `uN`, bytes, number, date,
+text, choice, set, arrays, tuples, structs), and those are what client
+generators map: adding a language means mapping that fixed list, never a
+circuit's own types.
 
 ## As a toolchain (CLI)
 
@@ -163,13 +185,12 @@ xark check examples/cube
 
 ### Typed clients
 
-`xark build` also writes `schema.json`: every input's name, visibility and type
-(`Field`, `uN`, arrays, tuples, `#[derive(CircuitInput)]` structs, and named types
-such as `Date` or `Bitfield<Country>` with their natural encoding), plus the public
-inputs in proof order. `xark client` turns it into one `.ts` file: a string union
-per `flags!` enum, an interface per struct, the inputs, the public inputs as given
-and as decoded, and a class over the `xark-wasm` module you pass in. Each type is
-the one you'd write by hand:
+`xark build` also writes `schema.json`: every input's name, visibility and
+`Input::TYPE`, plus the public inputs in proof order. `xark client` resolves it
+into the standard types and writes one `.ts` file: a string union per enum, an
+interface per struct, the inputs, the public inputs as given and as decoded, and
+a class over the `xark-wasm` module you pass in. Each type is the one you'd write
+by hand:
 
 ```ts
 export type Country = | "AD" | "AE" | /* … */ "US" | "ZW";

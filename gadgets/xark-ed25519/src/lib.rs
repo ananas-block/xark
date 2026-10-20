@@ -18,7 +18,7 @@
 // rejected `+=` on `Field`; the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
-use xark::{Field, Transparent, require_eq};
+use xark::{Field, Input, require_eq};
 
 // The Ed25519 curve: base field p = 2^255 − 19, scalar order L, constant d.
 xark_curve::edwards! {
@@ -102,23 +102,31 @@ pub struct PointL {
     pub y: FpL,
 }
 
-impl xark::ToFields for PointL {
-    const FIELD_LEN: usize = 6;
-    fn write_fields(&self, out: &mut [Field]) {
-        out[..3].copy_from_slice(&self.x.limbs);
-        out[3..6].copy_from_slice(&self.y.limbs);
-    }
-}
-
-#[cfg(all(xark, target_arch = "wasm32"))]
-impl xark::wasm::Input for PointL {
-    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
-        xark::wasm::input_struct(n, "PointL");
-        xark::wasm::input_encoding("PointL", "{\"bytes\":32,\"ed25519\":true}");
+/// A circuit input given as the compressed point (32 bytes, `0x…` in a client),
+/// decompressed into `x`, `y`.
+impl xark::Input for PointL {
+    const TYPE: xark::input::Type = {
+        use xark::input::{Bytes, Encoding, Layout, Member, Type};
+        Type::Named(
+            &Type::named(
+                "PointL",
+                Layout::fields(&[
+                    Member::new("x", <FpL as xark::Input>::TYPE),
+                    Member::new("y", <FpL as xark::Input>::TYPE),
+                ]),
+            )
+            .encoded(Encoding::Bytes(Bytes::Ed25519)),
+        )
+    };
+    fn read(r: &mut xark::input::Reader<'_>) -> Self {
         PointL {
-            x: xark::wasm::input_field(n, "x", vis),
-            y: xark::wasm::input_field(n, "y", vis),
+            x: r.read(),
+            y: r.read(),
         }
+    }
+    fn write(&self, w: &mut xark::input::Writer<'_>) {
+        w.write(&self.x);
+        w.write(&self.y);
     }
 }
 
@@ -288,10 +296,11 @@ pub mod blocks {
 /// limbs; scalars are 256 caller-decomposed bits.
 #[allow(clippy::too_many_arguments)]
 /// An Ed25519 signature `(R, S)` — a curve point `R` (compressed `[u8; 32]` on the
-/// host) and a scalar `S`. Its `#[derive(Transparent)]` host `NativeInput` composes
-/// `PointL`'s (decompressing) leaves with `Scalar`'s, so the host native form is
-/// `[u8; 64]` = compressed `R ‖ big-endian S`. Pass it to [`PointL::verify`].
-#[derive(Clone, Copy, Debug, Transparent)]
+/// host) and a scalar `S`. Its `#[derive(Input)]` with `#[input(bytes)]` takes
+/// `R`'s (decompressing) bytes then `S`'s, so on the host it comes from a `[u8; 64]`:
+/// compressed `R ‖ big-endian S`. Pass it to [`PointL::verify`].
+#[derive(Clone, Copy, Debug, Input)]
+#[input(bytes)]
 pub struct Signature {
     pub r: PointL,
     pub s: Scalar,
@@ -355,19 +364,18 @@ fn eddsa_verify(ax: L3, ay: L3, rx: L3, ry: L3, s_bits: [Field; 256], k_bits: [F
     eq_mod_p(mul(t8[1], r8[2]), mul(r8[1], t8[2]));
 }
 
-/// Host-side `NativeInput` + EdDSA helpers, behind the `host` feature. Ed25519
+/// Host-side conversions + EdDSA helpers, behind the `host` feature. Ed25519
 /// points are natively **compressed** (32-byte little-endian `y` + `x`-sign bit);
 /// these recover the affine `(x, y)` per RFC 8032 §5.1.3 so the circuit's
 /// transparent types take the exact bytes `ed25519-dalek` emits. Signatures use
 /// **little-endian** scalars, so `S`/`k` are byte-reversed to the big-endian form
-/// the macro-generated `Fq` `NativeInput` expects.
+/// the macro-generated `Fq`'s host conversions expect.
 #[cfg(not(xark))]
 mod host {
     extern crate std;
     use super::PointL;
     use num_bigint::BigUint;
     use sha2::{Digest, Sha512};
-    use std::{format, string::String, vec::Vec};
 
     fn dec(s: &str) -> BigUint {
         BigUint::parse_bytes(s.as_bytes(), 10).unwrap()
@@ -416,17 +424,6 @@ mod host {
             x = (&p - &x) % &p;
         }
         (x, y)
-    }
-
-    impl xark::prover::NativeInput for PointL {
-        fn leaves(value: &PointL, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
-            let mut out = xark::host::limbs_leaves(&value.x.limbs, &format!("{prefix}.x"));
-            out.extend(xark::host::limbs_leaves(
-                &value.y.limbs,
-                &format!("{prefix}.y"),
-            ));
-            out
-        }
     }
 
     impl xark::host::FromBeBytes for PointL {

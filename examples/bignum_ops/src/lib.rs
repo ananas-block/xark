@@ -2,7 +2,7 @@
 //! type from just its modulus, with zero-cost `core::ops` (`+`, `-`, `*`, unary `-`)
 //! and `.inverse()`/`.sub2()`/… forwarding to the width-generic free functions. Each
 //! `Private<El>` is a typed circuit input — a single whole number on the host, split
-//! into its 3 limbs automatically by the `fp!`-generated `NativeInput`.
+//! into its 3 limbs automatically by the `fp!`-generated `Input` impl.
 #![cfg_attr(xark, no_std)]
 
 use xark::{circuit, require_eq, Field, Private, Public};

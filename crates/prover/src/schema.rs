@@ -5,21 +5,26 @@
 //! `xark build` writes `schema.json` from the `#[circuit]` fn's parameter types:
 //!
 //! ```text
-//! {"inputs": [{"name": "born_before", "visibility": "public", "type": {"ref": "Date"}}, …],
-//!  "types": {"Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}}, …},
+//! {"version": 2,
+//!  "inputs": [{"name": "born_before", "visibility": "public", "type": {"ref": "Date"}}, …],
+//!  "types": {"Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
+//!            "Country": {"enum": ["AD", "AE", …]}, …},
 //!  "public_inputs": ["commitment", "born_before", …]}
 //! ```
 //!
-//! A type is `"field"`, `{"uint": N}`, `{"array": {"of", "len"}}`, `{"tuple": […]}`
-//! or `{"ref": "<Name>"}`: a struct (`{"struct": [{"name", "type"}, …]}`) or a
-//! one-leaf `newtype`. A named type may carry an `encoding`, the natural form a value
-//! is given in:
+//! `xark::input::schema_json` writes it from each parameter's `Input::TYPE`. A type
+//! is `"field"`, `{"uint": N}`, `{"array": {"of", "len"}}`, `{"tuple": […]}` or
+//! `{"ref": "<Name>"}`: a struct (`{"struct": [{"name", "type"}, …]}`) or a newtype
+//! (`{"newtype": <type>}`). An enum (`{"enum": [names]}`) is never an input itself,
+//! only what a `choice` or `set` names. A named type may carry an `encoding`, the
+//! standard type a value is given as:
 //!
 //! | encoding                         | value                                           |
 //! |----------------------------------|-------------------------------------------------|
 //! | `{"date": "yyyymmdd"}`           | `"YYYY-MM-DD"`, or the raw integer `YYYYMMDD`   |
 //! | `{"text": 31}`                   | a string, at most 31 UTF-8 bytes                |
-//! | `{"flags": T, "names": "A,B,"}`  | a flag name, a list of them, or the raw mask    |
+//! | `{"choice": E}`                  | a variant name of enum `E`, or its position     |
+//! | `{"set": E}`                     | a variant name, a list of them, or the raw mask |
 //! | `{"bytes": K, "limbs": B}`       | a number (or `K` big-endian bytes) split into `B`-bit limbs |
 //! | `{"concat": [k…] \| "fields"}`   | `0x`-hex bytes, the fields' encodings back to back (`"sec1": true`: a leading `0x04` too) |
 //! | `{"bytes": 32, "ed25519": true}` | a compressed Ed25519 point                      |
@@ -52,8 +57,11 @@ type Leaves = BTreeMap<String, Fr>;
 impl Schema {
     pub fn parse(text: &str) -> Result<Schema, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| format!("schema.json: {e}"))?;
-        if v["version"].as_u64() != Some(1) {
-            return Err(format!("unsupported schema version {}", v["version"]));
+        if v["version"].as_u64() != Some(2) {
+            return Err(format!(
+                "unsupported schema version {} (rebuild the circuit with this xark)",
+                v["version"]
+            ));
         }
         Ok(Schema(v))
     }
@@ -64,6 +72,18 @@ impl Schema {
 
     fn def(&self, name: &str) -> &Value {
         &self.0["types"][name]
+    }
+
+    /// The enum a `choice`/`set` encoding names, and its variant names.
+    fn variants(&self, enc: &Value) -> Option<(String, Vec<String>)> {
+        let e = enc["choice"].as_str().or_else(|| enc["set"].as_str())?;
+        let names = self.def(e)["enum"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect();
+        Some((e.to_string(), names))
     }
 
     /// `inputs` (a JSON object of the circuit's inputs, nested values in their
@@ -273,8 +293,13 @@ impl Schema {
                 return Err(format!("{s:?} is longer than 31 bytes"));
             }
             out.insert(at.into(), Fr::from_le_bytes_mod_order(s.as_bytes()));
-        } else if enc.get("flags").is_some() {
-            out.insert(at.into(), Fr::from(flags(enc, v)?));
+        } else if let Some((e, names)) = self.variants(enc) {
+            let n = if enc.get("set").is_some() {
+                set(&e, &names, v)?
+            } else {
+                BigUint::from(choice(&e, &names, v)?)
+            };
+            out.insert(at.into(), Fr::from(n));
         } else if enc.get("limbs").is_some() {
             let n = match v {
                 Value::Array(_) => BigUint::from_bytes_be(&bytes(v)?),
@@ -450,9 +475,15 @@ impl Schema {
             let n = b.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
             return Ok(Value::String(String::from_utf8_lossy(&b[..n]).into_owned()));
         }
-        if enc.get("flags").is_some() {
+        if let Some((e, names)) = self.variants(enc) {
             let b = BigUint::from(next()?.into_bigint());
-            let names = flag_names(enc);
+            if enc.get("choice").is_some() {
+                // A circuit that doesn't check its choice can prove one past the enum.
+                let i = usize::try_from(&b).ok().filter(|i| *i < names.len());
+                return i
+                    .map(|i| json!(names[i]))
+                    .ok_or_else(|| format!("{b} is not a {e} (there are {})", names.len()));
+            }
             return Ok(Value::Array(
                 names
                     .iter()
@@ -588,12 +619,13 @@ impl Schema {
         if enc.get("text").is_some() {
             return q("<text>");
         }
-        if enc.get("flags").is_some() {
-            let names = flag_names(enc);
-            return q(&format!(
-                "<{} or a list of them>",
-                names.first().map_or("", |s| s.as_str())
-            ));
+        if let Some((e, names)) = self.variants(enc) {
+            let first = names.first().map_or("", |s| s.as_str());
+            return q(&if enc.get("set").is_some() {
+                format!("<{first} or a list of {e} names>")
+            } else {
+                format!("<a {e}: {first}, …>")
+            });
         }
         if enc.get("limbs").is_some() {
             return q("<number>");
@@ -752,38 +784,41 @@ fn date(v: &Value) -> Result<u64, String> {
     Ok(y * 10_000 + m * 100 + day)
 }
 
-fn flag_names(enc: &Value) -> Vec<String> {
-    enc["names"]
+/// A variant's position in enum `e`, from its name.
+fn variant(e: &str, names: &[String], v: &Value) -> Result<usize, String> {
+    let s = v
         .as_str()
-        .unwrap_or_default()
-        .split(',')
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
+        .ok_or_else(|| format!("expected a {e} name, got {v}"))?;
+    names
+        .iter()
+        .position(|x| x == s)
+        .ok_or_else(|| format!("{s:?} is not a {e}"))
 }
 
-/// A flag set: a name, a list of names, or the raw mask (a number).
-fn flags(enc: &Value, v: &Value) -> Result<BigUint, String> {
-    let names = flag_names(enc);
-    let set = enc["flags"].as_str().unwrap_or("flag");
-    let bit = |n: &Value| -> Result<usize, String> {
-        let s = n
-            .as_str()
-            .ok_or_else(|| format!("expected a {set} name, got {n}"))?;
-        names
-            .iter()
-            .position(|x| x == s)
-            .ok_or_else(|| format!("{s:?} is not a {set}"))
-    };
+/// One variant: its name, or its position (a number).
+fn choice(e: &str, names: &[String], v: &Value) -> Result<usize, String> {
+    if v.is_string() {
+        return variant(e, names, v);
+    }
+    let n = integer(v)?;
+    usize::try_from(&n)
+        .ok()
+        .filter(|i| *i < names.len())
+        .ok_or_else(|| format!("{n} is not a {e} (there are {})", names.len()))
+}
+
+/// A set of variants: a name, a list of names, or the raw mask (a number).
+fn set(e: &str, names: &[String], v: &Value) -> Result<BigUint, String> {
+    let bit = |x: &Value| variant(e, names, x).map(|i| BigUint::from(1u8) << i);
     match v {
-        Value::Array(xs) => xs.iter().try_fold(BigUint::from(0u8), |acc, x| {
-            Ok(acc | (BigUint::from(1u8) << bit(x)?))
-        }),
-        Value::String(s) if names.contains(s) => Ok(BigUint::from(1u8) << bit(v)?),
+        Value::Array(xs) => xs
+            .iter()
+            .try_fold(BigUint::from(0u8), |acc, x| Ok(acc | bit(x)?)),
+        Value::String(_) => bit(v),
         _ => {
             let n = integer(v)?;
             if n.bits() > names.len() as u64 {
-                return Err(format!("{n} sets a bit past the last {set}"));
+                return Err(format!("{n} sets a bit past the last {e}"));
             }
             Ok(n)
         }
@@ -844,11 +879,12 @@ mod tests {
 
     fn schema() -> Schema {
         Schema::parse(
-            r#"{"version": 1,
+            r#"{"version": 2,
               "inputs": [
                 {"name": "id", "visibility": "private", "type": {"ref": "Identity"}},
                 {"name": "born_before", "visibility": "public", "type": {"ref": "Date"}},
                 {"name": "allowed", "visibility": "public", "type": {"ref": "Bitfield<Country>"}},
+                {"name": "home", "visibility": "public", "type": {"ref": "Choice<Country>"}},
                 {"name": "k", "visibility": "private", "type": {"ref": "Fq"}},
                 {"name": "h", "visibility": "public", "type": {"ref": "Hash"}},
                 {"name": "msg", "visibility": "private", "type": {"array": {"of": {"uint": 8}, "len": 2}}}
@@ -860,13 +896,15 @@ mod tests {
                     {"name": "net_worth", "type": {"uint": 64}}]},
                 "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
                 "Text": {"newtype": "field", "encoding": {"text": 31}},
-                "Bitfield<Country>": {"newtype": "field", "encoding": {"flags": "Country", "names": "AD,FR,US,"}},
+                "Bitfield<Country>": {"newtype": "field", "encoding": {"set": "Country"}},
+                "Choice<Country>": {"newtype": "field", "encoding": {"choice": "Country"}},
+                "Country": {"enum": ["AD", "FR", "US"]},
                 "Fq": {"struct": [{"name": "limbs", "type": {"array": {"of": "field", "len": 3}}}],
                        "encoding": {"bytes": 32, "limbs": 86}},
                 "Hash": {"struct": [{"name": "hi", "type": "field"}, {"name": "lo", "type": "field"}],
                          "encoding": {"bytes": 32, "concat": [16, 16]}}
               },
-              "public_inputs": ["born_before", "allowed", "h.hi", "h.lo"]}"#,
+              "public_inputs": ["born_before", "allowed", "home", "h.hi", "h.lo"]}"#,
         )
         .unwrap()
     }
@@ -876,6 +914,7 @@ mod tests {
             "id": {"document": "AB", "born": "1990-01-02", "netWorth": 7},
             "bornBefore": "2008-10-20",
             "allowed": ["US", "FR"],
+            "home": "FR",
             "k": "77371252455336267181195264",
             "h": format!("0x{}{}", "00".repeat(15) + "02", "00".repeat(15) + "03"),
             "msg": "0x6162",
@@ -891,6 +930,7 @@ mod tests {
         assert_eq!(d("id.net_worth"), "7");
         assert_eq!(d("born_before"), "20081020");
         assert_eq!(d("allowed"), "6"); // FR (bit 1) | US (bit 2)
+        assert_eq!(d("home"), "1");
         assert_eq!((d("k.limbs[0]"), d("k.limbs[1]")), ("0".into(), "1".into())); // 2^86
         assert_eq!((d("h.hi"), d("h.lo")), ("2".into(), "3".into()));
         assert_eq!((d("msg[0]"), d("msg[1]")), ("97".into(), "98".into()));
@@ -903,6 +943,14 @@ mod tests {
         let back = s.decode_public(&pubs, true).unwrap();
         assert_eq!(back["bornBefore"], "2008-10-20");
         assert_eq!(back["allowed"], json!(["FR", "US"]));
+        assert_eq!(back["home"], "FR");
+        let mut bad = pubs.clone();
+        bad[2] = Fr::from(3u8); // `home`, past the three countries
+        assert!(
+            s.decode_public(&bad, true)
+                .unwrap_err()
+                .contains("3 is not a Country")
+        );
         assert_eq!(
             back["h"],
             json!(format!(
@@ -923,6 +971,8 @@ mod tests {
         };
         assert!(with("bornBefore", json!("2023-02-29")).contains("not a calendar day"));
         assert!(with("allowed", json!(["XX"])).contains("\"XX\" is not a Country"));
+        assert!(with("home", json!("XX")).contains("\"XX\" is not a Country"));
+        assert!(with("home", json!(3)).contains("3 is not a Country (there are 3)"));
         assert!(with("msg", json!("0x61")).contains("expected 2 elements"));
         assert!(with("typo", json!(1)).contains("unknown input `typo`"));
         let mut i = inputs();
@@ -943,14 +993,14 @@ mod tests {
         );
         assert_eq!(
             t[2],
-            r#"allowed: Bitfield<Country> = "<AD or a list of them>""#
+            r#"allowed: Bitfield<Country> = "<AD or a list of Country names>""#
         );
     }
 
     #[test]
     fn ed25519_points_round_trip() {
         let s = Schema::parse(
-            r#"{"version": 1,
+            r#"{"version": 2,
               "inputs": [{"name": "pk", "visibility": "public", "type": {"ref": "PointL"}}],
               "types": {
                 "FpL": {"struct": [{"name": "limbs", "type": {"array": {"of": "field", "len": 3}}}],

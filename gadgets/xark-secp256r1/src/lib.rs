@@ -46,16 +46,16 @@ pub mod affine {
 #[cfg(not(xark))]
 pub use affine::{order, reduce_scalar};
 
-use xark::{Field, Transparent, require_eq};
+use xark::{Field, Input, require_eq};
 
 /// A P-256 256-bit value (a scalar `r`/`s`/`e`, or a point coordinate) in the
 /// compact **2×128-bit half** public-input form — `{ limbs: [Field; 2] }` =
 /// `[lo128, hi128]` in-circuit (2 public field elements vs 3 raw 86-bit limbs),
 /// `[u8; 32]` big-endian on the host. Recomposed to the internal 3×86 limbs by
-/// `unpack`. `#[derive(Transparent)]` derives the host `NativeInput` (`[u8; 32]`
+/// `unpack`. `#[derive(Input)]` derives its host conversions (`[u8; 32]`
 /// → `<name>.limbs[0..2]`) from this declaration.
-#[derive(Clone, Copy, Debug, Transparent)]
-#[transparent(bits = 128)]
+#[derive(Clone, Copy, Debug, Input)]
+#[input(number(bits = 128))]
 pub struct Scalar {
     pub limbs: [Field; 2],
 }
@@ -64,7 +64,8 @@ pub struct Scalar {
 /// `[u8; 64]` (`x ‖ y`, SEC1 minus the `0x04` tag) on the host, `{ x, y }`
 /// (flattening to `<name>.x.limbs[i]` / `<name>.y.limbs[i]`) in-circuit. Verify a
 /// signature against it with [`Point::verify`].
-#[derive(Clone, Copy, Debug, Transparent)]
+#[derive(Clone, Copy, Debug, Input)]
+#[input(bytes)]
 pub struct Point {
     pub x: Scalar,
     pub y: Scalar,
@@ -72,7 +73,8 @@ pub struct Point {
 
 /// A P-256 ECDSA signature `(r, s)` — `[u8; 64]` (`r ‖ s`) on the host, `{ r, s }`
 /// in-circuit. Pass it to [`Point::verify`] with the message digest.
-#[derive(Clone, Copy, Debug, Transparent)]
+#[derive(Clone, Copy, Debug, Input)]
+#[input(bytes)]
 pub struct Signature {
     pub r: Scalar,
     pub s: Scalar,

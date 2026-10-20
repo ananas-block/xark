@@ -19,7 +19,7 @@ xark = { path = "../../crates/lang", version = "0.3.0", default-features = false
 xark-bignum = { path = "../xark-bignum", version = "0.3.0" }
 xark-curve = { path = "../xark-curve", version = "0.3.0" }
 
-# Host-only deps for the `NativeInput` impls (native bytes → circuit inputs): the
+# Host-only deps for the host conversions (native bytes → circuit inputs): the
 # macro-emitted `Point`/`Fq`, plus this crate's lazy `PointL` + full-signature
 # EdDSA host helpers (point decompression, SHA-512 challenge). Gated on
 # `cfg(not(xark))`: a circuit build drops them and stays lean `no_std`; a host

@@ -4941,15 +4941,15 @@ fn byte_array_param_is_range_checked() {
     );
 }
 
-/// `#[derive(CircuitInput)]` with native integers, a byte array, and a nested struct:
+/// `#[derive(Input)]` with native integers, a byte array, and a nested struct:
 /// leaves are named by the structural flatten, each `uN` is range-checked on entry, and
 /// `to_fields()` flattens nested structs inline.
 #[test]
 fn circuit_input_with_uints_and_nesting() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, CircuitInput)]\n\
+        #[derive(Clone, Copy, Input)]\n\
         pub struct Inner { pub a: u64, pub b: Field }\n\
-        #[derive(Clone, Copy, CircuitInput)]\n\
+        #[derive(Clone, Copy, Input)]\n\
         pub struct Outer { pub inner: Inner, pub tag: [u8; 2], pub c: u32 }\n\
         #[circuit]\n\
         pub fn nested(o: Private<Outer>, h: Public<Field>) {\n\
@@ -4986,13 +4986,13 @@ fn circuit_input_with_uints_and_nesting() {
     );
 }
 
-/// `xark build` writes `schema.json` beside `circuit.xbc`: the inputs as the compiler
-/// binds them (struct definitions, `uN` widths, byte arrays), plus the public leaves in
-/// proof order. `xark client` generates clients from it with no setup or proof.
+/// `xark build` writes `schema.json` beside `circuit.xbc`: each input's `Input::TYPE`
+/// (struct definitions, `uN` widths, byte arrays), plus the public leaves in proof
+/// order. `xark client` generates clients from it with no setup or proof.
 #[test]
 fn build_writes_input_schema() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, CircuitInput)]\n\
+        #[derive(Clone, Copy, Input)]\n\
         pub struct Policy { pub min: u64, pub tags: [u8; 2] }\n\
         #[circuit]\n\
         pub fn gate(secret: Private<Field>, policy: Public<Policy>, out: Public<Field>, b: Private<[u8; 3]>) {\n\
@@ -5005,7 +5005,7 @@ fn build_writes_input_schema() {
     assert_eq!(
         schema,
         serde_json::json!({
-            "version": 1,
+            "version": 2,
             "circuit": "gate",
             "inputs": [
                 { "name": "secret", "visibility": "private", "type": "field" },
@@ -5023,6 +5023,78 @@ fn build_writes_input_schema() {
             "public_inputs": ["policy.min", "policy.tags[0]", "policy.tags[1]", "out"],
         })
     );
+}
+
+/// `Choice::require_in` accepts exactly a declared variant that the set allows: not
+/// one outside it, not a position past the enum, and not the forged
+/// `i − 2⁶⁴ (mod p)` that would zero a disallowed variant's factor without the
+/// 64-bit check.
+#[test]
+fn choice_require_in_is_sound() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(Clone, Copy, Input)]\n\
+        pub enum K { A, B, C }\n\
+        #[circuit]\n\
+        pub fn pick(c: Private<Choice<K>>, set: Public<Bitfield<K>>) {\n\
+        c.require_in(set);\n}\n";
+    let c = compile_with_field(&write_case("choice_in", src), "choice_in", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let p = c.program();
+    let ok = |choice: &str, set: &str| solves(&p, &[("c", choice), ("set", set)]);
+    assert!(ok("0", "1") && ok("2", "5") && ok("1", "7"));
+    assert!(!ok("1", "1"), "B is not in the set of A alone");
+    assert!(!ok("3", "7"), "position 3 is past the enum");
+    // p − 2⁶⁴ + 1: the factor of disallowed B (position 1) would be 0 mod p.
+    let forged = "21888242871839275222246405745257275088548364400416034343679757442502098944002";
+    assert!(
+        !ok(forged, "1"),
+        "a forged choice must fail the 64-bit check"
+    );
+    assert!(!ok("18446744073709551616", "7"), "2⁶⁴ is not a variant");
+}
+
+/// Equality on the standard types and on derived structs: one equality constraint
+/// per field element.
+#[test]
+fn standard_types_compare() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(Clone, Copy, Input)]\n\
+        pub struct Id { pub doc: Text, pub born: Date }\n\
+        #[circuit]\n\
+        pub fn same(a: Private<Id>, b: Public<Id>, c: Private<Choice<Country>>, s: Public<Bitfield<Country>>) {\n\
+        require_eq(a, b);\n\
+        require_eq(a.doc, b.doc);\n\
+        require(c == Country::US);\n\
+        require_eq(s, Bitfield::of([Country::US, Country::GB]));\n}\n";
+    let c = compile_with_field(&write_case("same_types", src), "same_types", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let p = c.program();
+    let us = (0..249)
+        .find(|&i| <xark::Country as xark::Enum>::VARIANTS.names[i] == "US")
+        .unwrap();
+    let gb = (0..249)
+        .find(|&i| <xark::Country as xark::Enum>::VARIANTS.names[i] == "GB")
+        .unwrap();
+    let set =
+        (num_bigint::BigUint::from(1u8) << us | num_bigint::BigUint::from(1u8) << gb).to_string();
+    let us = us.to_string();
+    let run = |b_born: &str, c: &str, s: &str| {
+        solves(
+            &p,
+            &[
+                ("a.doc", "7"),
+                ("a.born", "19900101"),
+                ("b.doc", "7"),
+                ("b.born", b_born),
+                ("c", c),
+                ("s", s),
+            ],
+        )
+    };
+    assert!(run("19900101", &us, &set));
+    assert!(!run("19900102", &us, &set), "the structs differ");
+    assert!(!run("19900101", "0", &set), "not US");
+    assert!(!run("19900101", &us, "1"), "a different set");
 }
 
 /// Compile `body` as a bn254 circuit with `params` and, per case, check the

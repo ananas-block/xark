@@ -8,7 +8,8 @@
 //! blake crates, built on the public [`Hash::pack`] primitive.
 #![no_std]
 
-use xark::{Field, RequireEqCircuit};
+use xark::input::{Bytes, Encoding, Layout, Member, Reader, Type, Writer};
+use xark::{Field, Input, RequireEqCircuit};
 
 pub mod digest;
 pub use digest::Digest;
@@ -23,15 +24,28 @@ pub struct Hash {
     lo: Field,
 }
 
-#[cfg(all(xark, target_arch = "wasm32"))]
-impl xark::wasm::Input for Hash {
-    fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
-        xark::wasm::input_struct(n, "Hash");
-        xark::wasm::input_encoding("Hash", "{\"bytes\":32,\"concat\":[16,16]}");
+/// A circuit input given as the hash's 32 bytes (`0x…` in a client), split into its
+/// two 16-byte halves.
+impl Input for Hash {
+    const TYPE: Type = Type::Named(
+        &Type::named(
+            "Hash",
+            Layout::fields(&[
+                Member::new("hi", Type::Field),
+                Member::new("lo", Type::Field),
+            ]),
+        )
+        .encoded(Encoding::Bytes(Bytes::Split(&[16, 16]))),
+    );
+    fn read(r: &mut Reader<'_>) -> Self {
         Hash {
-            hi: xark::wasm::input_field(n, "hi", vis),
-            lo: xark::wasm::input_field(n, "lo", vis),
+            hi: r.field(),
+            lo: r.field(),
         }
+    }
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(self.hi);
+        w.field(self.lo);
     }
 }
 
@@ -111,30 +125,10 @@ impl RequireEqCircuit<Hash> for [[Field; 64]; 4] {
     }
 }
 
-impl xark::ToFields for Hash {
-    const FIELD_LEN: usize = 2;
-    fn write_fields(&self, out: &mut [Field]) {
-        out[0] = self.hi;
-        out[1] = self.lo;
-    }
-}
-
 // Host side: a `Hash` value comes from the hash's 32 bytes (`From<[u8; 32]>`), split
-// into its two 128-bit halves `hi`/`lo` (big-endian), the leaves `<name>.hi` /
-// `<name>.lo`. `std` is pulled in inside an anonymous const (this crate is `no_std`).
+// into its two 128-bit halves `hi`/`lo` (big-endian).
 #[cfg(not(xark))]
 const _: () = {
-    extern crate std;
-    use std::string::String;
-    use std::vec::Vec;
-    impl xark::prover::NativeInput for Hash {
-        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
-            std::vec![
-                (std::format!("{prefix}.hi"), value.hi.into()),
-                (std::format!("{prefix}.lo"), value.lo.into()),
-            ]
-        }
-    }
     impl xark::host::FromBeBytes for Hash {
         const BYTES: usize = 32;
         fn from_be_bytes(bytes: &[u8]) -> Self {

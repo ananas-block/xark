@@ -1,16 +1,15 @@
 //! Host-side helpers for building circuit input values: what the gadgets' `From`
 //! impls (an Ed25519 key's `[u8; 32]` → `PointL`, a scalar's bytes → `Fq`) and the
-//! derives use, so every limb split agrees with the compiler's structural flatten.
+//! derives use, so every limb split agrees with the circuit's leaves.
 
-use alloc::format;
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::Field;
 
 /// An input type with a natural big-endian byte encoding of `BYTES` bytes (a
 /// scalar's 32 bytes, a point's coordinates back to back, an Ed25519 key's
-/// compressed form): what `#[derive(Transparent)]` builds `From<[u8; BYTES]>` from.
+/// compressed form): what `#[derive(Input)]`'s `number`/`bytes` encodings build `From<[u8; BYTES]>`
+/// from.
 pub trait FromBeBytes: Sized {
     /// The encoding's length.
     const BYTES: usize;
@@ -20,16 +19,6 @@ pub trait FromBeBytes: Sized {
 }
 
 pub use crate::natural_bytes;
-
-/// `limbs` as `<prefix>.limbs[i]` leaves: the fan-out of a limbed value (a
-/// non-native field element, a bignum) whose limbs are `Field`s.
-pub fn limbs_leaves(limbs: &[Field], prefix: &str) -> Vec<(String, ark_bn254::Fr)> {
-    limbs
-        .iter()
-        .enumerate()
-        .map(|(i, l)| (format!("{prefix}.limbs[{i}]"), (*l).into()))
-        .collect()
-}
 
 /// A big-endian byte string (a scalar's or coordinate's natural encoding) as `N`
 /// little-endian `bits`-bit limbs. Panics if the value doesn't fit `N * bits` bits,
@@ -93,6 +82,7 @@ pub fn limb_fields_str<const N: usize>(value: &str, bits: u32) -> [Field; N] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::String;
 
     #[test]
     fn limbs_split_and_parse() {

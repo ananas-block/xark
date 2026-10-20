@@ -100,23 +100,24 @@ macro_rules! weierstrass {
             pub x: Fp,
             pub y: Fp,
         }
-        #[cfg(all(xark, target_arch = "wasm32"))]
-        impl xark::wasm::Input for Point {
-            fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
-                xark::wasm::input_struct(n, "Point");
-                xark::wasm::input_encoding("Point", "{\"concat\":\"fields\",\"sec1\":true}");
-                Point {
-                    x: xark::wasm::input_field(n, "x", vis),
-                    y: xark::wasm::input_field(n, "y", vis),
-                }
+        /// A circuit input given as `x ‖ y` (64 bytes, or SEC1's 65 with `0x04`).
+        impl ::xark::Input for Point {
+            const TYPE: ::xark::input::Type = ::xark::input::Type::Named(
+                &::xark::input::Type::named(
+                    "Point",
+                    ::xark::input::Layout::fields(&[
+                        ::xark::input::Member::new("x", <Fp as ::xark::Input>::TYPE),
+                        ::xark::input::Member::new("y", <Fp as ::xark::Input>::TYPE),
+                    ]),
+                )
+                .encoded(::xark::input::Encoding::Bytes(::xark::input::Bytes::Sec1)),
+            );
+            fn read(r: &mut ::xark::input::Reader<'_>) -> Self {
+                Point { x: r.read(), y: r.read() }
             }
-        }
-        impl ::xark::ToFields for Point {
-            const FIELD_LEN: usize = 2 * <Fp as ::xark::ToFields>::FIELD_LEN;
-            fn write_fields(&self, out: &mut [::xark::Field]) {
-                let n = <Fp as ::xark::ToFields>::FIELD_LEN;
-                ::xark::ToFields::write_fields(&self.x, &mut out[..n]);
-                ::xark::ToFields::write_fields(&self.y, &mut out[n..2 * n]);
+            fn write(&self, w: &mut ::xark::input::Writer<'_>) {
+                w.write(&self.x);
+                w.write(&self.y);
             }
         }
         /// A scalar-field (`Fq`) element — an ECDSA multiplier `u1`/`u2`, `r`, `s`, `e`.
@@ -285,20 +286,6 @@ macro_rules! curve_host_inputs {
                 out
             }
 
-            impl ::xark::prover::NativeInput for Point {
-                fn leaves(value: &Point, prefix: &str) -> Vec<(String, ::xark::prover::Fr)> {
-                    let mut out = <Fp as ::xark::prover::NativeInput>::leaves(
-                        &value.x,
-                        &format!("{prefix}.x"),
-                    );
-                    out.extend(<Fp as ::xark::prover::NativeInput>::leaves(
-                        &value.y,
-                        &format!("{prefix}.y"),
-                    ));
-                    out
-                }
-            }
-
             impl ::xark::host::FromBeBytes for Point {
                 const BYTES: usize = 64;
                 fn from_be_bytes(bytes: &[u8]) -> Point {
@@ -369,23 +356,24 @@ macro_rules! edwards {
             pub x: Fp,
             pub y: Fp,
         }
-        #[cfg(all(xark, target_arch = "wasm32"))]
-        impl xark::wasm::Input for Point {
-            fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
-                xark::wasm::input_struct(n, "Point");
-                xark::wasm::input_encoding("Point", "{\"concat\":\"fields\"}");
-                Point {
-                    x: xark::wasm::input_field(n, "x", vis),
-                    y: xark::wasm::input_field(n, "y", vis),
-                }
+        /// A circuit input given as `x ‖ y` (64 bytes).
+        impl ::xark::Input for Point {
+            const TYPE: ::xark::input::Type = ::xark::input::Type::Named(
+                &::xark::input::Type::named(
+                    "Point",
+                    ::xark::input::Layout::fields(&[
+                        ::xark::input::Member::new("x", <Fp as ::xark::Input>::TYPE),
+                        ::xark::input::Member::new("y", <Fp as ::xark::Input>::TYPE),
+                    ]),
+                )
+                .encoded(::xark::input::Encoding::Bytes(::xark::input::Bytes::Concat)),
+            );
+            fn read(r: &mut ::xark::input::Reader<'_>) -> Self {
+                Point { x: r.read(), y: r.read() }
             }
-        }
-        impl ::xark::ToFields for Point {
-            const FIELD_LEN: usize = 2 * <Fp as ::xark::ToFields>::FIELD_LEN;
-            fn write_fields(&self, out: &mut [::xark::Field]) {
-                let n = <Fp as ::xark::ToFields>::FIELD_LEN;
-                ::xark::ToFields::write_fields(&self.x, &mut out[..n]);
-                ::xark::ToFields::write_fields(&self.y, &mut out[n..2 * n]);
+            fn write(&self, w: &mut ::xark::input::Writer<'_>) {
+                w.write(&self.x);
+                w.write(&self.y);
             }
         }
         /// A scalar-field (`Fq`) element.

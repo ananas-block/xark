@@ -19,7 +19,7 @@ xark = { path = "../../crates/lang", version = "0.3.0", default-features = false
 xark-bignum = { path = "../xark-bignum", version = "0.3.0" }
 xark-curve = { path = "../xark-curve", version = "0.3.0" }
 
-# Host-only deps for the `NativeInput` impls (native bytes → circuit inputs).
+# Host-only deps for the host conversions (native bytes → circuit inputs).
 # Gated on `cfg(not(xark))`: the circuit build sets the `xark` cfg, so a
 # circuit build drops these and the crate stays lean `no_std`; an ordinary host
 # build (tests, downstream provers) pulls them in with no feature flag.

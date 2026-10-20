@@ -6,7 +6,7 @@
 // `xark build` records the circuit's parameter types in target/xark/cube/schema.json
 // and `xark client` turns them into the types below. Don't edit this file: change
 // the circuit, then rebuild and rerun `xark client`. Values go in their natural
-// forms (dates, strings, flag names, bytes); xark-wasm encodes them against the
+// forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
 /** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */
@@ -71,7 +71,7 @@ export interface CubeKeys {
  */
 export class Cube {
   /** The circuit's `schema.json`. */
-  static readonly schema = "{\"circuit\":\"cube\",\"inputs\":[{\"name\":\"secret\",\"type\":\"field\",\"visibility\":\"private\"},{\"name\":\"result\",\"type\":\"field\",\"visibility\":\"public\"}],\"public_inputs\":[\"result\"],\"types\":{},\"version\":1}";
+  static readonly schema = "{\"circuit\":\"cube\",\"inputs\":[{\"name\":\"secret\",\"type\":\"field\",\"visibility\":\"private\"},{\"name\":\"result\",\"type\":\"field\",\"visibility\":\"public\"}],\"public_inputs\":[\"result\"],\"types\":{},\"version\":2}";
 
   constructor(
     private readonly wasm: XarkWasm,

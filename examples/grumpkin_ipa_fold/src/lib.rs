@@ -121,7 +121,7 @@ fn inv_sq_mul(inv: WideScalar, p: Affine) -> [Field; 2] {
 }
 
 /// One IPA round's transcript points: the cross commitments `L` and `R`.
-#[derive(Clone, Copy, Debug, CircuitInput)]
+#[derive(Clone, Copy, Debug, Input)]
 pub struct Round {
     pub l: Affine,
     pub r: Affine,
