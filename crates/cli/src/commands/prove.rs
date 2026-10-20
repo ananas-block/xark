@@ -20,7 +20,7 @@ use xark_backend::serialization::write_public_inputs;
 use xark_groth16::{ConstraintSource, PkSource};
 use xark_prover::{XarkCircuit, fr_from_decimal};
 
-use super::{parse_inputs_arg, resolve_input_ids, setup, stream_soundness};
+use super::{resolve_input_ids, setup, stream_soundness};
 use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
@@ -129,7 +129,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
     let xbc = project.circuit_xbc();
     // Inputs come from `--inputs`: inline JSON or a file path (agnostic).
     let inputs = match &args.inputs {
-        Some(arg) => super::encoding::expand(&project.xark_dir, parse_inputs_arg(arg)?)?,
+        Some(arg) => super::read_inputs(&project.xark_dir, arg)?,
         None => Default::default(),
     };
     super::check_uint_ranges(&project.xark_dir, &inputs)?;

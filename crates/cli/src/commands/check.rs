@@ -14,10 +14,7 @@ use anyhow::{Result, bail};
 
 use xark_ir::primitive::VarRole;
 
-use super::{
-    CheckArgs, load_circuit_program, load_profile, parse_inputs_arg, resolve_input_ids,
-    soundness_check,
-};
+use super::{CheckArgs, load_circuit_program, load_profile, resolve_input_ids, soundness_check};
 use crate::xark_project::XarkProject;
 
 pub fn run(args: CheckArgs) -> Result<()> {
@@ -48,7 +45,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
         .inputs
         .as_deref()
         .expect("check::run is only reached with --inputs");
-    let inputs = super::encoding::expand(&project.xark_dir, parse_inputs_arg(arg)?)?;
+    let inputs = super::read_inputs(&project.xark_dir, arg)?;
     super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let id_inputs = resolve_input_ids(&cp.vars, &inputs)?;
     let _assign = soundness_check(&cp, profile.as_ref(), &id_inputs)?;

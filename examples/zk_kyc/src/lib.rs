@@ -1,80 +1,150 @@
+//! Zero-knowledge KYC: prove an identity an issuer committed to meets a verifier's
+//! policy (old enough, wealthy enough, document still valid, nationality allowed)
+//! without revealing it. The identity stays private; the commitment and the policy
+//! are public, so a verifier picks the rules at proof time with no new circuit.
 #![cfg_attr(xark, no_std)]
+
 use xark::prelude::*;
 
-#[derive(Clone, Debug, CircuitInput)]
-pub struct ZKID {
-    id: Field,      // an ID encoded as a field element
-    dob: Field,     // a DOB as an integer (e.g. YYYYMMDD), < 2^25
-    country: Field, // a country code
-    nonce: Field,   // a blinding secret from the issuer
-}
-
-impl ZKID {
-    /// The full Poseidon2 commitment over every field.
-    pub fn hash(&self) -> Field {
-        xark_poseidon2::hash([self.id, self.dob, self.country, self.nonce])
+xark::flags! {
+    /// ISO 3166-1 alpha-2 countries, in bit order: a nationality is one of these, an
+    /// allow-list any set of them. Append only: a country's position is its bit.
+    pub enum Country {
+        AD, AE, AF, AG, AI, AL, AM, AO, AQ, AR, AS, AT,
+        AU, AW, AX, AZ, BA, BB, BD, BE, BF, BG, BH, BI,
+        BJ, BL, BM, BN, BO, BQ, BR, BS, BT, BV, BW, BY,
+        BZ, CA, CC, CD, CF, CG, CH, CI, CK, CL, CM, CN,
+        CO, CR, CU, CV, CW, CX, CY, CZ, DE, DJ, DK, DM,
+        DO, DZ, EC, EE, EG, EH, ER, ES, ET, FI, FJ, FK,
+        FM, FO, FR, GA, GB, GD, GE, GF, GG, GH, GI, GL,
+        GM, GN, GP, GQ, GR, GS, GT, GU, GW, GY, HK, HM,
+        HN, HR, HT, HU, ID, IE, IL, IM, IN, IO, IQ, IR,
+        IS, IT, JE, JM, JO, JP, KE, KG, KH, KI, KM, KN,
+        KP, KR, KW, KY, KZ, LA, LB, LC, LI, LK, LR, LS,
+        LT, LU, LV, LY, MA, MC, MD, ME, MF, MG, MH, MK,
+        ML, MM, MN, MO, MP, MQ, MR, MS, MT, MU, MV, MW,
+        MX, MY, MZ, NA, NC, NE, NF, NG, NI, NL, NO, NP,
+        NR, NU, NZ, OM, PA, PE, PF, PG, PH, PK, PL, PM,
+        PN, PR, PS, PT, PW, PY, QA, RE, RO, RS, RU, RW,
+        SA, SB, SC, SD, SE, SG, SH, SI, SJ, SK, SL, SM,
+        SN, SO, SR, SS, ST, SV, SX, SY, SZ, TC, TD, TF,
+        TG, TH, TJ, TK, TL, TM, TN, TO, TR, TT, TV, TW,
+        TZ, UA, UG, UM, US, UY, UZ, VA, VC, VE, VG, VI,
+        VN, VU, WF, WS, YE, YT, ZA, ZM, ZW,
     }
 }
 
-/// Proves a KYCed ID holder is old enough without revealing their identity.
-///
-/// The prover holds a private identity `(id, dob, country, nonce)` the issuer committed
-/// to with a public Poseidon2 `commitment`. The circuit re-derives the commitment and
-/// constrains it to match, then constrains `dob < max_dob` (born before the public
-/// cutoff). The identity stays hidden; only `max_dob` and `commitment` are revealed.
+/// What an issuer attests about a holder, committed to as a whole with Poseidon2.
+#[derive(Clone, Copy, Debug, CircuitInput)]
+pub struct Identity {
+    /// The ID document's number.
+    pub document: Text,
+    pub born: Date,
+    /// Exactly one country.
+    pub nationality: Bitfield<Country>,
+    /// Attested net worth, in whole USD.
+    pub net_worth: u64,
+    /// The ID document's expiry.
+    pub expires: Date,
+    /// The issuer's random blinding secret: it hides the commitment.
+    pub salt: Field,
+}
+
+impl Identity {
+    /// The issuer's commitment: Poseidon2 over every field, so adding one extends it.
+    pub fn commitment(&self) -> Field {
+        xark_poseidon2::hash(self.to_fields())
+    }
+}
+
+/// `id` is the identity the issuer committed to as `commitment`, born before
+/// `born_before`, worth at least `min_net_worth`, with a document valid on `today`
+/// and a nationality in `allowed`. To switch a check off, pass a value every identity
+/// meets (`Date::from_raw(99_999_999)`, `0`, `Date::from_raw(0)`, `Bitfield::all()`).
 #[circuit]
-pub fn zk_kyc(user: Private<ZKID>, max_dob: Public<Field>, commitment: Public<Field>) {
-    require_eq(user.hash(), commitment);
-    require(user.dob.lt::<25>(max_dob)); // dob < max_dob, compared as 25-bit unsigned
+pub fn zk_kyc(
+    id: Private<Identity>,
+    commitment: Public<Field>,
+    born_before: Public<Date>,
+    min_net_worth: Public<u64>,
+    today: Public<Date>,
+    allowed: Public<Bitfield<Country>>,
+) {
+    require_eq(id.commitment(), commitment);
+    require(id.born < born_before);
+    require(id.net_worth >= min_net_worth);
+    require(id.expires >= today);
+    id.nationality.require_one_of(allowed);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{zk_kyc, ZKID};
-    use ark_ff::PrimeField;
-    use xark::Field;
+    use super::*;
+    use Country::*;
 
-    // The fixed identity fields as circuit `Field`s, packed at compile time.
-    const ID: Field = Field::from_le_bytes("A1938274".as_bytes());
-    const COUNTRY: Field = Field::from_u16(u16::from_le_bytes(*b"US"));
-    const NONCE: Field = Field::from_le_bytes(&[
-        0x13, 0x37, 0xaf, 0x10, 0x15, 0x0b, 0xa5, 0xed, //
-        0x13, 0x37, 0xaf, 0x10, 0x15, 0x0b, 0xa5, 0xed, //
-        0x13, 0x37, 0xaf, 0x10, 0x15, 0x0b, 0xa5, 0xed, //
-        0x13, 0x37, 0xaf, 0x10, 0x15, 0x0b, 0xa5, 0xed,
-    ]);
-    const DOB: Field = Field::from_u64(19900101);
-    const MAX_DOB: Field = Field::from_u64(20200101);
+    fn holder(nationality: Country, born: &str, net_worth: u64, expires: &str) -> Identity {
+        Identity {
+            document: "A1938274".into(),
+            born: born.into(),
+            nationality: nationality.into(),
+            net_worth,
+            expires: expires.into(),
+            salt: Field::from_le_bytes(&[0x13; 31]),
+        }
+    }
 
-    // The identity with a given `dob`, sharing the fixed id/country/nonce.
-    const USER: ZKID = ZKID {
-        id: ID,
-        dob: DOB,
-        country: COUNTRY,
-        nonce: NONCE,
-    };
+    /// The issuer's commitment, computed off-circuit with the same Poseidon2.
+    fn commitment(id: &Identity) -> Field {
+        xark_poseidon2::native::hash(id.to_fields().map(Into::into)).into()
+    }
 
-    // The issuer's off-circuit Poseidon2 commitment over that identity — `Field`s pass
-    // straight in (the reference reduces each mod p, as the solver does).
-    fn commitment(user: ZKID) -> String {
-        poseidon2::hash([user.id, user.dob, user.country, user.nonce])
-            .into_bigint()
-            .to_string()
+    /// Born before 2008-10-20, worth ≥ 500k, valid on 2026-10-20, from US/GB/FR/DE.
+    fn check(id: Identity) -> Result<(), xark::prover::ProveError> {
+        zk_kyc(
+            id,
+            commitment(&id),
+            "2008-10-20",
+            500_000,
+            "2026-10-20",
+            [US, GB, FR, DE],
+        )
     }
 
     #[test]
-    fn accepts_valid() {
-        zk_kyc(USER, MAX_DOB.to_decimal(), commitment(USER)).unwrap();
+    fn accepts_a_compliant_holder() {
+        check(holder(US, "1990-01-01", 1_000_000, "2030-01-01")).unwrap();
+        check(holder(GB, "1990-01-01", 500_000, "2026-10-20")).unwrap(); // both limits inclusive
     }
 
     #[test]
-    fn rejects_too_young() {
-        // dob == MAX_DOB violates the strict `dob < MAX_DOB` (commitment is valid).
-        assert!(zk_kyc(USER, USER.dob.to_decimal(), commitment(USER)).is_err());
+    fn rejects_each_failed_check() {
+        assert!(check(holder(KP, "1990-01-01", 1_000_000, "2030-01-01")).is_err());
+        assert!(check(holder(US, "2010-01-01", 1_000_000, "2030-01-01")).is_err());
+        assert!(check(holder(US, "1990-01-01", 100, "2030-01-01")).is_err());
+        assert!(check(holder(US, "1990-01-01", 1_000_000, "2026-10-19")).is_err());
     }
 
     #[test]
-    fn rejects_wrong_hash() {
-        assert!(zk_kyc(USER, MAX_DOB.to_decimal(), "1".to_string()).is_err());
+    fn rejects_two_nationalities_and_a_wrong_commitment() {
+        let mut two = holder(US, "1990-01-01", 1_000_000, "2030-01-01");
+        two.nationality = [US, GB].into();
+        assert!(check(two).is_err());
+        let id = holder(US, "1990-01-01", 1_000_000, "2030-01-01");
+        assert!(zk_kyc(id, 1, "2008-10-20", 500_000, "2026-10-20", [US]).is_err());
+    }
+
+    #[test]
+    fn checks_switch_off_without_a_new_circuit() {
+        let id = holder(JP, "2025-01-01", 0, "2026-10-21");
+        let any = Date::from_raw(99_999_999);
+        zk_kyc(
+            id,
+            commitment(&id),
+            any,
+            0,
+            Date::from_raw(0),
+            Bitfield::all(),
+        )
+        .unwrap();
     }
 }

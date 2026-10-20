@@ -35,6 +35,10 @@ extern crate self as xark;
 /// `Field` methods and operator impls, and the recognized intrinsics.
 pub mod lang;
 
+/// Everyday input types: [`Date`], [`Text`], [`Bitfield`] (of [`flags!`] flags).
+pub mod types;
+pub use types::{Bitfield, Date, Flags, Text};
+
 /// The compiler intrinsics — `#[inline(never)]` functions that, in the circuit
 /// build, call the frontend's `xark.*` wasm imports (the `Field` operator/hint ABI). See the module doc
 /// for the constraint-vs-hint distinction. `lang.rs` calls these to back its
@@ -55,6 +59,7 @@ pub mod prelude {
     };
     // `CircuitInput` makes a `Field`-composed struct a circuit input (the everyday way to
     // group inputs); `circuit` is the entry attribute.
+    pub use crate::types::{Bitfield, Date, Flags, Text};
     pub use xark_macros::{CircuitInput, circuit};
 }
 

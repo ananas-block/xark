@@ -75,12 +75,15 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             read_public_inputs(&path)
                 .with_context(|| format!("reading {}{hint}", path.display()))?
         }
-        Some(arg) => {
-            let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;
-            let inputs = super::encoding::expand(&project.xark_dir, parse_inputs_arg(arg)?)?;
-            super::check_uint_ranges(&project.xark_dir, &inputs)?;
-            public_inputs_from_inputs(&prog, &inputs)?
-        }
+        Some(arg) => match super::read_public_inputs(&project.xark_dir, arg)? {
+            Some(public) => public,
+            None => {
+                let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;
+                let inputs = parse_inputs_arg(arg)?;
+                super::check_uint_ranges(&project.xark_dir, &inputs)?;
+                public_inputs_from_inputs(&prog, &inputs)?
+            }
+        },
     };
 
     let ok = verify(&vk, &proof, &public)?;

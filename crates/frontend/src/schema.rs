@@ -93,9 +93,24 @@ fn type_of(
     types: &mut serde_json::Map<String, Value>,
 ) -> Value {
     if let Some(w) = node.width {
-        return match w {
+        let leaf = match w {
             None => json!("field"),
             Some(w) => json!({ "uint": w }),
+        };
+        // A named one-leaf type (`Date`, `Bitfield<Country>`): the leaf is the input
+        // itself, its type recorded as a `newtype` of the leaf.
+        return match structs.get(&path_of(at)) {
+            Some(name) => {
+                if !types.contains_key(name) {
+                    let mut def = json!({ "newtype": leaf });
+                    if let Some(e) = encodings.get(name) {
+                        def["encoding"] = e.clone();
+                    }
+                    types.insert(name.clone(), def);
+                }
+                json!({ "ref": name })
+            }
+            None => leaf,
         };
     }
     if let Some(name) = structs.get(&path_of(at)) {

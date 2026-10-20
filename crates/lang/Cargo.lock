@@ -1135,6 +1135,7 @@ dependencies = [
  "ark-serialize",
  "num-bigint",
  "rand",
+ "serde_json",
  "sha2",
  "xark-groth16",
  "xark-ir",

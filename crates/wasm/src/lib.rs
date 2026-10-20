@@ -284,6 +284,67 @@ pub fn decode_public_inputs(public_inputs_bytes: &Bytes) -> Result<Vec<String>, 
 }
 
 // ---------------------------------------------------------------------------
+// typed inputs (`schema.json`)
+// ---------------------------------------------------------------------------
+
+fn schema(text: &str) -> Result<xark_prover::schema::Schema, js_sys::Error> {
+    xark_prover::schema::Schema::parse(text).map_err(|e| js_error(&e))
+}
+
+fn json(text: &str, what: &str) -> Result<serde_json::Value, js_sys::Error> {
+    serde_json::from_str(text).map_err(|e| js_error(&format!("{what}: {e}")))
+}
+
+/// The circuit's inputs (JSON text: an object of every input, each in its natural
+/// form, `camelCase` or `snake_case` keys) as the `leaf → decimal` object [`prove`]
+/// takes, encoded and checked against `schema` (the circuit's `schema.json` text).
+/// A generated client calls this; see `xark client`.
+#[wasm_bindgen(js_name = encodeInputs)]
+pub fn encode_inputs(schema_json: &str, inputs_json: &str) -> Result<JsValue, js_sys::Error> {
+    let leaves = schema(schema_json)?
+        .leaves(&json(inputs_json, "inputs")?)
+        .map_err(|e| js_error(&e))?;
+    let out = js_sys::Object::new();
+    for (k, v) in leaves {
+        js_sys::Reflect::set(&out, &k.into(), &v.to_string().into())?;
+    }
+    Ok(out.into())
+}
+
+/// The public inputs (JSON text, as for [`encode_inputs`]; only the public ones
+/// needed) as the canonical bytes [`verify`] takes (`public_inputs.bin`).
+#[wasm_bindgen(js_name = encodePublicInputs)]
+pub fn encode_public_inputs(
+    schema_json: &str,
+    public_json: &str,
+) -> Result<Vec<u8>, js_sys::Error> {
+    let values = schema(schema_json)?
+        .public_inputs(&json(public_json, "public inputs")?)
+        .map_err(|e| js_error(&e))?;
+    let mut out = Vec::new();
+    values
+        .serialize_compressed(&mut out)
+        .map_err(|e| js_error(&format!("encoding public inputs: {e}")))?;
+    Ok(out)
+}
+
+/// Canonical public-input bytes decoded to their natural forms: JSON text of an
+/// object keyed `camelCase` (a `Date` as `"YYYY-MM-DD"`, flags as their names, bytes
+/// as `0x`-hex, field elements as decimal strings).
+#[wasm_bindgen(js_name = decodePublicValues)]
+pub fn decode_public_values(
+    schema_json: &str,
+    public_inputs_bytes: &Bytes,
+) -> Result<String, js_sys::Error> {
+    let bytes = to_bytes(public_inputs_bytes, "public inputs")?;
+    let values: Vec<Fr> = deserialize_bytes(&bytes, "public inputs")?;
+    let v = schema(schema_json)?
+        .decode_public(&values, true)
+        .map_err(|e| js_error(&e))?;
+    Ok(v.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 

@@ -103,7 +103,7 @@ pub fn run(args: InspectArgs) -> Result<()> {
         println!("Field:                {}", prog.field.name);
         println!("Variables:            {}", prog.variables.len());
         // Declared inputs by name and type (from `schema.json`), not leaf by leaf.
-        let summary = super::encoding::summary(&project.xark_dir);
+        let summary = super::load_schema(&project.xark_dir).map(|s| s.summary());
         let line = |public: bool, n: usize, names: &[&str]| match &summary {
             Some(inputs) => {
                 let parts: Vec<String> = inputs

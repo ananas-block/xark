@@ -7,7 +7,7 @@
 # For each example in EXAMPLES: build it, make dev keys, and regenerate its client
 # with `xark client`; the committed `examples/<name>/client/<name>.ts` must
 # match (so a generator change shows up in review). Then typecheck every client and
-# its `test.ts`, and run each test: prove with typed inputs through xark-wasm,
+# its `<name>.test.ts`, and run them with vitest: prove with typed inputs through xark-wasm,
 # verify, and check that wrong public inputs and unsatisfiable inputs fail.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -35,6 +35,4 @@ done
 cd "$root/clients/check"
 [ -d node_modules ] || npm ci --silent
 npx tsc --noEmit
-for n in $EXAMPLES; do
-  npx tsx "$root/examples/$n/client/test.ts"
-done
+npx vitest run

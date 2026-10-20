@@ -21,6 +21,19 @@ gadgets now check more:
 
 ### Changed
 
+- **`Date`, `Text`, `Bitfield<F>` and `flags!`** in `xark`: a calendar day, a
+  short string and a set of enum flags, each one field, with natural forms in
+  tests (`"1990-01-01"`, `[US, GB]`), `--inputs` and the TypeScript client. They
+  appear in `schema.json` as named types (`{"newtype": "field", "encoding": …}`).
+  `examples/zk_kyc` uses them: an `Identity` with a document number, birth date,
+  nationality and net worth, checked against a public policy.
+- **A cleaner TypeScript client.** `xark client` emits plain types (`Date`,
+  string unions of flag names, `bigint`, bytes) and a thin class; encoding and
+  decoding run in xark-wasm (`encodeInputs`, `encodePublicInputs`,
+  `decodePublicValues`) on the same code as the CLI (`xark_prover::schema`), so a
+  generated client is ~150 lines instead of ~350 and the two can't disagree. The
+  file's header shows the `#[circuit]` signature it came from. The example
+  client tests run under vitest.
 - **Natural input forms everywhere.** A gadget input type declares its natural
   encoding (`schema.json`'s `encoding`: limbs of a number, fields back to back,
   SEC1, a compressed Ed25519 point), and both `xark prove/check/verify --inputs`

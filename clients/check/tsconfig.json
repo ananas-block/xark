@@ -6,8 +6,8 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "typeRoots": ["./node_modules/@types"],
-    "types": ["node"]
+    "typeRoots": ["./node_modules/@types", "./node_modules"],
+    "types": ["node", "vitest/globals"]
   },
-  "include": ["../../examples/*/client/*.ts"]
+  "include": ["artifacts.ts", "../../examples/*/client/*.ts"]
 }

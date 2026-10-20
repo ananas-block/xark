@@ -576,7 +576,7 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>) {
     let p = super::path_arg(path);
     // From `schema.json`: one entry per declared input, in its natural form (a hash's
     // `0x…` bytes, not its leaves). Short: inline; long: a file to fill in.
-    let hint = match super::encoding::summary(&project.xark_dir) {
+    let hint = match super::load_schema(&project.xark_dir).map(|s| s.summary()) {
         Some(inputs) if !inputs.is_empty() => {
             // In declaration order (a `serde_json::Map` would sort the keys).
             let entries: Vec<String> = inputs

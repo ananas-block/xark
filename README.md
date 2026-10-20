@@ -63,6 +63,38 @@ a single call. The generated `<Fn>Inputs` struct holds the same values for
 `xark::prover::circuit(..).check(..)`, `.prove(..)` and friends. A circuit
 crate needs only the `xark` dependency.
 
+### Everyday input types
+
+`xark` ships the types most credential-style circuits need, each one field wide
+and each with its natural form in tests, `--inputs` and the TypeScript client:
+
+- `Date`: a calendar day (`"1990-01-01"` on the host, compared with `<`/`>=` in
+  the circuit as a 27-bit comparison).
+- `Text`: a short string, up to 31 bytes (a document number, a name).
+- `Bitfield<F>`: a set of flags from an enum declared with `xark::flags!`, such as
+  the allowed countries: `require_single`, `require_one_of`, `contains`.
+
+```rust
+xark::flags! { pub enum Country { AD, AE, /* … */ US, ZW } }
+
+#[derive(Clone, Copy, Debug, CircuitInput)]
+pub struct Identity { document: Text, born: Date, nationality: Bitfield<Country>, net_worth: u64, expires: Date, salt: Field }
+
+#[circuit]
+fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, born_before: Public<Date>,
+          min_net_worth: Public<u64>, today: Public<Date>, allowed: Public<Bitfield<Country>>) {
+    require_eq(id.commitment(), commitment);
+    require(id.born < born_before);
+    require(id.net_worth >= min_net_worth);
+    require(id.expires >= today);
+    id.nationality.require_one_of(allowed);
+}
+
+// In a test: zk_kyc(id, commitment, "2008-10-20", 500_000, "2026-10-20", [US, GB, FR, DE])
+```
+
+`examples/zk_kyc` is this circuit in full.
+
 ## As a toolchain (CLI)
 
 ```bash
@@ -111,13 +143,26 @@ xark check examples/cube
 
 ### Typed clients
 
-`xark build` also writes `schema.json`: every input's name, visibility, and type
-(`Field`, `uN` widths, arrays, tuples, and `#[derive(CircuitInput)]` structs), plus the
-public inputs in proof order. A gadget type also records its natural encoding, so
-the client takes an Ed25519 key or a hash as bytes (`Uint8Array` or `0x`-hex) and a
-limbed scalar as a number, never as limbs. `xark client` turns it into one dependency-free `.ts`
-file with an interface per struct and typed `prove` / `verify` over the `xark-wasm`
-module you pass in:
+`xark build` also writes `schema.json`: every input's name, visibility and type
+(`Field`, `uN`, arrays, tuples, `#[derive(CircuitInput)]` structs, and named types
+such as `Date` or `Bitfield<Country>` with their natural encoding), plus the public
+inputs in proof order. `xark client` turns it into one `.ts` file: a string union
+per `flags!` enum, an interface per struct, the inputs, the public inputs as given
+and as decoded, and a class over the `xark-wasm` module you pass in. Each type is
+the one you'd write by hand:
+
+```ts
+export type Country = | "AD" | "AE" | /* … */ "US" | "ZW";
+
+export interface Identity {
+  document: string;            // Text
+  born: DateLike;              // Date | "YYYY-MM-DD"
+  nationality: Country | readonly Country[];
+  netWorth: bigint | number;   // u64
+  expires: DateLike;
+  salt: FieldLike;
+}
+```
 
 ```ts
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
@@ -125,20 +170,23 @@ import { ZkKyc } from "./zk_kyc";
 
 const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey });
 const { proof, publicInputs } = kyc.prove({
-  user: { id: "3762531230650282305", dob: 19900101, country: 21333, nonce },
-  maxDob: 20200101,
+  id: { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: "2030-01-01", salt },
   commitment,
+  bornBefore: "2008-10-20",
+  minNetWorth: 500_000,
+  today: new Date(),
+  allowed: ["US", "GB", "FR", "DE"],
 });
+publicInputs.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
 kyc.verify(proof, publicInputs); // true
 ```
 
-`examples/zk_kyc/client/` holds this generated client and a test that runs it, as
-do `cube`, `sha256` and `merkle`; `scripts/client-check.sh` (run in CI)
-regenerates them, fails if a committed client is stale, and proves and verifies
-each through xark-wasm.
-
-Fields are camelCased; values are range- and length-checked against their Rust types
-before proving, with errors that name the field (`msg[2]: 300 is outside u8`).
+The client holds no encoding logic of its own: xark-wasm encodes values against
+the embedded schema with the same Rust code as `xark prove --inputs`, so the two
+can't drift, and a mistake names its input (`today: "2026-02-30" is not a calendar
+day`). `examples/{zk_kyc,cube,sha256,merkle}/client/` hold generated clients and
+their vitest tests; `scripts/client-check.sh` (run in CI) regenerates them, fails
+if a committed one is stale, and runs the tests.
 
 ## Editor diagnostics (rust-analyzer)
 

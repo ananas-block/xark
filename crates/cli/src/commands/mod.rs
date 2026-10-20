@@ -38,7 +38,6 @@ pub mod check;
 pub mod client;
 pub mod completions;
 pub mod doctor;
-pub mod encoding;
 pub mod export;
 pub mod inspect;
 pub mod profile;
@@ -310,6 +309,65 @@ pub fn path_arg(path: &Option<std::path::PathBuf>) -> String {
 /// Parse the `--inputs` argument: a leading `{` selects inline JSON, anything
 /// else is a file path (JSON object, or `name = value` lines). Array elements
 /// use the flat names `xark inspect` prints, e.g. `path[0]`.
+/// The circuit's `schema.json`, if the build wrote one.
+pub fn load_schema(xark_dir: &std::path::Path) -> Option<xark_prover::schema::Schema> {
+    let text = std::fs::read_to_string(xark_dir.join("schema.json")).ok()?;
+    xark_prover::schema::Schema::parse(&text).ok()
+}
+
+/// `--inputs` (inline JSON, or a JSON / `name = value` file) as a JSON object.
+fn inputs_json(arg: &str) -> Result<serde_json::Value> {
+    let (text, source) = if arg.trim_start().starts_with('{') {
+        (arg.to_string(), "<--inputs>".to_string())
+    } else {
+        let t = std::fs::read_to_string(arg)
+            .with_context(|| format!("reading --inputs file `{arg}`"))?;
+        (t, arg.to_string())
+    };
+    if text.trim_start().starts_with('{') {
+        return serde_json::from_str(&text).with_context(|| format!("parsing {source} as JSON"));
+    }
+    let map: serde_json::Map<String, serde_json::Value> =
+        parse_input_text(&text, std::path::Path::new(&source))?
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect();
+    Ok(serde_json::Value::Object(map))
+}
+
+/// `--inputs` as the circuit's input leaves (`name → decimal`). With a
+/// `schema.json` every value is taken in its type's natural form (a date as
+/// `"YYYY-MM-DD"`, a key as its bytes) and checked against it; without one the
+/// values go to input resolution as given.
+pub fn read_inputs(xark_dir: &std::path::Path, arg: &str) -> Result<BTreeMap<String, String>> {
+    let Some(schema) = load_schema(xark_dir) else {
+        return parse_inputs_arg(arg);
+    };
+    let leaves = schema
+        .leaves(&inputs_json(arg)?)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    Ok(leaves
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect())
+}
+
+/// `--inputs` as the public inputs, in proof order, when the build wrote a
+/// `schema.json` (only the public inputs need be given then).
+pub fn read_public_inputs(
+    xark_dir: &std::path::Path,
+    arg: &str,
+) -> Result<Option<Vec<ark_bn254::Fr>>> {
+    let Some(schema) = load_schema(xark_dir) else {
+        return Ok(None);
+    };
+    let json = inputs_json(arg)?;
+    schema
+        .public_inputs(&json)
+        .map(Some)
+        .map_err(|e| anyhow::anyhow!(e))
+}
+
 pub fn parse_inputs_arg(arg: &str) -> Result<BTreeMap<String, String>> {
     if arg.trim_start().starts_with('{') {
         parse_input_text(arg, std::path::Path::new("<--inputs>"))
