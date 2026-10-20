@@ -685,6 +685,28 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
+/// Refuse a key made for a different build of the circuit: the `circuit_hash` in
+/// the `metadata.json` beside `key` against `circuit.xbc`'s. No check when either
+/// is missing (keys copied without their metadata, or shipped without the build).
+pub fn ensure_key_matches_circuit(key: &std::path::Path, xbc: &std::path::Path) -> Result<()> {
+    let keyed = key
+        .parent()
+        .and_then(|dir| std::fs::read_to_string(dir.join("metadata.json")).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("circuit_hash")?.as_str().map(str::to_string));
+    let (Some(keyed), Ok(bytes)) = (keyed, std::fs::read(xbc)) else {
+        return Ok(());
+    };
+    if keyed != sha256_hex(&bytes) {
+        anyhow::bail!(
+            "the key {} was made for a different build of the circuit (the circuit \
+             changed since `xark setup`): run `xark setup` and `xark prove` again",
+            key.display()
+        );
+    }
+    Ok(())
+}
+
 /// The SHA-256 (hex) of a string (e.g. a phase-2 seed, recorded in key metadata).
 pub fn circuit_hash(r1cs_json: &str) -> String {
     sha256_hex(r1cs_json.as_bytes())

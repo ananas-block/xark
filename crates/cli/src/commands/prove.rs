@@ -433,7 +433,7 @@ fn autobuild_and_setup(
     pk_path: &std::path::Path,
 ) -> Result<()> {
     // "Built" is signalled by `circuit.xbc`, which every build emits.
-    let is_built = project.circuit_xbc().exists();
+    let mut is_built = project.circuit_xbc().exists();
     if !is_built && let Some(dir) = find_crate_dir(args, project) {
         eprintln!(
             "{} no build found — running `xark build {}` first…",
@@ -443,6 +443,7 @@ fn autobuild_and_setup(
         if crate::cli::cmd_build(&[dir.display().to_string()]) != 0 {
             anyhow::bail!("auto-build failed (build the circuit with `xark build` first)");
         }
+        is_built = project.circuit_xbc().exists();
     }
     // If no crate dir is found, fall through: `load_r1cs` emits the usual
     // clear "run `xark build` first" error.

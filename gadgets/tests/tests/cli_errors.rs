@@ -233,3 +233,98 @@ fn client_does_not_overwrite_other_files() {
         "export const mine = 1;\n"
     );
 }
+
+/// `xark prove` on a crate that was never built builds it, makes a dev key and
+/// proves, in one command (the setup step used to be skipped after the build).
+#[test]
+fn first_prove_builds_and_sets_up() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let (ok, out) = run_in(&dir, &["prove", "--inputs", r#"{"x": "3", "y": "9"}"#]);
+    assert!(ok, "first `xark prove` failed:\n{out}");
+    assert!(
+        out.contains("no build found") && out.contains("no proving key found"),
+        "{out}"
+    );
+}
+
+/// A build that fails removes the previous build's circuit, so later commands
+/// stop at "build first" instead of proving the old one.
+#[test]
+fn failed_build_removes_the_old_circuit() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let (ok, out) = run_in(&dir, &["build"]);
+    assert!(ok, "build failed:\n{out}");
+    let built = dir.join("target/xark/arithmetic_square");
+    assert!(built.join("circuit.xbc").is_file());
+
+    let lib = dir.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).unwrap();
+    std::fs::write(&lib, format!("{source}\nfn broken() -> u8 {{ \"\" }}\n")).unwrap();
+    let (ok, out) = run_in(&dir, &["build"]);
+    assert!(!ok, "a broken source built:\n{out}");
+    for f in ["circuit.xbc", "schema.json", "digest", "entry"] {
+        assert!(!built.join(f).exists(), "{f} survived a failed build");
+    }
+    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    assert!(!ok && out.contains("xark build"), "{out}");
+}
+
+/// Copy `examples/<name>` into `dir`, its path dependencies made absolute.
+fn copy_example(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let src = common::circuit_crate(name);
+    let dst = dir.join(name);
+    std::fs::create_dir_all(dst.join("src")).unwrap();
+    std::fs::copy(src.join("src/lib.rs"), dst.join("src/lib.rs")).unwrap();
+    let root = src.join("../..").canonicalize().unwrap();
+    let manifest = std::fs::read_to_string(src.join("Cargo.toml"))
+        .unwrap()
+        .replace("../../", &format!("{}/", root.display()));
+    std::fs::write(dst.join("Cargo.toml"), manifest).unwrap();
+    dst
+}
+
+/// `export` and `verify` refuse a key made for a different build of the circuit,
+/// as `prove` does, and `export` refuses a proof its key doesn't verify (it
+/// becomes the generated crate's self-test).
+#[test]
+fn export_and_verify_check_the_key() {
+    let tmp = tempdir();
+    let out = tmp.path().join("out");
+    let (ok, err) = xark_build("arithmetic_square", &out, &tmp.path().join("target"));
+    assert!(ok, "build failed: {err}");
+    let (ok, err) = xark_setup(&out);
+    assert!(ok, "setup failed: {err}");
+    let (ok, err) = xark_prove(&out, &[("x", "3"), ("y", "9")]);
+    assert!(ok, "prove failed: {err}");
+    let o = out.to_str().unwrap();
+
+    // A new key: the old proof no longer verifies with it.
+    let (ok, _, err) = run(&[
+        "setup",
+        o,
+        "--insecure-dev-mode",
+        "--deterministic-rng",
+        "2",
+    ]);
+    assert!(ok, "second setup failed: {err}");
+    let (ok, _, err) = run(&["export", o, "--allow-insecure"]);
+    assert!(!ok && err.contains("doesn't verify"), "{err}");
+    assert!(!out.join("verifier").exists(), "exported anyway");
+
+    // As if the circuit had been rebuilt with a change since setup.
+    let meta = out.join("metadata.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+    m["circuit_hash"] = "00".repeat(32).into();
+    std::fs::write(&meta, m.to_string()).unwrap();
+    for cmd in [&["export", o, "--allow-insecure"][..], &["verify", o]] {
+        let (ok, stdout, err) = run(cmd);
+        assert!(
+            !ok && err.contains("different build of the circuit"),
+            "`xark {}`:\n{stdout}{err}",
+            cmd[0]
+        );
+    }
+}

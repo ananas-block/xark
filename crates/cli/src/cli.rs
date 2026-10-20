@@ -103,6 +103,18 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     build_stable(&crate_abs, &out_abs, &pkg_name, &field, profile, emit_json)
 }
 
+/// Everything `xark build` writes (beside the keys and proofs of later commands).
+const BUILD_OUTPUTS: [&str; 8] = [
+    "circuit.xbc",
+    "circuit.json",
+    "r1cs.json",
+    "graph.dot",
+    "profile.json",
+    "entry",
+    "digest",
+    "schema.json",
+];
+
 /// `xark build`: `cargo` (any toolchain) builds the circuit
 /// for wasm32, then `xark-frontend` runs it to lower the circuit.
 fn build_stable(
@@ -114,6 +126,19 @@ fn build_stable(
     emit_json: bool,
 ) -> i32 {
     eprintln!("{} building circuit `{name}`", crate::style::tag());
+    // Clear the previous build's outputs first: if this build fails, `prove`,
+    // `setup` and `export` must not go on with the old circuit, and a build
+    // without `--emit-json`/`--profile` must not leave stale views beside it.
+    // Keys stay: `prove` checks them against the circuit they were made for.
+    for f in BUILD_OUTPUTS {
+        let path = out_abs.join(f);
+        if let Err(e) = std::fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("xark: removing {}: {e}", path.display());
+            return 1;
+        }
+    }
     // Every build carries DWARF line tables (free; see `BuildOptions`), so errors
     // and `--profile` attribution name source lines.
     let (target_dir, opts) = (

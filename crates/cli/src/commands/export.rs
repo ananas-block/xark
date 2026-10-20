@@ -90,6 +90,7 @@ pub fn run(args: ExportArgs) -> Result<()> {
         )
     })?;
     check_key_safe_for_export(&vk_path, args.allow_insecure)?;
+    super::ensure_key_matches_circuit(&vk_path, &project.circuit_xbc())?;
     let proof = ProofBundle::read_proof(&proof_path)
         .with_context(|| format!("reading proof {}", proof_path.display()))?;
     let public_inputs = read_public_inputs(&public_inputs_path)
@@ -102,6 +103,16 @@ pub fn run(args: ExportArgs) -> Result<()> {
             "VK ic length ({ic_len}) does not match num_public_inputs+1 ({}); \
              ic_len must equal num_public_inputs + 1 in Groth16",
             num_public_inputs + 1
+        );
+    }
+
+    // The proof is the generated crate's self-test: one that doesn't verify (a
+    // proof from an earlier key) would only fail there, after the export.
+    if !xark_backend::verify(&vk, &proof, &public_inputs)? {
+        anyhow::bail!(
+            "the proof {} doesn't verify with {}: run `xark prove` again",
+            proof_path.display(),
+            vk_path.display()
         );
     }
 

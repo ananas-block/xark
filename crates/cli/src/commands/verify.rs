@@ -54,6 +54,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             vk_path.display()
         )
     })?;
+    super::ensure_key_matches_circuit(&vk_path, &project.circuit_xbc())?;
     let proof = ProofBundle::read_proof(&proof_path)
         .with_context(|| format!("reading proof {}", proof_path.display()))?;
 
