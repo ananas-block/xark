@@ -170,8 +170,8 @@ pub enum VerifierError {
     /// A batch for [`verify_groth16_batch`] is empty, or not a whole number of
     /// `proof || public_inputs` entries of `entry` bytes each.
     BatchLength { entry: usize, actual: usize },
-    /// The `scratch` buffer given to [`verify_groth16_batch`] is smaller than
-    /// [`batch_scratch_len`] for the batch.
+    /// The `scratch` given to [`verify_groth16_batch`] holds fewer than `M + 3`
+    /// pairing operands for a batch of `M` proofs.
     ScratchTooSmall { expected: usize, actual: usize },
     /// The BN254 backend (an `alt_bn128` syscall, or its host reference)
     /// rejected an operand or pairing input.
@@ -221,7 +221,7 @@ impl core::fmt::Display for VerifierError {
             ),
             VerifierError::ScratchTooSmall { expected, actual } => write!(
                 f,
-                "batch scratch buffer must be at least {expected} B; got {actual}"
+                "batch scratch must hold at least {expected} pairing operands; got {actual}"
             ),
             VerifierError::Syscall => f.write_str("alt_bn128 backend rejected an operand"),
         }
@@ -632,12 +632,6 @@ pub fn verify_proof_only_strict(
 /// Domain tag for the batch weights' hash.
 const BATCH_DOMAIN: &[u8] = b"xark-groth16-batch-v1";
 
-/// The bytes of `scratch` [`verify_groth16_batch`] needs for `n` proofs: one
-/// 192-byte pairing operand per proof, plus three.
-pub const fn batch_scratch_len(n: usize) -> usize {
-    (n + 3) * PAIRING_PAIR_BYTES
-}
-
 /// SHA-256 of the concatenated `vals` (the `sol_sha256` syscall on-chain).
 #[inline(always)]
 fn batch_hash(vals: &[&[u8]]) -> [u8; 32] {
@@ -682,9 +676,14 @@ fn add_mod_r(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
 /// Verify several proofs against one VK with a single pairing call: `M + 3`
 /// pairs instead of `4M`. `batch` is `M ≥ 1` entries, each a proof followed by
 /// its public inputs — the `instruction_data` [`verify_proof_only`] takes,
-/// repeated. `scratch` holds the pairing operands; it must be at least
-/// [`batch_scratch_len`]`(M)` bytes, and can be on the heap, in account data or
-/// on the stack.
+/// repeated. `scratch` holds the pairing operands, at least `M + 3` of them (one
+/// per proof, plus three): on the stack for a small batch (192 bytes each; a Solana stack
+/// frame is 4 KB, so up to about 16 proofs), or on the heap or in account data:
+///
+/// ```ignore
+/// let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 4 + 3];
+/// let ok = verify_groth16_batch(VK_BYTES, instruction_data, &mut scratch)?;
+/// ```
 ///
 /// `Ok(true)` means every proof verifies (except with probability about 2⁻²⁵² per
 /// batch an attacker tries);
@@ -698,7 +697,7 @@ fn add_mod_r(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
 pub fn verify_groth16_batch(
     vk_bytes: &[u8],
     batch: &[u8],
-    scratch: &mut [u8],
+    scratch: &mut [[u8; PAIRING_PAIR_BYTES]],
 ) -> Result<bool, VerifierError> {
     if !coords_canonical(vk_bytes) {
         return Err(VerifierError::NonCanonicalCoordinate);
@@ -713,7 +712,7 @@ pub fn verify_groth16_batch(
         });
     }
     let n = batch.len() / entry;
-    let need = batch_scratch_len(n);
+    let need = n + 3;
     if scratch.len() < need {
         return Err(VerifierError::ScratchTooSmall {
             expected: need,
@@ -751,7 +750,7 @@ pub fn verify_groth16_batch(
             c_acc = g1_add(c_acc, g1_scalar_mul(c, &r)?)?;
             g1_scalar_mul(a, &r)?
         };
-        let slot = &mut scratch[i * PAIRING_PAIR_BYTES..(i + 1) * PAIRING_PAIR_BYTES];
+        let slot = &mut scratch[i];
         slot[..G1_BYTES].copy_from_slice(&a.0);
         slot[G1_BYTES..].copy_from_slice(&proof[G1_BYTES..G1_BYTES + G2_BYTES]); // B
     }
@@ -764,11 +763,11 @@ pub fn verify_groth16_batch(
         .into_iter()
         .enumerate()
     {
-        let slot = &mut scratch[(n + k) * PAIRING_PAIR_BYTES..(n + k + 1) * PAIRING_PAIR_BYTES];
+        let slot = &mut scratch[n + k];
         slot[..G1_BYTES].copy_from_slice(&g1.0);
         slot[G1_BYTES..].copy_from_slice(&g2.0);
     }
-    let result = g16_pairing_bytes(&scratch[..need])?;
+    let result = g16_pairing_bytes(scratch[..need].as_flattened())?;
     Ok(result[0] == 1 && result[1..].iter().all(|b| *b == 0))
 }
 
@@ -1508,7 +1507,7 @@ mod proofs {
     #[kani::stub(super::batch_hash, stub_batch_hash)]
     fn batch_empty_rejected() {
         let vk = [0u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES]; // canonical
-        let mut scratch = [0u8; batch_scratch_len(1)];
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 1 + 3];
         let r = verify_groth16_batch(&vk, &[], &mut scratch);
         assert!(matches!(r, Err(VerifierError::BatchLength { .. })));
     }
@@ -1523,12 +1522,12 @@ mod proofs {
     fn batch_partial_entry_rejected() {
         let vk = [0u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES];
         let batch: [u8; PROOF_BYTES + FR_BYTES + 1] = kani::any();
-        let mut scratch = [0u8; batch_scratch_len(2)];
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3];
         let r = verify_groth16_batch(&vk, &batch, &mut scratch);
         assert!(matches!(r, Err(VerifierError::BatchLength { .. })));
     }
 
-    /// **Fail-closed: a scratch buffer under `batch_scratch_len(M)` is
+    /// **Fail-closed: a scratch under `M + 3` pairing operands is
     /// `Err(ScratchTooSmall)`**, before anything is written to it.
     #[kani::proof]
     #[kani::stub(super::g1_scalar_mul, stub_g1_scalar_mul)]
@@ -1538,7 +1537,7 @@ mod proofs {
     fn batch_scratch_too_small_rejected() {
         let vk = [0u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES];
         let batch: [u8; 2 * (PROOF_BYTES + FR_BYTES)] = kani::any();
-        let mut scratch = [0u8; batch_scratch_len(2) - 1];
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3 - 1];
         let r = verify_groth16_batch(&vk, &batch, &mut scratch);
         assert!(matches!(r, Err(VerifierError::ScratchTooSmall { .. })));
     }
@@ -1554,7 +1553,7 @@ mod proofs {
     fn totality_verify_groth16_batch() {
         let vk: [u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES] = kani::any();
         let batch: [u8; 2 * (PROOF_BYTES + FR_BYTES)] = kani::any();
-        let mut scratch = [0u8; batch_scratch_len(2)];
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3];
         let _ = verify_groth16_batch(&vk, &batch, &mut scratch);
     }
 

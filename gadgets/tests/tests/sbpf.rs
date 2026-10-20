@@ -14,7 +14,7 @@
 
 use svm_unit_test::svm_test;
 use xark_tests::{
-    batch_scratch_len, fixtures, verify_groth16_batch, verify_proof_only, verify_proof_only_strict,
+    PAIRING_PAIR_BYTES, fixtures, verify_groth16_batch, verify_proof_only, verify_proof_only_strict,
 };
 
 /// Dynamic byte path: `verify_proof_only(vk_bytes, instruction_data)`.
@@ -281,35 +281,35 @@ const ENTRY: usize = 256 + 32;
 
 #[svm_test]
 fn batch_1() {
-    let mut scratch = [0u8; batch_scratch_len(1)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 1 + 3];
     let batch = &fixtures::ARITHMETIC_SQUARE_BATCH16[..ENTRY];
     assert!(verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, batch, &mut scratch).unwrap());
 }
 
 #[svm_test]
 fn batch_2() {
-    let mut scratch = [0u8; batch_scratch_len(2)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3];
     let batch = &fixtures::ARITHMETIC_SQUARE_BATCH16[..2 * ENTRY];
     assert!(verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, batch, &mut scratch).unwrap());
 }
 
 #[svm_test]
 fn batch_4() {
-    let mut scratch = [0u8; batch_scratch_len(4)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 4 + 3];
     let batch = &fixtures::ARITHMETIC_SQUARE_BATCH16[..4 * ENTRY];
     assert!(verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, batch, &mut scratch).unwrap());
 }
 
 #[svm_test]
 fn batch_8() {
-    let mut scratch = [0u8; batch_scratch_len(8)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 8 + 3];
     let batch = &fixtures::ARITHMETIC_SQUARE_BATCH16[..8 * ENTRY];
     assert!(verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, batch, &mut scratch).unwrap());
 }
 
 #[svm_test]
 fn batch_16() {
-    let mut scratch = [0u8; batch_scratch_len(16)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 16 + 3];
     let batch = fixtures::ARITHMETIC_SQUARE_BATCH16;
     assert!(verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, batch, &mut scratch).unwrap());
 }
@@ -320,7 +320,7 @@ fn batch_rejects_a_bad_proof() {
     let mut batch = [0u8; 4 * ENTRY];
     batch.copy_from_slice(&fixtures::ARITHMETIC_SQUARE_BATCH16[..4 * ENTRY]);
     batch[3 * ENTRY + 256] ^= 1;
-    let mut scratch = [0u8; batch_scratch_len(4)];
+    let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 4 + 3];
     assert!(
         !verify_groth16_batch(fixtures::ARITHMETIC_SQUARE_VK_LE, &batch, &mut scratch).unwrap()
     );

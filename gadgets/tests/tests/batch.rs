@@ -11,7 +11,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use xark_tests::{
-    PROOF_BYTES, VerifierError, batch_scratch_len, solana_nostd_alt_bn128::pairing_bytes,
+    PAIRING_PAIR_BYTES, PROOF_BYTES, VerifierError, solana_nostd_alt_bn128::pairing_bytes,
     verify_groth16_batch, verify_proof_only,
 };
 
@@ -66,7 +66,7 @@ fn valid_batch(name: &str, n: usize, seed: u64) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn batch_verify(vk: &[u8], batch: &[u8], n: usize) -> Result<bool, VerifierError> {
-    verify_groth16_batch(vk, batch, &mut vec![0u8; batch_scratch_len(n)])
+    verify_groth16_batch(vk, batch, &mut vec![[0u8; PAIRING_PAIR_BYTES]; n + 3])
 }
 
 #[test]
@@ -162,12 +162,12 @@ fn malformed_batches_are_rejected() {
             actual: batch.len() - 1
         })
     );
-    let mut small = vec![0u8; batch_scratch_len(2) - 1];
+    let mut small = vec![[0u8; PAIRING_PAIR_BYTES]; 2 + 3 - 1];
     assert_eq!(
         verify_groth16_batch(&vk, &batch, &mut small),
         Err(VerifierError::ScratchTooSmall {
-            expected: batch_scratch_len(2),
-            actual: batch_scratch_len(2) - 1
+            expected: 2 + 3,
+            actual: 2 + 3 - 1
         })
     );
     // Strict: a masked top bit in a proof coordinate, or in the VK.

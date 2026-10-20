@@ -33,16 +33,21 @@ authenticate the VK (e.g. pin its hash).
 `verify_groth16_batch(vk_bytes, batch, scratch)` checks several proofs of one
 circuit (one VK) with a single pairing call: `M + 3` pairs instead of `4M`.
 `batch` is the proofs' instruction data back to back (`proof || public_inputs`
-each), and `scratch` is a buffer of at least `batch_scratch_len(M)` bytes
-(`192 · (M + 3)`), on the stack, the heap or in account data.
+each), and `scratch` holds the `M + 3` pairing operands (192 bytes each). For a small batch it fits on the stack (a Solana stack frame
+is 4 KB, so up to about 16 proofs); otherwise use the heap or account data:
+
+```rust
+let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 4 + 3];
+let ok = verify_groth16_batch(VK_BYTES, instruction_data, &mut scratch)?;
+```
 
 Measured on chain (Mollusk), proofs with one public input:
 
 | proofs | batched | one at a time |
 |---|---|---|
-| 1 | 77,579 CU | 77,043 CU |
-| 4 | 168,241 CU | 309,633 CU |
-| 16 | 513,361 CU | ~1,240,000 CU |
+| 1 | 77,560 CU | 77,043 CU |
+| 4 | 168,199 CU | 309,633 CU |
+| 16 | 513,223 CU | ~1,240,000 CU |
 
 Each extra proof costs about 29k CU instead of 77k, so a 1.4M CU transaction
 fits about 47 proofs instead of 18. A `false` result says some proof in the
