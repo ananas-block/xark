@@ -269,7 +269,7 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
 ///
 /// One-shot circuit testing: build the crate (`xark build`) so its
 /// `target/xark/<pkg>/` artifacts exist, then run `cargo test` in the crate so
-/// the in-crate `xark_prover::circuit(..).check(..)` tests can load them.
+/// the in-crate `cargo test` circuit tests can load them.
 pub fn cmd_test(args: &[String]) -> i32 {
     // `args[0]` is the crate dir; the rest goes to `cargo test` verbatim, so
     // `xark test . -- --include-ignored` is `cargo test -- --include-ignored`.
@@ -533,7 +533,7 @@ pub fn cmd_init(args: &[String]) -> i32 {
         return 2;
     }
 
-    // Pin the published `xark`/`xark-prover` deps to this CLI's own major.minor
+    // Pin the published `xark` dep to this CLI's own major.minor
     // (the whole workspace releases together), so the scaffold never suggests a
     // version older than the CLI you ran it with.
     let full = env!("CARGO_PKG_VERSION");
@@ -549,14 +549,6 @@ pub fn cmd_init(args: &[String]) -> i32 {
          xark = {{ version = \"{ver}\", default-features = false }}\n\
          # From git:               xark = {{ git = \"https://github.com/blueshift-gg/xark\", default-features = false }}\n\
          # From a local checkout:  xark = {{ path = \"../xark/crates/lang\", default-features = false }}\n\n\
-         # `xark-prover` powers the in-crate `cargo test` circuit tests below. It's a\n\
-         # host-only dependency rather than a dev-dependency because the code\n\
-         # `#[circuit]` generates uses it outside tests too; `cfg(not(xark))` keeps it\n\
-         # out of the circuit build.\n\
-         [target.'cfg(not(xark))'.dependencies]\n\
-         xark-prover = \"{ver}\"\n\
-         # From git:               xark-prover = {{ git = \"https://github.com/blueshift-gg/xark\" }}\n\
-         # From a local checkout:  xark-prover = {{ path = \"../xark/crates/prover\" }}\n\n\
          # `xark` is set only by the circuit build; declare it so rustc's `unexpected_cfgs`\n\
          # lint (1.80+) stays quiet.\n\
          [lints.rust]\n\
@@ -710,7 +702,7 @@ fn ident_of(name: &str) -> String {
 /// block ([`tests_template`]) is appended with the crate's own name filled in.
 ///
 /// `no_std` applies to the real circuit build (via `xark build`) but is dropped
-/// under `cargo test` so the `xark-prover` test harness (which uses `std`) can
+/// under `cargo test` so the host-side prover (which uses `std`) can
 /// link.
 const LIB_TEMPLATE: &str = "\
 #![cfg_attr(xark, no_std)]

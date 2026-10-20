@@ -21,6 +21,10 @@ gadgets now check more:
 
 ### Changed
 
+- **One dependency per circuit crate.** `xark` re-exports the prover as
+  `xark::prover` (host builds only), and `#[circuit]`/the derives use it, so a
+  circuit crate no longer needs `xark-prover` (`xark init` no longer adds it,
+  and the examples and gadgets dropped it). Use `xark::prover::circuit(..)`.
 - **Typed host inputs.** The validator `#[circuit]` generates (and its
   `<Fn>Inputs` struct) takes typed values instead of strings: a `Field` takes
   anything that converts (`cube(3, 27)`, an `ark_bn254::Fr`, a decimal / `0x`-hex

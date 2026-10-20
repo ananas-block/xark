@@ -69,7 +69,7 @@ fn honest() -> GrumpkinIvcInputs {
 
 #[test]
 fn ivc_2step_verifies() {
-    let circuit = xark_prover::circuit("grumpkin_ivc");
+    let circuit = xark::prover::circuit("grumpkin_ivc");
     // satisfiable on the honest vector, with no under-constrained (forgeable)
     // witness variable.
     circuit.check_constrained(honest()).expect("grumpkin_ivc must verify the honest 2-step run");
@@ -94,7 +94,7 @@ fn report_constraint_count() {
 #[test]
 fn groth16_setup_prove_verify() {
     // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
-    xark_prover::circuit("grumpkin_ivc")
+    xark::prover::circuit("grumpkin_ivc")
         .prove_dev(honest())
         .expect("the Groth16 proof must verify");
 }

@@ -4,11 +4,11 @@
 //! structural flatten produces.
 #![cfg(not(xark))]
 
-use xark_prover::NativeInput;
+use xark::prover::NativeInput;
 use xark_secp256k1::{Point, Scalar, Signature};
 
 /// Leaves with decimal values, for comparison.
-fn dec(leaves: Vec<(String, xark_prover::Fr)>) -> Vec<(String, String)> {
+fn dec(leaves: Vec<(String, xark::prover::Fr)>) -> Vec<(String, String)> {
     leaves
         .into_iter()
         .map(|(n, v)| (n, v.to_string()))

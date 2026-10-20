@@ -260,8 +260,8 @@ mod host {
     use std::vec::Vec;
     use xark::Field;
 
-    impl xark_prover::NativeInput for Affine {
-        fn leaves(value: &Affine, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+    impl xark::prover::NativeInput for Affine {
+        fn leaves(value: &Affine, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
             std::vec![
                 (std::format!("{prefix}.x"), value.x.into()),
                 (std::format!("{prefix}.y"), value.y.into()),

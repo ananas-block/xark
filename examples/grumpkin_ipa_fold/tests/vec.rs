@@ -61,7 +61,7 @@ fn honest() -> GrumpkinIpaFoldInputs {
 
 #[test]
 fn ipa_fold_verifies() {
-    let circuit = xark_prover::circuit("grumpkin_ipa_fold");
+    let circuit = xark::prover::circuit("grumpkin_ipa_fold");
     // satisfiable on the honest vector, with no under-constrained (forgeable)
     // witness variable.
     circuit.check_constrained(honest()).expect("grumpkin_ipa_fold must verify the honest IPA transcript");
@@ -83,7 +83,7 @@ fn report_constraint_count() {
 #[test]
 fn groth16_setup_prove_verify() {
     // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
-    xark_prover::circuit("grumpkin_ipa_fold")
+    xark::prover::circuit("grumpkin_ipa_fold")
         .prove_dev(honest())
         .expect("the Groth16 proof must verify");
 }

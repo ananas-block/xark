@@ -12,8 +12,5 @@ xark = { path = "../../crates/lang", version = "0.3.0", default-features = false
 
 xark-poseidon2 = { path = "../../gadgets/xark-poseidon2", version = "0.3.0" }
 
-[target.'cfg(not(xark))'.dependencies]
-xark-prover = { path = "../../crates/prover", version = "0.3.0" }
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }

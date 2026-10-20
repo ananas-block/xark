@@ -4669,6 +4669,7 @@ dependencies = [
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
  "xark-macros",
+ "xark-prover",
 ]
 
 [[package]]
@@ -4709,7 +4710,6 @@ version = "0.3.0"
 dependencies = [
  "xark",
  "xark-ir",
- "xark-prover",
  "xark-test-harness",
 ]
 
@@ -4781,7 +4781,6 @@ dependencies = [
  "xark-bignum",
  "xark-curve",
  "xark-ir",
- "xark-prover",
  "xark-test-harness",
 ]
 
@@ -4826,7 +4825,6 @@ version = "0.3.0"
 dependencies = [
  "xark",
  "xark-ir",
- "xark-prover",
  "xark-test-harness",
 ]
 
@@ -4835,7 +4833,6 @@ name = "xark-hash"
 version = "0.3.0"
 dependencies = [
  "xark",
- "xark-prover",
 ]
 
 [[package]]
@@ -4942,7 +4939,6 @@ dependencies = [
  "xark-bignum",
  "xark-curve",
  "xark-ir",
- "xark-prover",
  "xark-test-harness",
 ]
 
@@ -4957,7 +4953,6 @@ dependencies = [
  "xark-bignum",
  "xark-curve",
  "xark-ir",
- "xark-prover",
  "xark-test-harness",
 ]
 

@@ -60,7 +60,8 @@ Inputs can be grouped into structs with `#[derive(CircuitInput)]`, including
 gadget types: `examples/grumpkin_ivc` takes a few `Instance { cw, ce, u, x }`
 values instead of twenty separate parameters, and `to_fields()` hashes one in
 a single call. The generated `<Fn>Inputs` struct holds the same values for
-`xark_prover::circuit(..).check(..)`, `.prove(..)` and friends.
+`xark::prover::circuit(..).check(..)`, `.prove(..)` and friends. A circuit
+crate needs only the `xark` dependency.
 
 ## As a toolchain (CLI)
 

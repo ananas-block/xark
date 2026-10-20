@@ -251,11 +251,10 @@ macro_rules! weierstrass {
     };
 }
 
-/// Emit host-side `NativeInput` impls for the macro-generated `Fq`/`Point`
-/// (3 × `bits`-bit limbs, default 86). Shared by `weierstrass!` and `edwards!`: a
-/// scalar is 32 big-endian bytes, a point is the compact uncompressed 64-byte
-/// `x ‖ y` form. Requires the caller to depend (host-gated) on `num-bigint` and
-/// `xark-prover`.
+/// Emit the host side of the macro-generated `Point` (3 × `bits`-bit limbs,
+/// default 86) and the scalar helpers. Shared by `weierstrass!` and `edwards!`: a
+/// point comes from the uncompressed `x ‖ y` (64 bytes, or SEC1's 65). Requires
+/// the caller to depend (host-gated) on `num-bigint`.
 #[macro_export]
 macro_rules! curve_host_inputs {
     ($scalar:literal) => {
@@ -285,13 +284,13 @@ macro_rules! curve_host_inputs {
                 out
             }
 
-            impl ::xark_prover::NativeInput for Point {
-                fn leaves(value: &Point, prefix: &str) -> Vec<(String, ::xark_prover::Fr)> {
-                    let mut out = <Fp as ::xark_prover::NativeInput>::leaves(
+            impl ::xark::prover::NativeInput for Point {
+                fn leaves(value: &Point, prefix: &str) -> Vec<(String, ::xark::prover::Fr)> {
+                    let mut out = <Fp as ::xark::prover::NativeInput>::leaves(
                         &value.x,
                         &format!("{prefix}.x"),
                     );
-                    out.extend(<Fp as ::xark_prover::NativeInput>::leaves(
+                    out.extend(<Fp as ::xark::prover::NativeInput>::leaves(
                         &value.y,
                         &format!("{prefix}.y"),
                     ));

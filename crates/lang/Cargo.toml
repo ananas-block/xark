@@ -27,6 +27,9 @@ xark-macros = { path = "../macros", version = "0.3.0" }
 [target.'cfg(not(xark))'.dependencies]
 ark-bn254 = { version = "0.6", default-features = false, features = ["scalar_field"] }
 ark-ff = { version = "0.6", default-features = false }
+# The host-side prover (`xark::prover`): what `#[circuit]`'s validator and the
+# input traits use, so a circuit crate needs no other xark dependency.
+xark-prover = { path = "../prover", version = "0.3.0" }
 
 [dev-dependencies]
 xark-test-harness = { path = "../test-harness", version = "0.3.0" }

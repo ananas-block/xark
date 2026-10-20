@@ -26,7 +26,7 @@ fn inputs(p: Pt, q: Pt, r: Pt) -> GrumpkinCompleteAddInputs {
 
 #[test]
 fn complete_add_all_cases() {
-    let circuit = xark_prover::circuit("grumpkin_complete_add");
+    let circuit = xark::prover::circuit("grumpkin_complete_add");
     let cases: [(&str, Pt, Pt, Pt); 6] = [
         ("P + 0 = P", P, ZERO, P),
         ("0 + Q = Q", ZERO, Q, Q),

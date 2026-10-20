@@ -25,7 +25,6 @@ xark-curve = { path = "../xark-curve", version = "0.3.0" }
 # build (tests, downstream provers) pulls them in with no feature flag.
 [target.'cfg(not(xark))'.dependencies]
 num-bigint = "0.4"
-xark-prover = { path = "../../crates/prover", version = "0.3.0" }
 
 [dev-dependencies]
 k256 = "0.13"

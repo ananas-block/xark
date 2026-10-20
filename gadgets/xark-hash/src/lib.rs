@@ -126,8 +126,8 @@ const _: () = {
     extern crate std;
     use std::string::String;
     use std::vec::Vec;
-    impl xark_prover::NativeInput for Hash {
-        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+    impl xark::prover::NativeInput for Hash {
+        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
             std::vec![
                 (std::format!("{prefix}.hi"), value.hi.into()),
                 (std::format!("{prefix}.lo"), value.lo.into()),

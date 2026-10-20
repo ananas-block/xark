@@ -69,6 +69,10 @@ pub use crate::lang::{
 pub use crate::lang::RequireEqCircuit;
 // A circuit input type's `Field` leaves: derived structs and gadget input types.
 pub use crate::lang::ToFields;
+/// The host-side prover: load a built circuit and `check` / `prove` inputs
+/// against it (`xark::prover::circuit("name").prove(inputs)`). Host builds only.
+#[cfg(not(xark))]
+pub use xark_prover as prover;
 // Host-side helpers for building input values (gadgets' `From` impls, derives).
 #[cfg(not(xark))]
 #[doc(hidden)]

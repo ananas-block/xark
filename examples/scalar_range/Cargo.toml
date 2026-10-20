@@ -13,8 +13,5 @@ xark-secp256k1 = { path = "../../gadgets/xark-secp256k1", version = "0.3.0" }
 
 [workspace]
 
-[target.'cfg(not(xark))'.dependencies]
-xark-prover = { path = "../../crates/prover", version = "0.3.0" }
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }

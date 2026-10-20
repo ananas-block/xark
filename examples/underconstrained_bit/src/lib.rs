@@ -39,7 +39,7 @@ mod tests {
             x: 5.into(),
             out: 5.into(),
         };
-        let err = xark_prover::circuit("underconstrained_bit")
+        let err = xark::prover::circuit("underconstrained_bit")
             .check_constrained(inputs)
             .expect_err("`b` is two-valued");
         assert!(err.to_string().contains("under-constrained"), "{err}");

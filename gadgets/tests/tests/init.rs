@@ -20,21 +20,17 @@ fn init_then_test() {
     let toml = std::fs::read_to_string(&manifest).unwrap();
     // The scaffold pins major.minor.
     let ver = env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0;
-    let patched = toml
-        .replace(
-            &format!("xark = {{ version = \"{ver}\","),
-            &format!(
-                "xark = {{ path = \"{}\",",
-                root.join("crates/lang").display()
-            ),
-        )
-        .replace(
-            &format!("xark-prover = \"{ver}\""),
-            &format!(
-                "xark-prover = {{ path = \"{}\" }}",
-                root.join("crates/prover").display()
-            ),
-        );
+    let patched = toml.replace(
+        &format!("xark = {{ version = \"{ver}\","),
+        &format!(
+            "xark = {{ path = \"{}\",",
+            root.join("crates/lang").display()
+        ),
+    );
+    assert!(
+        !toml.contains("xark-prover"),
+        "a circuit crate needs only `xark`:\n{toml}"
+    );
     assert!(
         toml.contains("name = \"demo\""),
         "crate not named after the directory:\n{toml}"

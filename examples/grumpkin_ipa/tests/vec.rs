@@ -40,7 +40,7 @@ fn honest() -> GrumpkinIpaInputs {
 
 #[test]
 fn deferred_msm_accumulator_verifies() {
-    let circuit = xark_prover::circuit("grumpkin_ipa");
+    let circuit = xark::prover::circuit("grumpkin_ipa");
     // satisfiable on the honest vector, with no under-constrained (forgeable)
     // witness variable.
     circuit.check_constrained(honest()).expect("grumpkin_ipa must verify on the reference accumulator vector");
@@ -63,7 +63,7 @@ fn report_constraint_count() {
 #[test]
 fn groth16_setup_prove_verify() {
     // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
-    xark_prover::circuit("grumpkin_ipa")
+    xark::prover::circuit("grumpkin_ipa")
         .prove_dev(honest())
         .expect("the Groth16 proof must verify");
 }

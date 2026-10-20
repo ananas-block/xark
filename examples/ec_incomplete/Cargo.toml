@@ -15,12 +15,6 @@ xark-secp256k1 = { path = "../../gadgets/xark-secp256k1", version = "0.3.0" }
 xark-secp256k1 = { path = "../../gadgets/xark-secp256k1", version = "0.3.0" }
 k256 = "0.13"
 
-[target.'cfg(not(xark))'.dependencies]
-# Host-only prover so downstream crates (and this crate's tests) can call
-# the generated native validator; gated on `cfg(not(xark))` so a circuit
-# build stays lean `no_std` with no feature flag.
-xark-prover = { path = "../../crates/prover", version = "0.3.0" }
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }
 

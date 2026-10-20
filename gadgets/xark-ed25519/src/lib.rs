@@ -417,8 +417,8 @@ mod host {
         (x, y)
     }
 
-    impl xark_prover::NativeInput for PointL {
-        fn leaves(value: &PointL, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+    impl xark::prover::NativeInput for PointL {
+        fn leaves(value: &PointL, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
             let mut out = xark::host::limbs_leaves(&value.x.limbs, &format!("{prefix}.x"));
             out.extend(xark::host::limbs_leaves(
                 &value.y.limbs,

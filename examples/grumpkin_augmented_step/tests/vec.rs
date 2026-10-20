@@ -57,7 +57,7 @@ fn honest() -> GrumpkinAugmentedStepInputs {
 
 #[test]
 fn augmented_step_verifies() {
-    let circuit = xark_prover::circuit("grumpkin_augmented_step");
+    let circuit = xark::prover::circuit("grumpkin_augmented_step");
     // satisfiable on the honest vector, with no under-constrained (forgeable)
     // witness variable.
     circuit.check_constrained(honest()).expect("augmented step must verify the honest reference");
@@ -79,7 +79,7 @@ fn report_constraint_count() {
 #[test]
 fn groth16_setup_prove_verify() {
     // solve → dev-mode Groth16 setup → prove → verify, on the built circuit.
-    xark_prover::circuit("grumpkin_augmented_step")
+    xark::prover::circuit("grumpkin_augmented_step")
         .prove_dev(honest())
         .expect("the Groth16 proof must verify");
 }

@@ -26,10 +26,10 @@ use xark::require_eq;
 #[doc(hidden)]
 pub use xark as __xark;
 /// Host-only re-export so the [`fp!`] macro can generate a decimal `NativeInput`
-/// without the caller depending on `xark_prover` by name.
+/// without the caller depending on the prover by name.
 #[cfg(not(xark))]
 #[doc(hidden)]
-pub use xark_prover as __prover;
+pub use xark::prover as __prover;
 
 // Width-generic non-native modular arithmetic (`Bignum<LIMBS, BITS>`).
 
@@ -81,8 +81,8 @@ const _: () = {
     extern crate std;
     use std::string::String;
     use std::vec::Vec;
-    impl<const LIMBS: usize, const BITS: usize> xark_prover::NativeInput for Bignum<LIMBS, BITS> {
-        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+    impl<const LIMBS: usize, const BITS: usize> xark::prover::NativeInput for Bignum<LIMBS, BITS> {
+        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark::prover::Fr)> {
             xark::host::limbs_leaves(&value.limbs, prefix)
         }
     }
