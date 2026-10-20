@@ -28,6 +28,32 @@ that updates. Or call `verify_groth16(vk_bytes, proof_bytes, public_inputs)`
 directly when the VK is loaded dynamically — in that case the program **must**
 authenticate the VK (e.g. pin its hash).
 
+## Batches
+
+`verify_groth16_batch(vk_bytes, batch, scratch)` checks several proofs of one
+circuit (one VK) with a single pairing call: `M + 3` pairs instead of `4M`.
+`batch` is the proofs' instruction data back to back (`proof || public_inputs`
+each), and `scratch` is a buffer of at least `batch_scratch_len(M)` bytes
+(`192 · (M + 3)`), on the stack, the heap or in account data.
+
+Measured on chain (Mollusk), proofs with one public input:
+
+| proofs | batched | one at a time |
+|---|---|---|
+| 1 | 77,617 CU | 77,043 CU |
+| 4 | 167,879 CU | 309,633 CU |
+| 16 | 510,841 CU | ~1,240,000 CU |
+
+Each extra proof costs about 29k CU instead of 77k, so a 1.4M CU transaction
+fits about 47 proofs instead of 18. A `false` result says some proof in the
+batch is invalid, not which one: verify them one by one to find it.
+
+Each proof's check is weighted by a 128-bit number taken from a SHA-256 of the
+VK and the whole batch, so invalid proofs can't be built to cancel each other
+out (a batch with an invalid proof passes with probability about 2⁻¹²⁷). The
+batch is always strict: non-canonical coordinates are rejected, so the hash
+sees each point's one encoding.
+
 ## Wire format (little-endian, `x || y`)
 
 ```

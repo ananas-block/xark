@@ -74,7 +74,7 @@ jobs:
           cargo kani setup
 
       - name: Run each harness in its own cargo-kani process
-        # Why per-harness: passing all 25 harnesses to one cargo-kani
+        # Why per-harness: passing all 30 harnesses to one cargo-kani
         # invocation OOM-kills `ubuntu-latest` (7 GB) at ~10 harnesses
         # because cargo-kani driver state grows monotonically. Sharding
         # via `--harness` filters hit a Kani 0.67 bug where multi-flag
@@ -111,6 +111,11 @@ jobs:
             verifier::proofs::totality_verify_groth16
             verifier::proofs::totality_verify_proof_only
             verifier::proofs::small_scalar_is_exact_and_budgeted
+            verifier::proofs::batch_empty_rejected
+            verifier::proofs::batch_partial_entry_rejected
+            verifier::proofs::batch_scratch_too_small_rejected
+            verifier::proofs::totality_verify_groth16_batch
+            verifier::proofs::add_le_is_exact
           )
           failed=()
           for h in "${harnesses[@]}"; do

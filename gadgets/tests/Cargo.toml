@@ -22,7 +22,7 @@ xark-verifier = { path = "../../crates/verifier", version = "0.3.0" }
 # can reach the BN254 group-op API. Already pulled in transitively via
 # `xark-verifier`; promoting to a top-level dep keeps the import path stable
 # and makes the SBF cdylib's resolver pick it up.
-solana-nostd-alt-bn128 = "0.1.1"
+solana-nostd-alt-bn128 = "0.1.3"
 
 [dev-dependencies]
 xark-backend = { path = "../../crates/backend", version = "0.3.0", features = ["test-deterministic"] }

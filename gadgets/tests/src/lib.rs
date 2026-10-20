@@ -73,6 +73,11 @@ pub mod fixtures {
     pub const ARITHMETIC_SQUARE_INSTRUCTION_DATA: &[u8] =
         include_bytes!("../fixtures/groth16/arithmetic_square/instruction_data.bin");
 
+    /// 16 distinct valid `arithmetic_square` proofs, each `proof || input`
+    /// (288 B): the batch for `verify_groth16_batch` (see `tests/batch.rs`).
+    pub const ARITHMETIC_SQUARE_BATCH16: &[u8] =
+        include_bytes!("../fixtures/groth16/arithmetic_square/batch16.bin");
+
     /// Generate the typed fixture consts (`<NAME>_VK: Verifier<N>`,
     /// `<NAME>_PROOF: Proof`, `<NAME>_INPUTS: [[u8; 32]; N]`) for one
     /// committed circuit. The `from_le_bytes` / `parse_public_inputs` const
