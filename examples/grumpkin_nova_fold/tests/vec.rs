@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use grumpkin_nova_fold::GrumpkinNovaFoldInputs;
+use xark_grumpkin::Instance;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
@@ -33,25 +34,22 @@ const CEY: &str = "6279653759954346604701321765885825095226249735961974659357923
 const U: &str = "320783020589613664432541343672636501592";
 const X: &str = "1817770450007810765117734280811606842328";
 
-fn pt(x: &str, y: &str) -> [String; 2] {
-    [x.into(), y.into()]
+/// An instance from its commitments' coordinates and `u`, `x`.
+fn inst(cw: (&str, &str), ce: (&str, &str), u: &str, x: &str) -> Instance {
+    Instance {
+        cw: cw.into(),
+        ce: ce.into(),
+        u: u.into(),
+        x: x.into(),
+    }
 }
 
 fn honest() -> GrumpkinNovaFoldInputs {
     GrumpkinNovaFoldInputs {
-        cw1: pt(CW1X, CW1Y),
-        ce1: pt(CE1X, CE1Y),
-        cw2: pt(CW2X, CW2Y),
-        ce2: pt(CE2X, CE2Y),
-        ct: pt(CTX, CTY),
-        u1: U1.into(),
-        x1: X1.into(),
-        u2: U2.into(),
-        x2: X2.into(),
-        cw: pt(CWX, CWY),
-        ce: pt(CEX, CEY),
-        u: U.into(),
-        x: X.into(),
+        a: inst((CW1X, CW1Y), (CE1X, CE1Y), U1, X1),
+        b: inst((CW2X, CW2Y), (CE2X, CE2Y), U2, X2),
+        t: (CTX, CTY).into(),
+        folded: inst((CWX, CWY), (CEX, CEY), U, X),
     }
 }
 
@@ -63,7 +61,7 @@ fn nova_fold_verifies() {
     circuit.check_constrained(honest()).expect("grumpkin_nova_fold must verify the honest fold");
 
     let mut bad = honest();
-    bad.cw[0] = "123".into();
+    bad.folded.cw.x = 123.into();
     assert!(circuit.check(bad).is_err(), "a wrong folded instance must be rejected");
 }
 

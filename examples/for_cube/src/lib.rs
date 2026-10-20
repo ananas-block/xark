@@ -20,11 +20,11 @@ mod tests {
     #[test]
     fn accepts_valid() {
         // 3³ = 27
-        for_cube("3".into(), "27".into()).unwrap();
+        for_cube(3, 27).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(for_cube("3".into(), "28".into()).is_err());
+        assert!(for_cube(3, 28).is_err());
     }
 }

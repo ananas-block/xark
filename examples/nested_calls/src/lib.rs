@@ -24,11 +24,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        nested_calls("6".into(), "37".into()).unwrap();
+        nested_calls(6, 37).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(nested_calls("6".into(), "38".into()).is_err());
+        assert!(nested_calls(6, 38).is_err());
     }
 }

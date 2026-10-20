@@ -20,11 +20,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        mul_reuse("3".into(), "4".into(), "12".into(), "12".into()).unwrap();
+        mul_reuse(3, 4, 12, 12).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(mul_reuse("3".into(), "4".into(), "12".into(), "13".into()).is_err());
+        assert!(mul_reuse(3, 4, 12, 13).is_err());
     }
 }

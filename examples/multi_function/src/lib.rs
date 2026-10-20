@@ -19,11 +19,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        multi_function("6".into(), "36".into()).unwrap();
+        multi_function(6, 36).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(multi_function("6".into(), "37".into()).is_err());
+        assert!(multi_function(6, 37).is_err());
     }
 }

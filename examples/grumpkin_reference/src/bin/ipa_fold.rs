@@ -16,12 +16,6 @@ fn base_dec(x: &Base) -> String {
 fn scalar_dec(x: &Scalar) -> String {
     x.into_bigint().to_string()
 }
-// Grumpkin scalar (< p < 2^254) → (lo, hi) 127-bit limbs.
-fn limbs127(s: &Scalar) -> (String, String) {
-    let v = BigUint::from_bytes_le(&s.into_bigint().to_bytes_le());
-    let mask = (BigUint::from(1u8) << 127u32) - 1u8;
-    ((&v & &mask).to_string(), (&v >> 127u32).to_string())
-}
 // A Grumpkin scalar's canonical integer < 2^128, as a base-field element (for hashing).
 fn scalar_to_base(s: &Scalar) -> Base {
     Base::from(BigUint::from_bytes_le(&s.into_bigint().to_bytes_le()))
@@ -146,21 +140,13 @@ fn main() {
         println!("const R{i}X: &str = \"{}\";", base_dec(&r.x));
         println!("const R{i}Y: &str = \"{}\";", base_dec(&r.y));
         println!("const X{i}: &str = \"{}\";       // in-circuit-derived (128-bit)", scalar_dec(&xs[i]));
-        let (lo, hi) = limbs127(&xinvs[i]);
-        println!("const X{i}INV_LO: &str = \"{lo}\";");
-        println!("const X{i}INV_HI: &str = \"{hi}\";");
+        println!("const X{i}INV: &str = \"{}\";", scalar_dec(&xinvs[i]));
     }
     for (j, sj) in s.iter().enumerate() {
-        let (lo, hi) = limbs127(sj);
-        println!("const S{j}LO: &str = \"{lo}\";");
-        println!("const S{j}HI: &str = \"{hi}\";");
+        println!("const S{j}: &str = \"{}\";", scalar_dec(sj));
     }
-    let (alo, ahi) = limbs127(&a_star);
-    println!("const ASTAR_LO: &str = \"{alo}\";");
-    println!("const ASTAR_HI: &str = \"{ahi}\";");
-    let (clo, chi) = limbs127(&c);
-    println!("const C_LO: &str = \"{clo}\";");
-    println!("const C_HI: &str = \"{chi}\";");
+    println!("const ASTAR: &str = \"{}\";", scalar_dec(&a_star));
+    println!("const C: &str = \"{}\";", scalar_dec(&c));
     for (j, bj) in b.iter().enumerate() {
         println!("const B{j}: &str = \"{}\";", scalar_dec(bj));
     }

@@ -67,6 +67,12 @@ pub use crate::lang::{
 // `require_eq` dispatches through `RequireEqCircuit`, comparing scalars, fixed
 // arrays, and composite types; downstream crates impl it for their own shapes.
 pub use crate::lang::RequireEqCircuit;
+// A circuit input type's `Field` leaves: derived structs and gadget input types.
+pub use crate::lang::ToFields;
+// Host-side helpers for building input values (gadgets' `From` impls, derives).
+#[cfg(not(xark))]
+#[doc(hidden)]
+pub mod host;
 #[doc(hidden)]
 pub use crate::lang::bytes_to_fields;
 // The recognized scalar-equality intrinsic every `RequireEqCircuit` impl bottoms

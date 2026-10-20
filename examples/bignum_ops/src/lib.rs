@@ -23,11 +23,11 @@ mod tests {
     #[test]
     fn accepts_valid() {
         // (2·3 + 2 − 3) mod M = 5; low limb = 5.
-        bignum_ops("2".into(), "3".into(), "5".into()).unwrap();
+        bignum_ops(2, 3, 5).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(bignum_ops("2".into(), "3".into(), "6".into()).is_err());
+        assert!(bignum_ops(2, 3, 6).is_err());
     }
 }

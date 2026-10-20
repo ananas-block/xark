@@ -59,13 +59,13 @@ enum Fanout {
     /// `[u8; N]`: `N` byte leaves `name[0..N]`, range-checked by the compiler and
     /// converted to `[Field; N]` at the top of the body.
     ByteArray(usize),
-    /// `[Field; N]` → `[Field; N]`: `N` field leaves `name[0..N]`, native form
-    /// `[String; N]` decimals (a field value per element — hashes, limbs, …).
+    /// `[Field; N]`: `N` field leaves `name[0..N]` (hashes, limbs, …).
     FieldArray(usize),
-    /// A transparent gadget type (`Fq`, `Point`) implementing
-    /// [`xark_prover::NativeInput`]: fan-out delegates to its `leaves`, native
-    /// struct field is its `NativeInput::Native` associated type.
+    /// An input type implementing [`xark_prover::NativeInput`] (a gadget's `Fq` or
+    /// `Point`, a derived struct): fan-out delegates to its `leaves`.
     Native,
+    /// `[T; N]` of such a type: element `i` fans out under `name[i]`.
+    NativeArray(usize),
 }
 
 /// One resolved entry parameter.
@@ -74,7 +74,7 @@ struct CircuitParam {
     name: syn::Ident,
     /// `Private` / `Public`, as the author wrote it.
     wrapper: syn::Ident,
-    /// Generated `<Fn>Inputs` field type — the **native** type (`[u8; 32]`, `String`).
+    /// Generated `<Fn>Inputs` field type: the host value's type (the circuit type).
     native_ty: TokenStream2,
     /// Compiler-visible inner type (`::xark::Field`, `[::xark::Field; N]`, a gadget type).
     circuit_ty: TokenStream2,
@@ -179,11 +179,44 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
     let fn_name_lit = LitStr::new(&fn_ident.to_string(), fn_ident.span());
     // The native-typed validator replacing the entry `fn` in test/host builds: same
     // name, the entry's native parameter types in order, returning the check result.
+    //
+    // Each parameter takes what converts to its type: `impl Into<Field>` (an integer,
+    // an `ark_bn254::Fr`, a decimal / `0x`-hex string), `[T; N]` of such for a field
+    // array, `impl Into<T>` for an input type (a gadget's natural form: an Ed25519
+    // key's bytes for `PointL`). Native integers and byte arrays take exactly their
+    // type, so untyped literals still infer.
+    let host_generics: Vec<TokenStream2> = params
+        .iter()
+        .filter(|p| matches!(p.fanout, Fanout::FieldArray(_) | Fanout::NativeArray(_)))
+        .map(|p| {
+            let t = format_ident!("__T_{}", p.name);
+            let arr = &p.native_ty;
+            quote! { #t: ::core::convert::Into<<#arr as ::core::iter::IntoIterator>::Item> }
+        })
+        .collect();
     let host_params = params.iter().map(|p| {
         let (name, nty) = (&p.name, &p.native_ty);
-        quote! { #name: #nty }
+        match p.fanout {
+            Fanout::Scalar | Fanout::Native => {
+                quote! { #name: impl ::core::convert::Into<#nty> }
+            }
+            Fanout::FieldArray(n) | Fanout::NativeArray(n) => {
+                let t = format_ident!("__T_{}", name);
+                quote! { #name: [#t; #n] }
+            }
+            _ => quote! { #name: #nty },
+        }
     });
-    let host_ctor = params.iter().map(|p| &p.name);
+    let host_ctor = params.iter().map(|p| {
+        let name = &p.name;
+        match p.fanout {
+            Fanout::Scalar | Fanout::Native => quote! { #name: #name.into() },
+            Fanout::FieldArray(_) | Fanout::NativeArray(_) => {
+                quote! { #name: #name.map(::core::convert::Into::into) }
+            }
+            _ => quote! { #name },
+        }
+    });
 
     // A machine-readable description of the circuit's inputs: each input's name,
     // visibility, and type, with every `#[derive(CircuitInput)]` struct it reaches
@@ -219,6 +252,16 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
                 let cty = &p.circuit_ty;
                 quote! { <#cty as ::xark_prover::NativeInput>::schema(&mut __defs) }
             }
+            Fanout::NativeArray(n) => {
+                let cty = &p.circuit_ty;
+                quote! {
+                    ::std::format!(
+                        "{{\"array\":{{\"of\":{},\"len\":{}}}}}",
+                        <<#cty as ::core::iter::IntoIterator>::Item as ::xark_prover::NativeInput>::schema(&mut __defs),
+                        #n,
+                    )
+                }
+            }
         };
         quote! {
             ::std::format!(
@@ -240,7 +283,8 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
         /// `xark` build, where the hidden entry is what gets compiled to a circuit.
         #[cfg(not(xark))]
         #(#attrs)*
-        #vis fn #fn_ident(#(#host_params),*) -> ::core::result::Result<(), ::xark_prover::ProveError> {
+        #[allow(non_camel_case_types)]
+        #vis fn #fn_ident<#(#host_generics),*>(#(#host_params),*) -> ::core::result::Result<(), ::xark_prover::ProveError> {
             ::xark_prover::circuit(#fn_name_lit).check(#struct_name { #(#host_ctor),* })
         }
 
@@ -255,8 +299,8 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
 
         #[cfg(not(xark))]
         impl ::xark_prover::ProveInputs for #struct_name {
-            fn into_inputs(self) -> ::std::vec::Vec<(::std::string::String, ::std::string::String)> {
-                let mut out: ::std::vec::Vec<(::std::string::String, ::std::string::String)> =
+            fn into_inputs(self) -> ::std::vec::Vec<(::std::string::String, ::xark_prover::Fr)> {
+                let mut out: ::std::vec::Vec<(::std::string::String, ::xark_prover::Fr)> =
                     ::std::vec::Vec::new();
                 #(#fanouts)*
                 out
@@ -359,11 +403,10 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
     if let Type::Path(tp) = inner
         && tp.path.segments.last().is_some_and(|s| s.ident == "Field")
     {
-        // A `Field` is a full field element (~254 bits, past `i128`), so the
-        // struct takes it as a `String` (decimal or `0x`-hex), matching how the
-        // CLI `--inputs` takes scalars. The circuit side keeps the type as written
-        // (not `::xark::Field`), so the author's `use xark::Field` stays used.
-        return Ok((quote! { String }, quote! { #inner }, Fanout::Scalar));
+        // The host value is a `Field` too (the validator takes `impl Into<Field>`: an
+        // integer, an `ark_bn254::Fr`, a decimal / `0x`-hex string). The type stays as
+        // written (not `::xark::Field`), so the author's `use xark::Field` stays used.
+        return Ok((quote! { #inner }, quote! { #inner }, Fanout::Scalar));
     }
     // Native unsigned integers are first-class circuit witnesses: the `<Fn>Inputs`
     // field takes the native `uN` (fits `u128`, so no `String` needed), the circuit
@@ -397,14 +440,10 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
             .last()
             .is_some_and(|s| s.ident == "Field")
         {
-            // A field-valued array (hash siblings, bignum limbs, …): native form
-            // is `[String; N]` of decimals, the array analogue of `Field` → `String`.
+            // A field-valued array (hash siblings, bignum limbs, …): `[Field; N]` on
+            // the host too (the validator takes `[impl Into<Field>; N]`).
             let n = eval_usize_lit(&arr.len)?;
-            return Ok((
-                quote! { [::std::string::String; #n] },
-                quote! { #inner },
-                Fanout::FieldArray(n),
-            ));
+            return Ok((quote! { #inner }, quote! { #inner }, Fanout::FieldArray(n)));
         }
         // `[uN; LEN]` (wider than a byte): the circuit sees the same native array, and
         // the compiler range-checks each element on entry.
@@ -417,17 +456,17 @@ fn map_inner(inner: &Type) -> syn::Result<(TokenStream2, TokenStream2, Fanout)> 
             let n = eval_usize_lit(&arr.len)?;
             return Ok((quote! { #inner }, quote! { #inner }, Fanout::IntArray(n, w)));
         }
+        // `[T; N]` of an input type (generators `[Affine; 4]`, a list of structs).
+        let n = eval_usize_lit(&arr.len)?;
+        return Ok((quote! { #inner }, quote! { #inner }, Fanout::NativeArray(n)));
     }
-    // Fallback: any other named type is a transparent gadget type (`Fq`/`Point`)
-    // implementing `xark_prover::NativeInput`. Its `Native` associated type is the
-    // struct field, and its `leaves` produce the compiler's flatten names. A type
-    // that doesn't impl the trait is a compile error at the delegation site.
+    // Fallback: any other named type is an input type implementing
+    // `xark_prover::NativeInput` (a gadget's `Fq`/`Point`, a derived struct). The host
+    // value is the type itself, built from its natural form through its `From` impls
+    // (the validator takes `impl Into<T>`), and its `leaves` produce the compiler's
+    // flatten names. A type that doesn't impl the trait is a compile error there.
     if let Type::Path(_) = inner {
-        return Ok((
-            quote! { <#inner as ::xark_prover::NativeInput>::Native },
-            quote! { #inner },
-            Fanout::Native,
-        ));
+        return Ok((quote! { #inner }, quote! { #inner }, Fanout::Native));
     }
     Err(syn::Error::new_spanned(
         inner,
@@ -445,25 +484,50 @@ fn fanout_code(p: &CircuitParam) -> TokenStream2 {
     let name_lit = LitStr::new(&name.to_string(), name.span());
     match p.fanout {
         Fanout::Scalar | Fanout::Uint(_) => quote! {
-            out.push((
-                ::std::string::String::from(#name_lit),
-                ::std::string::ToString::to_string(&self.#name),
-            ));
+            out.push((::std::string::String::from(#name_lit), ::xark_prover::Fr::from(self.#name)));
         },
-        // Byte and field arrays fan out identically: leaf `name[i]` = the element
-        // rendered as a decimal string.
-        Fanout::ByteArray(n) | Fanout::FieldArray(n) | Fanout::IntArray(n, _) => quote! {
+        Fanout::FieldArray(n) => quote! {
             {
                 let mut __i = 0usize;
                 while __i < #n {
                     out.push((
                         ::std::format!("{}[{}]", #name_lit, __i),
-                        ::std::string::ToString::to_string(&self.#name[__i]),
+                        ::xark_prover::Fr::from(self.#name[__i]),
                     ));
                     __i += 1;
                 }
             }
         },
+        // Integer arrays: leaf `name[i]` = the element rendered as a decimal string.
+        Fanout::ByteArray(n) | Fanout::IntArray(n, _) => quote! {
+            {
+                let mut __i = 0usize;
+                while __i < #n {
+                    out.push((
+                        ::std::format!("{}[{}]", #name_lit, __i),
+                        ::xark_prover::Fr::from(self.#name[__i]),
+                    ));
+                    __i += 1;
+                }
+            }
+        },
+        Fanout::NativeArray(n) => {
+            let ty = &p.circuit_ty;
+            quote! {
+                {
+                    let mut __i = 0usize;
+                    while __i < #n {
+                        out.extend(
+                            <<#ty as ::core::iter::IntoIterator>::Item as ::xark_prover::NativeInput>::leaves(
+                                &self.#name[__i],
+                                &::std::format!("{}[{}]", #name_lit, __i),
+                            ),
+                        );
+                        __i += 1;
+                    }
+                }
+            }
+        }
         // Transparent gadget type: delegate to `NativeInput::leaves`, which produces
         // the compiler's flatten names (`name.x.limbs[i]`, `name[i]`, …).
         Fanout::Native => {
@@ -584,6 +648,7 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut counts = Vec::new();
     let mut blocks = Vec::new();
     let mut self_blocks = Vec::new();
+    let mut write_blocks = Vec::new();
     for (_, acc, ty) in &fields {
         let (count, stmts) = walk_type(ty, &quote! { __v.#acc }, 0)?;
         counts.push(count);
@@ -592,7 +657,8 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // (every leaf is `Copy`), so callers get the field array without consuming or
         // cloning. Powers the inherent `to_fields(&self)` below.
         let (_, stmts) = walk_type(ty, &quote! { self.#acc }, 0)?;
-        self_blocks.push(stmts);
+        self_blocks.push(stmts.clone());
+        write_blocks.push(stmts);
     }
     let n = quote! { (0usize #( + #counts )*) };
 
@@ -642,6 +708,16 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
+        impl ::xark::ToFields for #name {
+            const FIELD_LEN: usize = #n;
+            fn write_fields(&self, out: &mut [::xark::Field]) {
+                let mut __i = 0usize;
+                #( #write_blocks )*
+                let _ = __i;
+            }
+        }
+
+        #[automatically_derived]
         impl ::core::convert::From<#name> for [::xark::Field; #name::FIELD_LEN] {
             fn from(__v: #name) -> [::xark::Field; #name::FIELD_LEN] {
                 let mut out = [<::xark::Field as ::core::convert::From<u8>>::from(0u8); #name::FIELD_LEN];
@@ -661,8 +737,7 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
             use std::vec::Vec;
             #[automatically_derived]
             impl ::xark_prover::NativeInput for #name {
-                type Native = #name;
-                fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)> {
+                fn leaves(native: &Self, prefix: &str) -> Vec<(String, ::xark_prover::Fr)> {
                     let mut __out = Vec::new();
                     #( #leaf_stmts )*
                     __out
@@ -757,29 +832,24 @@ fn walk_type(
             Ok((quote! { (#len * #inner_count) }, block))
         }
         Type::Path(_) => {
-            // A nested `#[derive(CircuitInput)]` struct: copy its own flatten in place.
-            let kv = format_ident!("__k{depth}");
-            let sub = format_ident!("__sub{depth}");
+            // A nested input type (a derived struct, a gadget's point or field element):
+            // write its own flatten in place.
             Ok((
-                quote! { <#ty>::FIELD_LEN },
+                quote! { <#ty as ::xark::ToFields>::FIELD_LEN },
                 quote! {
-                    {
-                        let #sub = #access.to_fields();
-                        let mut #kv = 0usize;
-                        while #kv < <#ty>::FIELD_LEN {
-                            out[__i] = #sub[#kv];
-                            __i += 1;
-                            #kv += 1;
-                        }
-                    }
+                    ::xark::ToFields::write_fields(
+                        &#access,
+                        &mut out[__i..__i + <#ty as ::xark::ToFields>::FIELD_LEN],
+                    );
+                    __i += <#ty as ::xark::ToFields>::FIELD_LEN;
                 },
             ))
         }
         other => Err(syn::Error::new_spanned(
             other,
-            "#[derive(CircuitInput)] fields must be `Field`, `u8`..`u128`, fixed arrays of \
-             them, or another `#[derive(CircuitInput)]` struct; array lengths must be \
-             integer literals",
+            "#[derive(CircuitInput)] fields must be `Field`, `u8`..`u128`, an input type \
+             (another `#[derive(CircuitInput)]` struct, a gadget's point or field element), \
+             or fixed arrays of them; array lengths must be integer literals",
         )),
     }
 }
@@ -887,61 +957,101 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ));
         }
     };
+    let fields: Vec<(TokenStream2, String, &Type)> = data
+        .fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| match &f.ident {
+            Some(id) => (quote! { #id }, id.to_string(), &f.ty),
+            None => {
+                let idx = syn::Index::from(i);
+                (quote! { #idx }, i.to_string(), &f.ty)
+            }
+        })
+        .collect();
 
-    let (native_ty, leaves_body) = if let Some(bits) = parse_transparent_bits(&input.attrs)? {
-        // LEAF: `{ limbs: [Field; N] }`, native = big-endian `[u8; N*B/8]`.
-        let n = leaf_limb_count(data)?;
-        let bytes = n * (bits as usize) / 8;
-        (
-            quote! { [u8; #bytes] },
-            quote! { ::xark_prover::limb_leaves(native, prefix, #n, #bits) },
-        )
-    } else {
-        // COMPOSITE: native = concatenation of the fields' native bytes; recurse.
-        let field_size = |fty: &Type| {
-            quote! { ::core::mem::size_of::<<#fty as ::xark_prover::NativeInput>::Native>() }
-        };
-        let sizes: Vec<_> = data.fields.iter().map(|f| field_size(&f.ty)).collect();
-        let native_ty = quote! { [u8; { 0usize #( + #sizes )* }] };
-
-        let mut stmts = Vec::new();
-        let mut offset = quote! { 0usize };
-        for (i, field) in data.fields.iter().enumerate() {
-            let fty = &field.ty;
-            let fname = match &field.ident {
-                Some(id) => id.to_string(),
-                None => i.to_string(),
+    // Per shape: the leaf fan-out, the byte length and decode, and the `Field` flatten.
+    let (leaves_body, bytes, from_bytes, field_len, write_fields) =
+        if let Some(bits) = parse_transparent_bits(&input.attrs)? {
+            // LEAF `{ limbs: [Field; N] }`: big-endian `[u8; N*B/8]`, limbs little-endian.
+            let n = leaf_limb_count(data)?;
+            let nbytes = if n * bits as usize <= 264 {
+                32
+            } else {
+                (n * bits as usize).div_ceil(8)
             };
-            let size = field_size(fty);
-            stmts.push(quote! {
-                {
-                    let __start = #offset;
-                    let __end = __start + #size;
-                    let __chunk: &<#fty as ::xark_prover::NativeInput>::Native =
-                        ::core::convert::TryFrom::try_from(&native[__start..__end]).unwrap();
-                    __out.extend(<#fty as ::xark_prover::NativeInput>::leaves(
-                        __chunk,
+            let (acc, _, _) = &fields[0];
+            (
+                quote! { ::xark::host::limbs_leaves(&value.#acc, prefix) },
+                quote! { #nbytes },
+                quote! { #name { #acc: ::xark::host::limb_fields::<#n>(bytes, #bits) } },
+                quote! { #n },
+                quote! { out[..#n].copy_from_slice(&self.#acc); },
+            )
+        } else {
+            // COMPOSITE of transparent fields: the fields' encodings back to back.
+            let tys: Vec<&Type> = fields.iter().map(|(_, _, t)| *t).collect();
+            let leaves = fields.iter().map(|(acc, fname, ty)| {
+                quote! {
+                    __out.extend(<#ty as ::xark_prover::NativeInput>::leaves(
+                        &value.#acc,
                         &std::format!("{}.{}", prefix, #fname),
                     ));
                 }
             });
-            offset = quote! { #offset + #size };
-        }
-        (
-            native_ty,
-            quote! {
-                let mut __out = Vec::new();
-                #( #stmts )*
-                __out
-            },
-        )
-    };
+            let mut offset = quote! { 0usize };
+            let mut parts = Vec::new();
+            let mut writes = Vec::new();
+            let mut flen = quote! { 0usize };
+            for (acc, _, ty) in &fields {
+                let size = quote! { <#ty as ::xark::host::FromBeBytes>::BYTES };
+                parts.push(quote! {
+                    #acc: <#ty as ::xark::host::FromBeBytes>::from_be_bytes(
+                        &bytes[#offset..#offset + #size],
+                    )
+                });
+                offset = quote! { #offset + #size };
+                let len = quote! { <#ty as ::xark::ToFields>::FIELD_LEN };
+                writes.push(quote! {
+                    ::xark::ToFields::write_fields(&self.#acc, &mut out[#flen..#flen + #len]);
+                });
+                flen = quote! { #flen + #len };
+            }
+            let ctor = match &data.fields {
+                syn::Fields::Named(_) => quote! { #name { #( #parts ),* } },
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        name,
+                        "#[derive(Transparent)] composites need named fields",
+                    ));
+                }
+            };
+            (
+                quote! {
+                    let mut __out = Vec::new();
+                    #( #leaves )*
+                    __out
+                },
+                quote! { 0usize #( + <#tys as ::xark::host::FromBeBytes>::BYTES )* },
+                ctor,
+                flen,
+                quote! { #( #writes )* },
+            )
+        };
 
     let wasm_input = wasm_input_impl(name, data);
     // `NativeInput` lives in `xark_prover` (a `std` crate) but a gadget crate is
     // `#![no_std]`, so bring `std` in inside an anonymous const (hygienic-derive pattern).
     Ok(quote! {
         #wasm_input
+
+        #[automatically_derived]
+        impl ::xark::ToFields for #name {
+            const FIELD_LEN: usize = #field_len;
+            fn write_fields(&self, out: &mut [::xark::Field]) {
+                #write_fields
+            }
+        }
 
         #[cfg(not(xark))]
         const _: () = {
@@ -950,9 +1060,24 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
             use std::vec::Vec;
             #[automatically_derived]
             impl ::xark_prover::NativeInput for #name {
-                type Native = #native_ty;
-                fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)> {
+                fn leaves(value: &Self, prefix: &str) -> Vec<(String, ::xark_prover::Fr)> {
                     #leaves_body
+                }
+            }
+            #[automatically_derived]
+            impl ::xark::host::FromBeBytes for #name {
+                const BYTES: usize = #bytes;
+                fn from_be_bytes(bytes: &[u8]) -> Self {
+                    assert_eq!(bytes.len(), #bytes, "wrong encoding length");
+                    #from_bytes
+                }
+            }
+            /// From the big-endian encoding (a scalar's bytes, a point's coordinates
+            /// back to back).
+            #[automatically_derived]
+            impl ::core::convert::From<[u8; #bytes]> for #name {
+                fn from(bytes: [u8; #bytes]) -> Self {
+                    <Self as ::xark::host::FromBeBytes>::from_be_bytes(&bytes)
                 }
             }
         };
@@ -972,10 +1097,10 @@ fn circuit_leaves(
 ) -> syn::Result<TokenStream2> {
     match ty {
         Type::Path(tp) if tp.path.segments.last().is_some_and(|s| s.ident == "Field") => {
-            Ok(quote! { __out.push((#prefix, #access.to_decimal())); })
+            Ok(quote! { __out.push((#prefix, ::xark_prover::Fr::from(#access))); })
         }
         _ if uint_type_bits(ty).is_some() => Ok(quote! {
-            __out.push((#prefix, std::string::ToString::to_string(&#access)));
+            __out.push((#prefix, ::xark_prover::Fr::from(#access)));
         }),
         Type::Array(arr) => {
             let len = eval_usize_lit(&arr.len)?;

@@ -20,11 +20,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        scalar_range("1".into(), "0".into(), "0".into()).unwrap();
+        scalar_range(1, 0, 0).unwrap();
     }
 
     #[test]
     fn rejects_zero() {
-        assert!(scalar_range("0".into(), "0".into(), "0".into()).is_err());
+        assert!(scalar_range(0, 0, 0).is_err());
     }
 }

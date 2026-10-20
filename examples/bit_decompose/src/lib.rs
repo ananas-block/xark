@@ -16,11 +16,11 @@ mod tests {
     #[test]
     fn accepts_valid() {
         // 129 = 0b1000_0001 → bit0=1, bit7=1
-        bit_decompose("129".into(), "1".into(), "1".into()).unwrap();
+        bit_decompose(129, 1, 1).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(bit_decompose("129".into(), "0".into(), "1".into()).is_err());
+        assert!(bit_decompose(129, 0, 1).is_err());
     }
 }

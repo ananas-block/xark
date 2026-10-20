@@ -21,11 +21,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        word_ops("0".into(), "0".into(), "0".into()).unwrap();
+        word_ops(0, 0, 0).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(word_ops("0".into(), "0".into(), "1".into()).is_err());
+        assert!(word_ops(0, 0, 1).is_err());
     }
 }

@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use grumpkin_augmented_step::GrumpkinAugmentedStepInputs;
+use xark_grumpkin::Instance;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
@@ -31,26 +32,26 @@ const S_X: &str = "5";
 const TX: &str = "17379784669106027629420386012926013711889290282791045264368570596918799018333";
 const TY: &str = "5261888182127316643551963109191000327408457967043340449287656632743840125850";
 
-fn pt(x: &str, y: &str) -> [String; 2] {
-    [x.into(), y.into()]
+/// An instance from its commitments' coordinates and `u`, `x`.
+fn inst(cw: (&str, &str), ce: (&str, &str), u: &str, x: &str) -> Instance {
+    Instance {
+        cw: cw.into(),
+        ce: ce.into(),
+        u: u.into(),
+        x: x.into(),
+    }
 }
 
 fn honest() -> GrumpkinAugmentedStepInputs {
     GrumpkinAugmentedStepInputs {
         io_in: IO_IN.into(),
         io_out: IO_OUT.into(),
-        i: "0".into(),
+        i: 0.into(),
         z0: Z0.into(),
         zi: ZI.into(),
-        ui_cw: pt(UI_CWX, UI_CWY),
-        ui_ce: pt(UI_CEX, UI_CEY),
-        ui_u: UI_U.into(),
-        ui_x: UI_X.into(),
-        s_cw: pt(S_CWX, S_CWY),
-        s_ce: pt(S_CEX, S_CEY),
-        s_u: S_U.into(),
-        s_x: S_X.into(),
-        t: pt(TX, TY),
+        ui: inst((UI_CWX, UI_CWY), (UI_CEX, UI_CEY), UI_U, UI_X),
+        s: inst((S_CWX, S_CWY), (S_CEX, S_CEY), S_U, S_X),
+        t: (TX, TY).into(),
     }
 }
 
@@ -62,7 +63,7 @@ fn augmented_step_verifies() {
     circuit.check_constrained(honest()).expect("augmented step must verify the honest reference");
 
     let mut bad = honest();
-    bad.io_out = "123".into();
+    bad.io_out = 123.into();
     assert!(circuit.check(bad).is_err(), "wrong io_out must reject");
 }
 

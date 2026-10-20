@@ -28,18 +28,14 @@ pub fn fp_mul(a: Private<[Field; 3]>, b: Private<[Field; 3]>, c: Public<[Field; 
 mod tests {
     use super::fp_mul;
 
-    fn v(x: &str) -> [String; 3] {
-        [x.into(), "0".into(), "0".into()]
-    }
-
     #[test]
     fn accepts_valid() {
         // (2 · 3) mod p = 6 (both operands reduced, product < p)
-        fp_mul(v("2"), v("3"), v("6")).unwrap();
+        fp_mul([2, 0, 0], [3, 0, 0], [6, 0, 0]).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(fp_mul(v("2"), v("3"), v("7")).is_err());
+        assert!(fp_mul([2, 0, 0], [3, 0, 0], [7, 0, 0]).is_err());
     }
 }

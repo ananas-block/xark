@@ -35,10 +35,10 @@ mod tests {
     #[test]
     fn accepts_valid() {
         struct_point(
-            ["3".into(), "0".into(), "0".into()],
-            ["5".into(), "0".into(), "0".into()],
-            "8".into(),
-            "15".into(),
+            [3, 0, 0],
+            [5, 0, 0],
+            8,
+            15,
         )
         .unwrap();
     }
@@ -46,10 +46,10 @@ mod tests {
     #[test]
     fn rejects_wrong_product() {
         assert!(struct_point(
-            ["3".into(), "0".into(), "0".into()],
-            ["5".into(), "0".into(), "0".into()],
-            "8".into(),
-            "16".into(),
+            [3, 0, 0],
+            [5, 0, 0],
+            8,
+            16,
         )
         .is_err());
     }

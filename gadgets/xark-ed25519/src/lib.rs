@@ -96,10 +96,18 @@ type Ext = [L3; 4];
 xark_bignum::fp!(storage pub FpL, 3, 85);
 /// An Ed25519 affine point with 3×85-bit coordinates — the lazy path's public
 /// input type (`x`/`y` each flatten to `<name>.x.limbs[0..2]` / `<name>.y.limbs`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct PointL {
     pub x: FpL,
     pub y: FpL,
+}
+
+impl xark::ToFields for PointL {
+    const FIELD_LEN: usize = 6;
+    fn write_fields(&self, out: &mut [Field]) {
+        out[..3].copy_from_slice(&self.x.limbs);
+        out[3..6].copy_from_slice(&self.y.limbs);
+    }
 }
 
 #[cfg(all(xark, target_arch = "wasm32"))]
@@ -282,7 +290,7 @@ pub mod blocks {
 /// host) and a scalar `S`. Its `#[derive(Transparent)]` host `NativeInput` composes
 /// `PointL`'s (decompressing) leaves with `Scalar`'s, so the host native form is
 /// `[u8; 64]` = compressed `R ‖ big-endian S`. Pass it to [`PointL::verify`].
-#[derive(Clone, Copy, Transparent)]
+#[derive(Clone, Copy, Debug, Transparent)]
 pub struct Signature {
     pub r: PointL,
     pub s: Scalar,
@@ -358,7 +366,7 @@ mod host {
     use super::PointL;
     use num_bigint::BigUint;
     use sha2::{Digest, Sha512};
-    use std::{format, string::String, string::ToString, vec::Vec};
+    use std::{format, string::String, vec::Vec};
 
     fn dec(s: &str) -> BigUint {
         BigUint::parse_bytes(s.as_bytes(), 10).unwrap()
@@ -409,27 +417,35 @@ mod host {
         (x, y)
     }
 
-    /// Little-endian 3 × 85-bit limbs of a value, named `<prefix>.limbs[i]`.
-    fn limbs85(v: &BigUint, prefix: &str) -> Vec<(String, String)> {
-        let mask = (BigUint::from(1u8) << 85u32) - 1u8;
-        (0..3)
-            .map(|i| {
-                (
-                    format!("{prefix}.limbs[{i}]"),
-                    ((v >> (i as u32 * 85)) & &mask).to_string(),
-                )
-            })
-            .collect()
+    impl xark_prover::NativeInput for PointL {
+        fn leaves(value: &PointL, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+            let mut out = xark::host::limbs_leaves(&value.x.limbs, &format!("{prefix}.x"));
+            out.extend(xark::host::limbs_leaves(
+                &value.y.limbs,
+                &format!("{prefix}.y"),
+            ));
+            out
+        }
     }
 
-    impl xark_prover::NativeInput for PointL {
-        /// Ed25519 compressed point (`y` little-endian + `x`-sign bit).
-        type Native = [u8; 32];
-        fn leaves(native: &[u8; 32], prefix: &str) -> Vec<(String, String)> {
-            let (x, y) = decompress(native);
-            let mut out = limbs85(&x, &format!("{prefix}.x"));
-            out.extend(limbs85(&y, &format!("{prefix}.y")));
-            out
+    impl xark::host::FromBeBytes for PointL {
+        const BYTES: usize = 32;
+        /// From the compressed point (`y` little-endian with the `x`-sign bit),
+        /// decompressed to affine `(x, y)`. Panics if it isn't a curve point.
+        fn from_be_bytes(bytes: &[u8]) -> PointL {
+            let (x, y) = decompress(bytes.try_into().expect("a compressed point is 32 bytes"));
+            let limbs = |v: &BigUint| super::FpL::new(xark::host::limb_fields::<3>(&be32(v), 85));
+            PointL {
+                x: limbs(&x),
+                y: limbs(&y),
+            }
+        }
+    }
+
+    /// From an Ed25519 public key or `R`: the 32-byte compressed point.
+    impl From<[u8; 32]> for PointL {
+        fn from(bytes: [u8; 32]) -> PointL {
+            <PointL as xark::host::FromBeBytes>::from_be_bytes(&bytes)
         }
     }
 

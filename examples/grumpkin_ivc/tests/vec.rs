@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use grumpkin_ivc::GrumpkinIvcInputs;
+use xark_grumpkin::Instance;
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
@@ -43,30 +44,24 @@ const U2_X: &str = "2800240808433720351539188551067984909022";
 const Z0: &str = "3";
 const Z2: &str = "201";
 
-fn pt(x: &str, y: &str) -> [String; 2] {
-    [x.into(), y.into()]
+/// An instance from its commitments' coordinates and `u`, `x`.
+fn inst(cw: (&str, &str), ce: (&str, &str), u: &str, x: &str) -> Instance {
+    Instance {
+        cw: cw.into(),
+        ce: ce.into(),
+        u: u.into(),
+        x: x.into(),
+    }
 }
 
 fn honest() -> GrumpkinIvcInputs {
     GrumpkinIvcInputs {
-        u0_cw: pt(U0_CWX, U0_CWY),
-        u0_ce: pt(U0_CEX, U0_CEY),
-        u0_u: U0_U.into(),
-        u0_x: U0_X.into(),
-        s0_cw: pt(S0_CWX, S0_CWY),
-        s0_ce: pt(S0_CEX, S0_CEY),
-        s0_u: S0_U.into(),
-        s0_x: S0_X.into(),
-        t0: pt(T0X, T0Y),
-        s1_cw: pt(S1_CWX, S1_CWY),
-        s1_ce: pt(S1_CEX, S1_CEY),
-        s1_u: S1_U.into(),
-        s1_x: S1_X.into(),
-        t1: pt(T1X, T1Y),
-        u2_cw: pt(U2_CWX, U2_CWY),
-        u2_ce: pt(U2_CEX, U2_CEY),
-        u2_u: U2_U.into(),
-        u2_x: U2_X.into(),
+        u0: inst((U0_CWX, U0_CWY), (U0_CEX, U0_CEY), U0_U, U0_X),
+        s0: inst((S0_CWX, S0_CWY), (S0_CEX, S0_CEY), S0_U, S0_X),
+        t0: (T0X, T0Y).into(),
+        s1: inst((S1_CWX, S1_CWY), (S1_CEX, S1_CEY), S1_U, S1_X),
+        t1: (T1X, T1Y).into(),
+        u2: inst((U2_CWX, U2_CWY), (U2_CEX, U2_CEY), U2_U, U2_X),
         z0: Z0.into(),
         z2: Z2.into(),
     }
@@ -80,10 +75,10 @@ fn ivc_2step_verifies() {
     circuit.check_constrained(honest()).expect("grumpkin_ivc must verify the honest 2-step run");
 
     let mut bad = honest();
-    bad.z2 = "202".into();
+    bad.z2 = 202.into();
     assert!(circuit.check(bad).is_err(), "wrong z2 must reject");
     let mut bad = honest();
-    bad.u2_u = "123".into();
+    bad.u2.u = 123.into();
     assert!(circuit.check(bad).is_err(), "wrong U2 must reject");
 }
 

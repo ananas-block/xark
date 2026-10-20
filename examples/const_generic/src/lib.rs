@@ -38,11 +38,11 @@ mod tests {
     #[test]
     fn accepts_valid() {
         // 2(1+2+3) + 2(1+2) = 12 + 6 = 18
-        const_generic("1".into(), "2".into(), "3".into(), "18".into()).unwrap();
+        const_generic(1, 2, 3, 18).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(const_generic("1".into(), "2".into(), "3".into(), "19".into()).is_err());
+        assert!(const_generic(1, 2, 3, 19).is_err());
     }
 }

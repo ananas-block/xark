@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use grumpkin_ipa_fold::GrumpkinIpaFoldInputs;
+use grumpkin_ipa_fold::{GrumpkinIpaFoldInputs, Round};
 
 fn src() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs")
@@ -30,59 +30,32 @@ const L0X: &str = "5375487694808310702659162973823695341196693601475937153072891
 const L0Y: &str = "7944815556999890941264774559535943707519717265897709639308240942984276847325";
 const R0X: &str = "17034097151798272950285519022103253440012683113956019853678963310363407959531";
 const R0Y: &str = "18529034907721181274925498681152838112266648732084001694074521268678278737501";
-const X0INV_LO: &str = "22680322995267882538288038281662432166";
-const X0INV_HI: &str = "113283149988673162651007931328977853114";
+const X0INV: &str = "19274129205202693537223738066596951075882618103829116985531644529114892469158";
 const L1X: &str = "1872918305289159651257036358108855396449892509458318319071404177563869713952";
 const L1Y: &str = "2271021141447234717017625313274307644996847071030702732038489305273600737863";
 const R1X: &str = "7835704774720879293142241306850648079782227543413187604842960141293422373118";
 const R1Y: &str = "16930240884099899267128604087196418167932878781814926712675664728081976528106";
-const X1INV_LO: &str = "114112989897027601752745677149678585070";
-const X1INV_HI: &str = "120143048278880904150553374539496715209";
-const S0LO: &str = "101347123743563917546956268938516812231";
-const S0HI: &str = "116059811866484552728776788088143116719";
-const S1LO: &str = "3737174836610366512887417732964775452";
-const S1HI: &str = "62405511235622711844824004721254249746";
-const S2LO: &str = "132824948574992135427287791523091904248";
-const S2HI: &str = "23069863320759349988016793932704121578";
-const S3LO: &str = "63674618799522023557137309721945942722";
-const S3HI: &str = "112778294607876493459452263846670719498";
-const ASTAR_LO: &str = "60432969165013805297498137096559625484";
-const ASTAR_HI: &str = "41346699135982308264555816248439742743";
-const C_LO: &str = "18374556530022161497450493908745285757";
-const C_HI: &str = "69110116733184639059592971484944498067";
-
-fn pt(x: &str, y: &str) -> [String; 2] {
-    [x.into(), y.into()]
-}
+const X1INV: &str = "20441280418717088087164067778963731241726987006999466417925286786738140202222";
+const S0: &str = "19746553743163092257584268351016630439854502004867133428490773078398557278663";
+const S1: &str = "10617747536084457749436838772396577238599792319251030191874810949667745920540";
+const S2: &str = "3925133847665266504737303458879835129081390291520170908577758214209410103032";
+const S3: &str = "19188232513237562389181752488463983078932483606767617272697244541630009027266";
+const ASTAR: &str = "7034776323179990580989196270583891124641291931457271918092367374963492357388";
+const C: &str = "11758477050075212204043913567710935611991900618380616825003090009316864913533";
 
 fn honest() -> GrumpkinIpaFoldInputs {
     GrumpkinIpaFoldInputs {
-        g0: pt(G0X, G0Y),
-        g1: pt(G1X, G1Y),
-        g2: pt(G2X, G2Y),
-        g3: pt(G3X, G3Y),
-        u: pt(UX, UY),
-        p: pt(PX, PY),
-        l0: pt(L0X, L0Y),
-        r0: pt(R0X, R0Y),
-        l1: pt(L1X, L1Y),
-        r1: pt(R1X, R1Y),
-        x0inv_lo: X0INV_LO.into(),
-        x0inv_hi: X0INV_HI.into(),
-        x1inv_lo: X1INV_LO.into(),
-        x1inv_hi: X1INV_HI.into(),
-        s0_lo: S0LO.into(),
-        s0_hi: S0HI.into(),
-        s1_lo: S1LO.into(),
-        s1_hi: S1HI.into(),
-        s2_lo: S2LO.into(),
-        s2_hi: S2HI.into(),
-        s3_lo: S3LO.into(),
-        s3_hi: S3HI.into(),
-        astar_lo: ASTAR_LO.into(),
-        astar_hi: ASTAR_HI.into(),
-        c_lo: C_LO.into(),
-        c_hi: C_HI.into(),
+        g: [(G0X, G0Y), (G1X, G1Y), (G2X, G2Y), (G3X, G3Y)].map(Into::into),
+        u: (UX, UY).into(),
+        p: (PX, PY).into(),
+        rounds: [
+            Round { l: (L0X, L0Y).into(), r: (R0X, R0Y).into() },
+            Round { l: (L1X, L1Y).into(), r: (R1X, R1Y).into() },
+        ],
+        x_inv: [X0INV, X1INV].map(Into::into),
+        s: [S0, S1, S2, S3].map(Into::into),
+        astar: ASTAR.into(),
+        c: C.into(),
     }
 }
 
@@ -94,7 +67,7 @@ fn ipa_fold_verifies() {
     circuit.check_constrained(honest()).expect("grumpkin_ipa_fold must verify the honest IPA transcript");
 
     let mut bad = honest();
-    bad.r0[0] = "123".into();
+    bad.rounds[0].r.x = 123.into();
     assert!(circuit.check(bad).is_err(), "a tampered transcript must be rejected");
 }
 

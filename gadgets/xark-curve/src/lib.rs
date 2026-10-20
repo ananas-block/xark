@@ -92,10 +92,10 @@ macro_rules! weierstrass {
     ) => {
         // base field `Fp` (mod p), scalar field `Fq` (mod n), 3 × `$bits`-bit limbs
         xark_bignum::fp!(pub Fp, $base, 3, $bits);
-        xark_bignum::fp!(no_host pub Fq, $scalar, 3, $bits);
+        xark_bignum::fp!(pub Fq, $scalar, 3, $bits);
 
         /// An affine curve point: two base-field (`Fp`) coordinates.
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         pub struct Point {
             pub x: Fp,
             pub y: Fp,
@@ -108,6 +108,14 @@ macro_rules! weierstrass {
                     x: xark::wasm::input_field(n, "x", vis),
                     y: xark::wasm::input_field(n, "y", vis),
                 }
+            }
+        }
+        impl ::xark::ToFields for Point {
+            const FIELD_LEN: usize = 2 * <Fp as ::xark::ToFields>::FIELD_LEN;
+            fn write_fields(&self, out: &mut [::xark::Field]) {
+                let n = <Fp as ::xark::ToFields>::FIELD_LEN;
+                ::xark::ToFields::write_fields(&self.x, &mut out[..n]);
+                ::xark::ToFields::write_fields(&self.y, &mut out[n..2 * n]);
             }
         }
         /// A scalar-field (`Fq`) element — an ECDSA multiplier `u1`/`u2`, `r`, `s`, `e`.
@@ -257,9 +265,9 @@ macro_rules! curve_host_inputs {
         #[cfg(not(xark))]
         mod __curve_host {
             extern crate std;
-            use super::{Fq, Point};
+            use super::{Fp, Point};
             use ::num_bigint::BigUint;
-            use std::{format, string::String, string::ToString, vec::Vec};
+            use std::{format, string::String, vec::Vec};
 
             /// The scalar field order (group order `n` / `L`) as a big integer.
             pub fn order() -> BigUint {
@@ -277,41 +285,44 @@ macro_rules! curve_host_inputs {
                 out
             }
 
-            /// Little-endian 3 × `$bits`-bit limbs of a big-endian integer, named
-            /// `<prefix>.limbs[i]` (matching the compiler's aggregate flattening).
-            /// Panics if the value doesn't fit the three limbs.
-            fn limbs(be: &[u8], prefix: &str) -> Vec<(String, String)> {
-                let bits: u32 = $bits;
-                let v = BigUint::from_bytes_be(be);
-                assert!(
-                    v.bits() <= 3 * bits as u64,
-                    "{prefix}: value does not fit 3 × {bits}-bit limbs"
-                );
-                let mask = (BigUint::from(1u8) << bits) - 1u8;
-                (0..3)
-                    .map(|i| {
-                        (
-                            format!("{prefix}.limbs[{i}]"),
-                            ((&v >> (i as u32 * bits)) & &mask).to_string(),
-                        )
-                    })
-                    .collect()
-            }
-
-            impl ::xark_prover::NativeInput for Fq {
-                type Native = [u8; 32];
-                fn leaves(native: &[u8; 32], prefix: &str) -> Vec<(String, String)> {
-                    limbs(native, prefix)
+            impl ::xark_prover::NativeInput for Point {
+                fn leaves(value: &Point, prefix: &str) -> Vec<(String, ::xark_prover::Fr)> {
+                    let mut out = <Fp as ::xark_prover::NativeInput>::leaves(
+                        &value.x,
+                        &format!("{prefix}.x"),
+                    );
+                    out.extend(<Fp as ::xark_prover::NativeInput>::leaves(
+                        &value.y,
+                        &format!("{prefix}.y"),
+                    ));
+                    out
                 }
             }
 
-            impl ::xark_prover::NativeInput for Point {
-                /// Compact uncompressed point: `x(32) ‖ y(32)` big-endian.
-                type Native = [u8; 64];
-                fn leaves(native: &[u8; 64], prefix: &str) -> Vec<(String, String)> {
-                    let mut out = limbs(&native[0..32], &format!("{prefix}.x"));
-                    out.extend(limbs(&native[32..64], &format!("{prefix}.y")));
-                    out
+            impl ::xark::host::FromBeBytes for Point {
+                const BYTES: usize = 64;
+                fn from_be_bytes(bytes: &[u8]) -> Point {
+                    assert_eq!(bytes.len(), 64, "a point is x ‖ y, 64 bytes");
+                    let half = |b: &[u8]| -> [u8; 32] { b.try_into().unwrap() };
+                    Point {
+                        x: Fp::from(half(&bytes[..32])),
+                        y: Fp::from(half(&bytes[32..])),
+                    }
+                }
+            }
+
+            /// From the uncompressed coordinates `x ‖ y`, 32 big-endian bytes each.
+            impl From<[u8; 64]> for Point {
+                fn from(bytes: [u8; 64]) -> Point {
+                    <Point as ::xark::host::FromBeBytes>::from_be_bytes(&bytes)
+                }
+            }
+
+            /// From a SEC1 uncompressed point: `0x04 ‖ x ‖ y`.
+            impl From<[u8; 65]> for Point {
+                fn from(bytes: [u8; 65]) -> Point {
+                    assert_eq!(bytes[0], 0x04, "a SEC1 uncompressed point starts with 0x04");
+                    <Point as ::xark::host::FromBeBytes>::from_be_bytes(&bytes[1..])
                 }
             }
         }
@@ -350,10 +361,10 @@ macro_rules! edwards {
     ) => {
         // Base field `Fp` (mod p) and scalar field `Fq` (mod L), 3 × 86-bit limbs.
         xark_bignum::fp!(pub Fp, $base);
-        xark_bignum::fp!(no_host pub Fq, $scalar);
+        xark_bignum::fp!(pub Fq, $scalar);
 
         /// An affine twisted-Edwards point: two base-field (`Fp`) coordinates.
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         pub struct Point {
             pub x: Fp,
             pub y: Fp,
@@ -366,6 +377,14 @@ macro_rules! edwards {
                     x: xark::wasm::input_field(n, "x", vis),
                     y: xark::wasm::input_field(n, "y", vis),
                 }
+            }
+        }
+        impl ::xark::ToFields for Point {
+            const FIELD_LEN: usize = 2 * <Fp as ::xark::ToFields>::FIELD_LEN;
+            fn write_fields(&self, out: &mut [::xark::Field]) {
+                let n = <Fp as ::xark::ToFields>::FIELD_LEN;
+                ::xark::ToFields::write_fields(&self.x, &mut out[..n]);
+                ::xark::ToFields::write_fields(&self.y, &mut out[n..2 * n]);
             }
         }
         /// A scalar-field (`Fq`) element.

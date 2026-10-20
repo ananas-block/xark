@@ -34,11 +34,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        bignum("2".into(), "3".into(), P.into(), P_M1.into(), "6".into()).unwrap();
+        bignum(2, 3, P, P_M1, 6).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(bignum("2".into(), "3".into(), P.into(), P_M1.into(), "7".into()).is_err());
+        assert!(bignum(2, 3, P, P_M1, 7).is_err());
     }
 }

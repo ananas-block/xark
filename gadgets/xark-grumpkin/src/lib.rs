@@ -224,7 +224,7 @@ pub fn multi_scalar_mul(scalars: [Field; K], points: [[Field; 2]; K]) -> [Field;
 /// field is exactly BN254's scalar field (the circuit `Field`), so a point needs
 /// no non-native limbs — `x`/`y` are ordinary field elements. Flattens to the
 /// leaves `<name>.x` / `<name>.y`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Affine {
     pub x: Field,
     pub y: Field,
@@ -241,26 +241,152 @@ impl xark::wasm::Input for Affine {
     }
 }
 
-/// Host-side `NativeInput` for [`Affine`], behind the `host` feature: the two
-/// coordinates are full field elements, taken as decimal (or `0x`-hex) strings.
+impl xark::ToFields for Affine {
+    const FIELD_LEN: usize = 2;
+    fn write_fields(&self, out: &mut [Field]) {
+        out[0] = self.x;
+        out[1] = self.y;
+    }
+}
+
+/// Host side: an [`Affine`] value from its two coordinates, `(x, y)` of anything
+/// that converts to a `Field` (an `ark_bn254::Fr` — Grumpkin's base field — an
+/// integer, a decimal / `0x`-hex string).
 #[cfg(not(xark))]
 mod host {
     extern crate std;
     use super::Affine;
     use std::string::String;
     use std::vec::Vec;
+    use xark::Field;
 
     impl xark_prover::NativeInput for Affine {
-        type Native = [String; 2];
-        fn leaves(native: &[String; 2], prefix: &str) -> Vec<(String, String)> {
-            use std::format;
-            let mut out = Vec::new();
-            out.push((format!("{prefix}.x"), native[0].clone()));
-            out.push((format!("{prefix}.y"), native[1].clone()));
-            out
+        fn leaves(value: &Affine, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+            std::vec![
+                (std::format!("{prefix}.x"), value.x.into()),
+                (std::format!("{prefix}.y"), value.y.into()),
+            ]
+        }
+    }
+
+    impl<X: Into<Field>, Y: Into<Field>> From<(X, Y)> for Affine {
+        fn from((x, y): (X, Y)) -> Affine {
+            Affine {
+                x: x.into(),
+                y: y.into(),
+            }
         }
     }
 }
+// ===========================================================================
+// Structured inputs: a folding instance and a full-width scalar.
+// ===========================================================================
+
+/// A committed relaxed-R1CS (Nova) instance: commitments to the witness `W` and
+/// the error `E`, the slack `u` and the public `x`. Flattens (and so hashes, via
+/// `to_fields`) as `[cw.x, cw.y, ce.x, ce.y, u, x]`.
+#[derive(Clone, Copy, Debug, xark::CircuitInput)]
+pub struct Instance {
+    pub cw: Affine,
+    pub ce: Affine,
+    pub u: Field,
+    pub x: Field,
+}
+
+/// A full-width Grumpkin scalar (`< 2^254`, so it can exceed the circuit field)
+/// as two 127-bit limbs, `lo + hi·2^127`, both below the field, so the split is
+/// injective. On the host it comes from the whole number (a decimal / `0x`-hex
+/// string, its 32 big-endian bytes, an integer); see [`wide_scalar_mul`].
+#[derive(Clone, Copy, Debug, xark::CircuitInput)]
+pub struct WideScalar {
+    pub lo: Field,
+    pub hi: Field,
+}
+
+/// `corr₂₅₄ = −(2^254·O)`, removing the offset accumulated over 254 doublings.
+/// Computed off-circuit with `ark-grumpkin` and validated: the same routine
+/// reproduces [`corr`] (the 128-bit `corr₁₂₈`) exactly.
+fn corr254() -> [Field; 2] {
+    [
+        Field::from(
+            "16553197835714973834031774601520451931051624293930580121206769559624452310037",
+        ),
+        Field::from(
+            "19649441642928946798700829372424834756358685055060237751050452085768514233992",
+        ),
+    ]
+}
+
+/// Boolean-gated point select `bit ? t : f` (an arithmetic mux); `bit` is already
+/// pinned `∈ {0, 1}` by `to_bits`.
+fn mux(bit: Field, t: [Field; 2], f: [Field; 2]) -> [Field; 2] {
+    [f[0] + bit * (t[0] - f[0]), f[1] + bit * (t[1] - f[1])]
+}
+
+/// **Full-width variable-base scalar mul** `s·P`: [`scalar_mul`]'s offset
+/// double-and-add over all 254 bits of a [`WideScalar`] (MSB first). Pins `p` to
+/// the curve first (the group law only holds there).
+pub fn wide_scalar_mul(s: WideScalar, p: Affine) -> Affine {
+    let p = [p.x, p.y];
+    enforce_on_curve(p);
+    let lo_bits = s.lo.to_bits::<127>();
+    let hi_bits = s.hi.to_bits::<127>();
+    let mut acc = offset();
+    let mut i = 0usize;
+    while i < 254usize {
+        acc = ec_double(acc);
+        let idx = 253usize - i;
+        // `idx` is a compile-time constant per unrolled iteration, so this branch
+        // and the indexing resolve at unroll time.
+        let bit = if idx < 127usize {
+            lo_bits[idx]
+        } else {
+            hi_bits[idx - 127usize]
+        };
+        let cand = ec_add(acc, p);
+        acc = mux(bit, cand, acc);
+        i += 1;
+    }
+    // acc = 2^254·O + s·P; remove the offset.
+    let r = ec_add(acc, corr254());
+    Affine { x: r[0], y: r[1] }
+}
+
+/// Host side: a [`WideScalar`] from the whole number, split at bit 127.
+#[cfg(not(xark))]
+mod wide_host {
+    extern crate std;
+    use super::WideScalar;
+    use std::string::String;
+
+    fn split(be: &[u8]) -> WideScalar {
+        let [lo, hi] = xark::host::limb_fields::<2>(be, 127);
+        WideScalar { lo, hi }
+    }
+    /// From its 32 big-endian bytes (`< 2^254`).
+    impl From<[u8; 32]> for WideScalar {
+        fn from(be: [u8; 32]) -> Self {
+            split(&be)
+        }
+    }
+    /// From a decimal or `0x`-hex string (`< 2^254`).
+    impl From<&str> for WideScalar {
+        fn from(v: &str) -> Self {
+            split(&xark::host::be_bytes_of(v))
+        }
+    }
+    impl From<String> for WideScalar {
+        fn from(v: String) -> Self {
+            Self::from(v.as_str())
+        }
+    }
+    impl From<u128> for WideScalar {
+        fn from(v: u128) -> Self {
+            split(&v.to_be_bytes())
+        }
+    }
+}
+
 /// Bring the gadget's public API into scope alongside the xark circuit
 /// essentials (`Field`, `Public`/`Private`, `require_eq`, `#[circuit]`), so a
 /// circuit crate needs a single `use xark_grumpkin::prelude::*;`.

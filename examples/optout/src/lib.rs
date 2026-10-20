@@ -27,13 +27,13 @@ mod tests {
     fn accepts_valid() {
         optout(
             [1, 2, 3, 4, 5, 6, 7, 8],
-            "53086056457022411804685755744397384".into(),
+            "53086056457022411804685755744397384",
         )
         .unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(optout([1, 2, 3, 4, 5, 6, 7, 8], "1".into()).is_err());
+        assert!(optout([1, 2, 3, 4, 5, 6, 7, 8], 1).is_err());
     }
 }

@@ -28,16 +28,16 @@ mod tests {
     // satisfaction, not uniqueness: honest inputs pass it.
     #[test]
     fn rejects_mismatched_output() {
-        assert!(underconstrained_bit("5".into(), "5".into()).is_ok());
-        assert!(underconstrained_bit("5".into(), "6".into()).is_err());
+        assert!(underconstrained_bit(5, 5).is_ok());
+        assert!(underconstrained_bit(5, 6).is_err());
     }
 
     // `check_constrained` also looks for free witness variables, and finds `b`.
     #[test]
     fn check_constrained_finds_the_free_bit() {
         let inputs = UnderconstrainedBitInputs {
-            x: "5".into(),
-            out: "5".into(),
+            x: 5.into(),
+            out: 5.into(),
         };
         let err = xark_prover::circuit("underconstrained_bit")
             .check_constrained(inputs)

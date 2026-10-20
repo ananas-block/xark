@@ -17,7 +17,7 @@ pub use digest::Digest;
 /// 16 bytes, each read big-endian (so the hash is `hi · 2¹²⁸ + lo`). Used as a
 /// `Public<Hash>` so a digest costs 2 public inputs, not 256. The two fields
 /// flatten to `<param>.hi` / `<param>.lo`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Hash {
     hi: Field,
     lo: Field,
@@ -110,32 +110,50 @@ impl RequireEqCircuit<Hash> for [[Field; 64]; 4] {
     }
 }
 
-// Host-side `NativeInput`: a `Hash` input is a 32-byte hash split into its two
-// 128-bit halves `hi`/`lo` (big-endian) as `<name>.hi` / `<name>.lo` leaves.
-// `std` is pulled in inside an anonymous const because this crate is `#![no_std]`.
+impl xark::ToFields for Hash {
+    const FIELD_LEN: usize = 2;
+    fn write_fields(&self, out: &mut [Field]) {
+        out[0] = self.hi;
+        out[1] = self.lo;
+    }
+}
+
+// Host side: a `Hash` value comes from the hash's 32 bytes (`From<[u8; 32]>`), split
+// into its two 128-bit halves `hi`/`lo` (big-endian), the leaves `<name>.hi` /
+// `<name>.lo`. `std` is pulled in inside an anonymous const (this crate is `no_std`).
 #[cfg(not(xark))]
 const _: () = {
     extern crate std;
-    use std::string::{String, ToString};
+    use std::string::String;
     use std::vec::Vec;
     impl xark_prover::NativeInput for Hash {
-        type Native = [u8; 32];
-        fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)> {
-            let mut hi = 0u128;
-            let mut k = 0usize;
-            while k < 16usize {
-                hi = (hi << 8) | (native[k] as u128);
-                k += 1;
-            }
-            let mut lo = 0u128;
-            while k < 32usize {
-                lo = (lo << 8) | (native[k] as u128);
-                k += 1;
-            }
+        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
             std::vec![
-                (std::format!("{prefix}.hi"), hi.to_string()),
-                (std::format!("{prefix}.lo"), lo.to_string()),
+                (std::format!("{prefix}.hi"), value.hi.into()),
+                (std::format!("{prefix}.lo"), value.lo.into()),
             ]
+        }
+    }
+    impl xark::host::FromBeBytes for Hash {
+        const BYTES: usize = 32;
+        fn from_be_bytes(bytes: &[u8]) -> Self {
+            assert_eq!(bytes.len(), 32, "a hash is 32 bytes");
+            let half = |b: &[u8]| {
+                let mut le = [0u8; 16];
+                le.copy_from_slice(b);
+                le.reverse();
+                Field::from_le_bytes(&le)
+            };
+            Hash {
+                hi: half(&bytes[..16]),
+                lo: half(&bytes[16..]),
+            }
+        }
+    }
+    /// From the hash's 32 bytes.
+    impl From<[u8; 32]> for Hash {
+        fn from(bytes: [u8; 32]) -> Self {
+            <Self as xark::host::FromBeBytes>::from_be_bytes(&bytes)
         }
     }
 };

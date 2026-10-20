@@ -21,6 +21,10 @@
 pub use xark::Field;
 use xark::require_eq;
 
+/// Re-exported so the [`fp!`] macro can name `xark` items (`ToFields`, the host
+/// helpers) from the caller's crate.
+#[doc(hidden)]
+pub use xark as __xark;
 /// Host-only re-export so the [`fp!`] macro can generate a decimal `NativeInput`
 /// without the caller depending on `xark_prover` by name.
 #[cfg(not(xark))]
@@ -41,7 +45,7 @@ const MAX_COLS: usize = 2 * MAX_LIMBS - 1;
 /// (value `Σ limb[i]·2^(BITS·i)`). A zero-cost newtype over `[Field; LIMBS]` whose
 /// methods forward to the free functions, so the emitted R1CS is byte-identical.
 /// Callers alias a concrete width, e.g. `type Fp = Bignum<3, 86>`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Bignum<const LIMBS: usize, const BITS: usize> {
     pub limbs: [Field; LIMBS],
 }
@@ -61,21 +65,61 @@ impl<const LIMBS: usize, const BITS: usize> xark::wasm::Input for Bignum<LIMBS, 
     }
 }
 
-// Host-side `NativeInput`: a `Bignum` circuit input is one whole number, taken as
-// a decimal (or `0x`-hex) string and split into its `LIMBS` little-endian `BITS`-bit
-// limbs — callers pass the value, never hand-decompose. Distinct from the
-// curve/`fp!` newtypes (own byte-host), so no coherence clash. `NativeInput` lives
-// in `std` `xark_prover` while this crate is `#![no_std]`, so pull `std` in inside
-// an anonymous const.
+impl<const LIMBS: usize, const BITS: usize> xark::ToFields for Bignum<LIMBS, BITS> {
+    const FIELD_LEN: usize = LIMBS;
+    fn write_fields(&self, out: &mut [Field]) {
+        out[..LIMBS].copy_from_slice(&self.limbs);
+    }
+}
+
+// Host side: a `Bignum` value is one whole number, from a decimal or `0x`-hex string
+// or its big-endian bytes, split into `LIMBS` little-endian `BITS`-bit limbs: callers
+// pass the value, never hand-decompose. `std` is pulled in inside an anonymous const
+// (this crate is `#![no_std]`).
 #[cfg(not(xark))]
 const _: () = {
     extern crate std;
     use std::string::String;
     use std::vec::Vec;
     impl<const LIMBS: usize, const BITS: usize> xark_prover::NativeInput for Bignum<LIMBS, BITS> {
-        type Native = String;
-        fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)> {
-            xark_prover::limb_leaves_decimal(native, prefix, LIMBS, BITS as u32)
+        fn leaves(value: &Self, prefix: &str) -> Vec<(String, xark_prover::Fr)> {
+            xark::host::limbs_leaves(&value.limbs, prefix)
+        }
+    }
+    impl<const LIMBS: usize, const BITS: usize> xark::host::FromBeBytes for Bignum<LIMBS, BITS> {
+        const BYTES: usize = xark::host::natural_bytes(LIMBS, BITS);
+        fn from_be_bytes(bytes: &[u8]) -> Self {
+            Bignum {
+                limbs: xark::host::limb_fields::<LIMBS>(bytes, BITS as u32),
+            }
+        }
+    }
+    impl<const LIMBS: usize, const BITS: usize> From<&str> for Bignum<LIMBS, BITS> {
+        fn from(value: &str) -> Self {
+            Bignum {
+                limbs: xark::host::limb_fields_str::<LIMBS>(value, BITS as u32),
+            }
+        }
+    }
+    impl<const LIMBS: usize, const BITS: usize> From<String> for Bignum<LIMBS, BITS> {
+        fn from(value: String) -> Self {
+            Self::from(value.as_str())
+        }
+    }
+    impl<const LIMBS: usize, const BITS: usize> From<u128> for Bignum<LIMBS, BITS> {
+        fn from(value: u128) -> Self {
+            <Self as xark::host::FromBeBytes>::from_be_bytes(&value.to_be_bytes())
+        }
+    }
+    impl<const LIMBS: usize, const BITS: usize> From<u64> for Bignum<LIMBS, BITS> {
+        fn from(value: u64) -> Self {
+            Self::from(value as u128)
+        }
+    }
+    /// An untyped literal (`Bignum::from(6)`); panics on a negative value.
+    impl<const LIMBS: usize, const BITS: usize> From<i32> for Bignum<LIMBS, BITS> {
+        fn from(value: i32) -> Self {
+            Self::from(u128::try_from(value).expect("a bignum value is non-negative"))
         }
     }
 };
@@ -289,7 +333,7 @@ macro_rules! fp {
     // input wrapper for code that does its own limb arithmetic (e.g. a lazy-reduction
     // path whose modulus has no headroom for `fp!`'s operators).
     (storage $vis:vis $name:ident, $limbs:literal, $bits:literal) => {
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         $vis struct $name {
             pub limbs: [$crate::Field; $limbs],
         }
@@ -298,6 +342,12 @@ macro_rules! fp {
             fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
                 $crate::__wasm::input_struct(n, stringify!($name));
                 Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
+            }
+        }
+        impl $crate::__xark::ToFields for $name {
+            const FIELD_LEN: usize = $limbs;
+            fn write_fields(&self, out: &mut [$crate::Field]) {
+                out[..$limbs].copy_from_slice(&self.limbs);
             }
         }
         #[allow(dead_code)]
@@ -336,15 +386,53 @@ macro_rules! fp {
             use std::string::String;
             use std::vec::Vec;
             impl $crate::__prover::NativeInput for $name {
-                type Native = String;
-                fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)> {
-                    $crate::__prover::limb_leaves_decimal(native, prefix, $limbs, $bits as u32)
+                fn leaves(value: &Self, prefix: &str) -> Vec<(String, $crate::__prover::Fr)> {
+                    $crate::__xark::host::limbs_leaves(&value.limbs, prefix)
+                }
+            }
+            impl $crate::__xark::host::FromBeBytes for $name {
+                const BYTES: usize = 32;
+                fn from_be_bytes(bytes: &[u8]) -> Self {
+                    Self { limbs: $crate::__xark::host::limb_fields::<{ $limbs }>(bytes, $bits as u32) }
+                }
+            }
+            /// From the value's 32 big-endian bytes.
+            impl From<[u8; 32]> for $name {
+                fn from(bytes: [u8; 32]) -> Self {
+                    <Self as $crate::__xark::host::FromBeBytes>::from_be_bytes(&bytes)
+                }
+            }
+            /// From a decimal or `0x`-hex string.
+            impl From<&str> for $name {
+                fn from(value: &str) -> Self {
+                    Self { limbs: $crate::__xark::host::limb_fields_str::<{ $limbs }>(value, $bits as u32) }
+                }
+            }
+            impl From<String> for $name {
+                fn from(value: String) -> Self {
+                    Self::from(value.as_str())
+                }
+            }
+            impl From<u128> for $name {
+                fn from(value: u128) -> Self {
+                    Self { limbs: $crate::__xark::host::limb_fields::<{ $limbs }>(&value.to_be_bytes(), $bits as u32) }
+                }
+            }
+            impl From<u64> for $name {
+                fn from(value: u64) -> Self {
+                    Self::from(value as u128)
+                }
+            }
+            /// An untyped literal; panics on a negative value.
+            impl From<i32> for $name {
+                fn from(value: i32) -> Self {
+                    Self::from(u128::try_from(value).expect("a field value is non-negative"))
                 }
             }
         };
     };
     (@build $vis:vis $name:ident, $modulus:literal, $limbs:expr, $bits:expr) => {
-        #[derive(Clone, Copy)]
+        #[derive(Clone, Copy, Debug)]
         $vis struct $name {
             pub limbs: [$crate::Field; $limbs],
         }
@@ -353,6 +441,12 @@ macro_rules! fp {
             fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
                 $crate::__wasm::input_struct(n, stringify!($name));
                 Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
+            }
+        }
+        impl $crate::__xark::ToFields for $name {
+            const FIELD_LEN: usize = $limbs;
+            fn write_fields(&self, out: &mut [$crate::Field]) {
+                out[..$limbs].copy_from_slice(&self.limbs);
             }
         }
         #[allow(dead_code)]

@@ -19,15 +19,15 @@ mod tests {
     fn accepts_valid() {
         // poseidon.hash2(3, 5)
         poseidon(
-            "3".into(),
-            "5".into(),
-            "7003178825990875955236852857865616475160076985313430133088248668396799513116".into(),
+            3,
+            5,
+            "7003178825990875955236852857865616475160076985313430133088248668396799513116",
         )
         .unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(poseidon("3".into(), "5".into(), "1".into()).is_err());
+        assert!(poseidon(3, 5, 1).is_err());
     }
 }

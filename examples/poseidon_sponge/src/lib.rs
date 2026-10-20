@@ -23,12 +23,12 @@ mod tests {
     fn accepts_valid() {
         // poseidon sponge hash([1..5])
         poseidon_sponge(
-            "1".into(),
-            "2".into(),
-            "3".into(),
-            "4".into(),
-            "5".into(),
-            "11125748760708140916786033670969375031496395171002607896175853736491095949636".into(),
+            1,
+            2,
+            3,
+            4,
+            5,
+            "11125748760708140916786033670969375031496395171002607896175853736491095949636",
         )
         .unwrap();
     }
@@ -36,12 +36,12 @@ mod tests {
     #[test]
     fn rejects_wrong() {
         assert!(poseidon_sponge(
-            "1".into(),
-            "2".into(),
-            "3".into(),
-            "4".into(),
-            "5".into(),
-            "1".into()
+            1,
+            2,
+            3,
+            4,
+            5,
+            1
         )
         .is_err());
     }

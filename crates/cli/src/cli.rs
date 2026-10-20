@@ -563,11 +563,10 @@ pub fn cmd_init(args: &[String]) -> i32 {
          unexpected_cfgs = {{ level = \"warn\", check-cfg = ['cfg(xark)'] }}\n"
     );
     let fn_ident = ident_of(&name);
-    let inputs_struct = format!("{}Inputs", pascal_of(&fn_ident));
     let lib_rs = format!(
         "{}{}",
         LIB_TEMPLATE.replace("__FN__", &fn_ident),
-        tests_template(&name, &inputs_struct)
+        tests_template(&fn_ident)
     );
     // Both files set the same rust-analyzer override: `rust-analyzer.toml` is the
     // editor-agnostic form; `.vscode/settings.json` covers VS Code specifically.
@@ -707,22 +706,6 @@ fn ident_of(name: &str) -> String {
     s
 }
 
-/// `my_square` → `MySquare` — must match `xark-macros`' struct naming so the
-/// scaffolded test references the generated `<Fn>Inputs` struct correctly.
-fn pascal_of(ident: &str) -> String {
-    ident
-        .split('_')
-        .filter(|seg| !seg.is_empty())
-        .map(|seg| {
-            let mut chars = seg.chars();
-            match chars.next() {
-                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect()
-}
-
 /// The starter circuit written by `xark init`. The `#[cfg(test)] mod tests`
 /// block ([`tests_template`]) is appended with the crate's own name filled in.
 ///
@@ -742,10 +725,10 @@ pub fn __FN__(secret: Private<Field>, result: Public<Field>) {
 
 /// The `#[cfg(test)] mod tests` appended to the scaffolded `src/lib.rs`.
 ///
-/// Inputs are the typed struct `#[circuit]` generates from the entry signature
-/// (`inputs` = `<Fn>Inputs`), so they're named, not positional. These tests load
-/// the built artifacts, so they need `xark build .` to have run first.
-fn tests_template(name: &str, inputs: &str) -> String {
+/// They call the validator `#[circuit]` generates under the entry's name: the same
+/// parameters, each taking anything that converts (`2` for a `Field`). These tests
+/// load the built artifacts; `cargo test` builds them when needed.
+fn tests_template(name: &str) -> String {
     format!(
         "\n\
          #[cfg(test)]\n\
@@ -754,14 +737,12 @@ fn tests_template(name: &str, inputs: &str) -> String {
          \n\
          \x20   #[test]\n\
          \x20   fn accepts_valid() {{\n\
-         \x20       let c = xark_prover::circuit(\"{name}\");\n\
-         \x20       c.check({inputs} {{ secret: \"2\".into(), result: \"4\".into() }}).unwrap(); // 2 * 2 == 4\n\
+         \x20       {name}(2, 4).unwrap(); // 2 * 2 == 4\n\
          \x20   }}\n\
          \n\
          \x20   #[test]\n\
          \x20   fn rejects_invalid() {{\n\
-         \x20       let c = xark_prover::circuit(\"{name}\");\n\
-         \x20       assert!(c.check({inputs} {{ secret: \"3\".into(), result: \"4\".into() }}).is_err()); // 3 * 3 != 4\n\
+         \x20       assert!({name}(3, 4).is_err()); // 3 * 3 != 4\n\
          \x20   }}\n\
          }}\n"
     )

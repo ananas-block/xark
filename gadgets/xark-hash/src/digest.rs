@@ -38,7 +38,7 @@ use xark::{CircuitInput, Field, RequireEqCircuit};
 /// `#[derive(CircuitInput)]` generates `Into<[Field; 256]>` in structural-flatten
 /// order (`bits[w][j]` → index `w*32 + j`), so a host input builder's leaf order is
 /// guaranteed — not merely disciplined — to match the circuit's.
-#[derive(Clone, Copy, CircuitInput)]
+#[derive(Clone, Copy, Debug, CircuitInput)]
 pub struct Digest {
     /// 8 words × 32 little-endian bits, identical to the `sha256` gadget output.
     bits: [[Field; 32]; 8],

@@ -19,9 +19,9 @@ mod tests {
     fn less_than() {
         // 5 < 7 → 1
         is_lt_check(
-            ["5".into(), "0".into()],
-            ["7".into(), "0".into()],
-            "1".into(),
+            [5, 0],
+            [7, 0],
+            1,
         )
         .unwrap();
     }
@@ -30,9 +30,9 @@ mod tests {
     fn not_less_than() {
         // 7 < 5 is false → 0
         is_lt_check(
-            ["7".into(), "0".into()],
-            ["5".into(), "0".into()],
-            "0".into(),
+            [7, 0],
+            [5, 0],
+            0,
         )
         .unwrap();
     }
@@ -40,9 +40,9 @@ mod tests {
     #[test]
     fn rejects_wrong_claim() {
         assert!(is_lt_check(
-            ["5".into(), "0".into()],
-            ["7".into(), "0".into()],
-            "0".into()
+            [5, 0],
+            [7, 0],
+            0
         )
         .is_err());
     }

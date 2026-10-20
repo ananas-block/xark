@@ -16,11 +16,11 @@ mod tests {
     #[test]
     fn accepts_valid() {
         // 3·4 + 3 = 15
-        mixed_pi("3".into(), "4".into(), "15".into()).unwrap();
+        mixed_pi(3, 4, 15).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(mixed_pi("3".into(), "4".into(), "16".into()).is_err());
+        assert!(mixed_pi(3, 4, 16).is_err());
     }
 }

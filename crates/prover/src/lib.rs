@@ -6,7 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ark_bn254::{Bn254, Fr};
+use ark_bn254::Bn254;
+/// The prover's scalar field (BN254 `Fr`): what an input leaf's value is.
+pub use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use num_bigint::{BigInt, Sign};
 use xark_groth16::{Proof, VerifyingKey};
@@ -411,27 +413,22 @@ impl std::error::Error for ProveError {}
 /// (so digest bits / curve coordinates that overflow `i128` are representable);
 /// `Circuit::resolve_inputs` matches each name to its variable.
 pub trait ProveInputs {
-    fn into_inputs(self) -> Vec<(String, String)>;
+    fn into_inputs(self) -> Vec<(String, Fr)>;
 }
 
-/// A **transparent gadget input type** — a type that is field-element limbs
-/// in-circuit (e.g. `Fq { limbs: [Field; 4] }`, `Point { x, y }`) but has a
-/// *native* host form (`[u8; 32]`, `[u8; 65]`, …) a caller actually holds.
+/// A circuit input type's host-side fan-out: a **value** of the type (built on the
+/// host from `Field`s, integers, or a gadget's natural form such as an Ed25519 key's
+/// `[u8; 32]`, via its `From` impls) renders to `(leaf-name, decimal)` pairs, named
+/// as the compiler's structural flatten names the circuit type (`q.x.limbs[i]`).
 ///
-/// A `#[circuit]` parameter of such a type takes its [`Native`](Self::Native) form
-/// in the generated `<Fn>Inputs` struct (and the host validator), and this impl's
-/// [`leaves`](Self::leaves) fans that native value out to the circuit's witness
-/// leaves — the same structural-flatten names (`q.x.limbs[i]`) the compiler gives
-/// the circuit type. So a gadget exposes one type usable on both sides: the user
-/// passes bytes, the circuit sees limbs.
+/// A `#[circuit]` parameter's `<Fn>Inputs` field holds the circuit type itself, and
+/// the validator takes `impl Into<T>`, so callers pass whatever converts: `7u64` or
+/// an `ark_bn254::Fr` for a `Field`, bytes for a point. `#[derive(CircuitInput)]`
+/// and `#[derive(Transparent)]` implement it; so does each gadget input type.
 pub trait NativeInput {
-    /// The native host value (what a normal crate emits: a SEC1 point, a scalar's
-    /// bytes, …). This is the type the `#[circuit]` `<Fn>Inputs` field holds.
-    type Native;
-
-    /// Fan a native value out to `(leaf-name, decimal)` pairs under `prefix`,
-    /// matching the compiler's flatten names for this circuit type.
-    fn leaves(native: &Self::Native, prefix: &str) -> Vec<(String, String)>;
+    /// Fan `value` out to `(leaf-name, value)` pairs under `prefix`, matching the
+    /// compiler's flatten names for this circuit type.
+    fn leaves(value: &Self, prefix: &str) -> Vec<(String, Fr)>;
 
     /// This type's schema JSON for `<Fn>Inputs::schema()`. `#[derive(CircuitInput)]`
     /// describes the struct in `defs` and returns `{"ref": "<Name>"}`; any other input
@@ -739,9 +736,7 @@ impl Circuit {
             let Some(&id) = by_name.get(name.as_str()) else {
                 panic!("unknown circuit input `{name}`; expected {:?}", names());
             };
-            let val = field_input_decimal(&val)
-                .map_err(|e| ProveError(format!("input `{name}`: {e}")))?;
-            id_inputs.insert(id, val);
+            id_inputs.insert(id, ark_ff::PrimeField::into_bigint(val).to_string());
         }
         Ok(id_inputs)
     }

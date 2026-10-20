@@ -539,9 +539,108 @@ impl From<u128> for Field {
 /// Decimal-string constant: `Field::from("218882428718…")` / `"…".into()`, for
 /// full field-sized (up to ~254-bit) constants that don't fit in `u128`. The
 /// compiler rejects a string with any non-decimal character at compile time.
+#[cfg(xark)]
 impl From<&str> for Field {
     fn from(s: &str) -> Field {
         Field::constant(s)
+    }
+}
+
+/// An input value from a decimal or `0x`-hex string, as `xark prove --inputs`
+/// takes it. Panics on anything else, or on a value `>= p`: an input outside the
+/// field is a mistake, never silently reduced (see [`Field::try_from_str`]).
+#[cfg(not(xark))]
+impl From<&str> for Field {
+    fn from(s: &str) -> Field {
+        Field::try_from_str(s).unwrap_or_else(|e| panic!("{e}"))
+    }
+}
+
+/// See `From<&str>`.
+#[cfg(not(xark))]
+impl From<alloc::string::String> for Field {
+    fn from(s: alloc::string::String) -> Field {
+        Field::from(s.as_str())
+    }
+}
+
+/// See `From<&str>`.
+#[cfg(not(xark))]
+impl From<&alloc::string::String> for Field {
+    fn from(s: &alloc::string::String) -> Field {
+        Field::from(s.as_str())
+    }
+}
+
+// Signed integers as input values, so an untyped literal (`cube(3, 27)`, which
+// Rust types as `i32`) converts. Negative values panic: inputs must be field
+// elements `0 <= x < p`, as `xark prove --inputs` requires. Host-only.
+#[cfg(not(xark))]
+impl From<i32> for Field {
+    fn from(v: i32) -> Field {
+        Field::from(i64::from(v))
+    }
+}
+
+#[cfg(not(xark))]
+impl From<i64> for Field {
+    fn from(v: i64) -> Field {
+        let v = u64::try_from(v).unwrap_or_else(|_| {
+            panic!("input value {v} is negative; inputs are field elements 0 <= x < p")
+        });
+        Field::from_u64(v)
+    }
+}
+
+/// A prover scalar (`ark_bn254::Fr`, what off-circuit reference code computes) as
+/// an input value. Host-only.
+#[cfg(not(xark))]
+impl From<ark_bn254::Fr> for Field {
+    fn from(x: ark_bn254::Fr) -> Field {
+        use ark_ff::PrimeField;
+        Field {
+            _limbs: x.into_bigint().0,
+        }
+    }
+}
+
+#[cfg(not(xark))]
+impl Field {
+    /// A field element from a decimal or `0x`-hex string, or an error naming what's
+    /// wrong: not a number, or not below `p` (out-of-range inputs are rejected, not
+    /// reduced, as everywhere else inputs are taken). Host-only.
+    pub fn try_from_str(s: &str) -> Result<Field, alloc::string::String> {
+        use alloc::format;
+        let t = s.trim();
+        let (digits, radix) = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+            Some(h) => (h, 16u32),
+            None => (t, 10u32),
+        };
+        if digits.is_empty() {
+            return Err(format!("`{s}` is not a decimal or 0x-hex number"));
+        }
+        let mut limbs = [0u64; 4];
+        for c in digits.chars() {
+            let Some(d) = c.to_digit(radix) else {
+                return Err(format!("`{s}` is not a decimal or 0x-hex number"));
+            };
+            let mut carry = d as u128;
+            for l in limbs.iter_mut() {
+                let v = *l as u128 * radix as u128 + carry;
+                *l = v as u64;
+                carry = v >> 64;
+            }
+            if carry != 0 {
+                return Err(format!("`{s}` is larger than the field (2^256 or more)"));
+            }
+        }
+        let f = Field { _limbs: limbs };
+        if Field::reduced(limbs)._limbs != limbs {
+            return Err(format!(
+                "`{s}` is not a field element (it is p or more); inputs are not reduced mod p"
+            ));
+        }
+        Ok(f)
     }
 }
 
@@ -973,6 +1072,24 @@ impl<const N: usize, A: Copy + RequireEqCircuit<B>, B: Copy> RequireEqCircuit<[B
             self[i].require_eq_circuit(rhs[i]);
             i += 1;
         }
+    }
+}
+
+/// A circuit input type's `Field` leaves, in the compiler's structural-flatten
+/// order. `#[derive(CircuitInput)]` implements it and uses it for nested fields, and
+/// the gadgets' input types (points, hashes, bignums) implement it too, so a derived
+/// struct can hold any of them and still flatten (`to_fields`) for hashing.
+pub trait ToFields {
+    /// The number of `Field` leaves.
+    const FIELD_LEN: usize;
+    /// Write the leaves to `out[..FIELD_LEN]`.
+    fn write_fields(&self, out: &mut [Field]);
+}
+
+impl ToFields for Field {
+    const FIELD_LEN: usize = 1;
+    fn write_fields(&self, out: &mut [Field]) {
+        out[0] = *self;
     }
 }
 

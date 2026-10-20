@@ -42,15 +42,15 @@ mod tests {
     fn accepts_valid() {
         // same 3-round MiMC as `mimc`
         mimc_loop(
-            "3".into(),
-            "5".into(),
-            "20571574433789244246851793328630243816385775205591326058386183977315966726389".into(),
+            3,
+            5,
+            "20571574433789244246851793328630243816385775205591326058386183977315966726389",
         )
         .unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(mimc_loop("3".into(), "5".into(), "1".into()).is_err());
+        assert!(mimc_loop(3, 5, 1).is_err());
     }
 }

@@ -21,6 +21,20 @@ gadgets now check more:
 
 ### Changed
 
+- **Typed host inputs.** The validator `#[circuit]` generates (and its
+  `<Fn>Inputs` struct) takes typed values instead of strings: a `Field` takes
+  anything that converts (`cube(3, 27)`, an `ark_bn254::Fr`, a decimal / `0x`-hex
+  string; values `>= p` or negative are rejected), and a gadget type takes its
+  natural form (`PointL` an Ed25519 key's 32 bytes, secp `Point` its 64 / 65
+  bytes, scalars their 32 bytes, `Affine` an `(x, y)`, bignums a number). Input
+  leaves carry field elements, not decimal strings. `NativeInput` lost its
+  `Native` type: a value fans out its own leaves.
+- `#[derive(CircuitInput)]` structs can hold gadget types (`Affine`, `PointL`,
+  `Hash`, …), and `#[circuit]` parameters can be arrays of them (`[Affine; 4]`).
+  New `ToFields` trait for flattening any input type. `xark-grumpkin` gains
+  `Instance`, `WideScalar` and `wide_scalar_mul`; the grumpkin examples use them
+  (`grumpkin_ivc`: 20 parameters → 8). `grumpkin_nova_fold`'s inputs are now
+  grouped by instance, so its circuit (and keys) change.
 - The on-chain verifier skips the scalar multiplication for public inputs of
   0, 1 or up to 128 (a skip or a few point additions instead): booleans,
   enum values and counts verify cheaper. Up to 38% less compute on a

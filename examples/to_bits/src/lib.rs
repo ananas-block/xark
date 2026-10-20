@@ -16,11 +16,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        to_bits("200".into(), "200".into()).unwrap();
+        to_bits(200, 200).unwrap();
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(to_bits("200".into(), "201".into()).is_err());
+        assert!(to_bits(200, 201).is_err());
     }
 }

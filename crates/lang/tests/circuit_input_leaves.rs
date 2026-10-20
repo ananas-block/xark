@@ -1,11 +1,18 @@
 //! `#[derive(CircuitInput)]` generates the host-side `NativeInput` fan-out directly:
-//! `Native = Self` (the `Field`-composed struct, built host-side with `Field` values),
-//! and `leaves` renders each field to a decimal under the compiler's structural-flatten
-//! names — no parallel `String` mirror. These tests pin the generated leaf names, order,
-//! and decimal values, which must match the compiler's input-var order exactly.
+//! the value is the struct itself (built host-side with `Field` values), and `leaves`
+//! gives each field's value under the compiler's structural-flatten names. These
+//! tests pin the generated leaf names, order, and values, which must match the
+//! compiler's input-var order exactly.
 
 use xark::{CircuitInput, Field};
-use xark_prover::NativeInput;
+
+/// The leaves with decimal values, for comparison.
+fn leaves<T: xark_prover::NativeInput>(v: &T, prefix: &str) -> Vec<(String, String)> {
+    T::leaves(v, prefix)
+        .into_iter()
+        .map(|(n, f)| (n, f.to_string()))
+        .collect()
+}
 
 /// Scalars + a fixed array — `Field`s (host-built) rendered to decimals, `<prefix>.f[i]`
 /// for array elements.
@@ -23,7 +30,7 @@ fn circuit_input_leaves_are_decimals_in_flatten_order() {
         tags: [Field::from(10u64), Field::from(11u64), Field::from(12u64)],
         balance: Field::from(999u64),
     };
-    let leaves = <Account as NativeInput>::leaves(&acct, "user");
+    let leaves = leaves(&acct, "user");
     assert_eq!(
         leaves,
         vec![
@@ -51,10 +58,7 @@ fn circuit_input_leaf_count_matches_flatten_arity() {
         tags: [Field::from(2u64); 3],
         balance: Field::from(3u64),
     };
-    assert_eq!(
-        <Account as NativeInput>::leaves(&acct, "x").len(),
-        flat.len()
-    );
+    assert_eq!(leaves(&acct, "x").len(), flat.len());
 }
 
 /// Native integers, byte arrays, and a nested `CircuitInput` struct: host values stay
@@ -83,7 +87,7 @@ fn circuit_input_uints_and_nesting_leaves() {
         tag: [1, 2],
         c: 3,
     };
-    let leaves = <Outer as NativeInput>::leaves(&o, "o");
+    let leaves = leaves(&o, "o");
     let got: Vec<(&str, &str)> = leaves
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))

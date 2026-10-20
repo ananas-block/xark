@@ -16,7 +16,7 @@ const P_PLUS_P: Pt = ("121297168579244293402185420759082125334966770971664247139
 const P_PLUS_Q: Pt = ("10048396645591090210938223153773661969273778423700515767537776857572940140693", "11191650190137620699484062530470068897361843000224931459139859184792496975033", "0");
 
 fn inputs(p: Pt, q: Pt, r: Pt) -> GrumpkinCompleteAddInputs {
-    let s = |v: &str| v.to_string();
+    let s = |v: &str| v.into();
     GrumpkinCompleteAddInputs {
         px: s(p.0), py: s(p.1), pinf: s(p.2),
         qx: s(q.0), qy: s(q.1), qinf: s(q.2),
@@ -45,9 +45,9 @@ fn complete_add_all_cases() {
     let (p, q, r) = (P, Q, P_PLUS_P);
     assert!(
         grumpkin_complete_add(
-            p.0.into(), p.1.into(), p.2.into(),
-            q.0.into(), q.1.into(), q.2.into(),
-            r.0.into(), r.1.into(), r.2.into(),
+            p.0, p.1, p.2,
+            q.0, q.1, q.2,
+            r.0, r.1, r.2,
         )
         .is_err(),
         "wrong sum must be rejected"

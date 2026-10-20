@@ -54,7 +54,7 @@ use xark::{Field, Transparent, require_eq};
 /// `[u8; 32]` big-endian on the host. Recomposed to the internal 3×86 limbs by
 /// `unpack`. `#[derive(Transparent)]` derives the host `NativeInput` (`[u8; 32]`
 /// → `<name>.limbs[0..2]`) from this declaration.
-#[derive(Clone, Copy, Transparent)]
+#[derive(Clone, Copy, Debug, Transparent)]
 #[transparent(bits = 128)]
 pub struct Scalar {
     pub limbs: [Field; 2],
@@ -64,7 +64,7 @@ pub struct Scalar {
 /// `[u8; 64]` (`x ‖ y`, SEC1 minus the `0x04` tag) on the host, `{ x, y }`
 /// (flattening to `<name>.x.limbs[i]` / `<name>.y.limbs[i]`) in-circuit. Verify a
 /// signature against it with [`Point::verify`].
-#[derive(Clone, Copy, Transparent)]
+#[derive(Clone, Copy, Debug, Transparent)]
 pub struct Point {
     pub x: Scalar,
     pub y: Scalar,
@@ -72,7 +72,7 @@ pub struct Point {
 
 /// A P-256 ECDSA signature `(r, s)` — `[u8; 64]` (`r ‖ s`) on the host, `{ r, s }`
 /// in-circuit. Pass it to [`Point::verify`] with the message digest.
-#[derive(Clone, Copy, Transparent)]
+#[derive(Clone, Copy, Debug, Transparent)]
 pub struct Signature {
     pub r: Scalar,
     pub s: Scalar,

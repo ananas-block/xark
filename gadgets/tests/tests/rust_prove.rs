@@ -9,12 +9,12 @@ use std::process::Command;
 use common::{tempdir, xark_bin, xark_build};
 
 struct CubeInputs {
-    secret: &'static str,
-    result: &'static str,
+    secret: u64,
+    result: u64,
 }
 
 impl xark_prover::ProveInputs for CubeInputs {
-    fn into_inputs(self) -> Vec<(String, String)> {
+    fn into_inputs(self) -> Vec<(String, xark_prover::Fr)> {
         vec![
             ("secret".into(), self.secret.into()),
             ("result".into(), self.result.into()),
@@ -37,8 +37,8 @@ fn rust_prove_matches_the_cli() {
     let circuit = xark_prover::circuit_at(&out);
     let proof = circuit
         .prove(CubeInputs {
-            secret: "3",
-            result: "27",
+            secret: 3,
+            result: 27,
         })
         .expect("3³ = 27 proves");
     // `public_inputs.bin`: an 8-byte little-endian count, then 27 as 32 bytes LE.
@@ -64,8 +64,8 @@ fn rust_prove_matches_the_cli() {
 
     let err = circuit
         .prove(CubeInputs {
-            secret: "3",
-            result: "28",
+            secret: 3,
+            result: 28,
         })
         .expect_err("3³ ≠ 28");
     assert!(!err.to_string().is_empty());
@@ -73,8 +73,8 @@ fn rust_prove_matches_the_cli() {
         .prove_with_key(
             tmp.path().join("missing.bin"),
             CubeInputs {
-                secret: "3",
-                result: "27",
+                secret: 3,
+                result: 27,
             },
         )
         .expect_err("no key");

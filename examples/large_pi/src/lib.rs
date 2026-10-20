@@ -38,22 +38,22 @@ mod tests {
     fn accepts_valid() {
         // x0+x15 = 30, total sum = 44
         large_pi(
-            "10".into(),
-            "14".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "20".into(),
+            10,
+            14,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            20,
         )
         .unwrap();
     }
@@ -61,22 +61,22 @@ mod tests {
     #[test]
     fn rejects_wrong() {
         assert!(large_pi(
-            "10".into(),
-            "14".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "0".into(),
-            "21".into()
+            10,
+            14,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            21
         )
         .is_err());
     }

@@ -24,11 +24,11 @@ mod tests {
 
     #[test]
     fn accepts_valid() {
-        witness_only_check("2".into(), "16".into()).unwrap(); // 2⁴ = 16
+        witness_only_check(2, 16).unwrap(); // 2⁴ = 16
     }
 
     #[test]
     fn rejects_wrong() {
-        assert!(witness_only_check("2".into(), "17".into()).is_err());
+        assert!(witness_only_check(2, 17).is_err());
     }
 }
