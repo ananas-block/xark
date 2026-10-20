@@ -4909,6 +4909,8 @@ dependencies = [
 name = "xark-poseidon2"
 version = "0.3.0"
 dependencies = [
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
  "xark",
  "xark-ir",
  "xark-test-harness",

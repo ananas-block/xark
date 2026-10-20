@@ -1,6 +1,6 @@
 //! Real Halo/Bulletproofs IPA transcript over Grumpkin, n=4 / k=2 rounds, with
-//! Poseidon2 Fiat-Shamir challenges (host `poseidon2` crate == the in-circuit
-//! `xark-poseidon2` gadget). SELF-VALIDATING: asserts the final IPA relation
+//! Poseidon2 Fiat-Shamir challenges (`xark_poseidon2::native`, the in-circuit
+//! gadget's own permutation). SELF-VALIDATING: asserts the final IPA relation
 //! `P_final == a*·G* + (a*·b*)·U` and `G* == Σ sⱼ·Gⱼ`, then emits the values the
 //! Milestone-2 circuit will verify. Challenges are the low 128 bits of the
 //! Poseidon2 output (Halo-style short challenge), reused verbatim in-circuit.
@@ -29,10 +29,10 @@ fn scalar_to_base(s: &Scalar) -> Base {
 
 // Poseidon2(inputs) → challenge = low 128 bits, as a Grumpkin scalar.
 fn challenge(inputs: &[Base]) -> Scalar {
-    // host poseidon2::hash needs a fixed-size array; we only ever pass 5 or 6.
+    // native::hash needs a fixed-size array; we only ever pass 5 or 6.
     let h: Base = match inputs.len() {
-        6 => poseidon2::hash([inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5]]),
-        5 => poseidon2::hash([inputs[0], inputs[1], inputs[2], inputs[3], inputs[4]]),
+        6 => xark_poseidon2::native::hash([inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5]]),
+        5 => xark_poseidon2::native::hash([inputs[0], inputs[1], inputs[2], inputs[3], inputs[4]]),
         _ => unreachable!(),
     };
     let hbig = BigUint::from_bytes_le(&h.into_bigint().to_bytes_le());

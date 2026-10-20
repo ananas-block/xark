@@ -90,6 +90,10 @@ gadgets now check more:
 
 ### Added
 
+- `xark_poseidon2::native`: the Poseidon2 permutation, `hash2` and `hash` on
+  the host (over `ark_bn254::Fr`), from the same code as the circuit gadget, so
+  wallets and tests compute the digests a circuit commits to without a second
+  implementation. Circuits are unchanged.
 - `xark build` prints the circuit digest (a fingerprint of the R1CS) and writes it
   to `target/xark/<name>/digest`.
 - Proving from Rust: `xark_prover::circuit("name").prove(inputs)` proves with the
