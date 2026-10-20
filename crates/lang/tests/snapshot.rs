@@ -5739,3 +5739,66 @@ fn aes_blocks_are_sound() {
         }
     }
 }
+
+/// `require_eq` takes any `Into<Field>` scalar on either side: every unsigned
+/// width, decimal strings, and constant/computed booleans, in both operand orders.
+#[test]
+fn require_eq_accepts_into_field_operands() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+         pub fn circuit(x: Private<Field>) {\n\
+         \x20   require_eq(x, 7u8);\n\
+         \x20   require_eq(7u16, x);\n\
+         \x20   require_eq(x, 7u32);\n\
+         \x20   require_eq(7u64, x);\n\
+         \x20   require_eq(x, 7u128);\n\
+         \x20   require_eq(\"7\", x);\n\
+         \x20   require_eq(true, Field::from(1u8));\n\
+         \x20   require_eq(Field::from(0u8), false);\n\
+         \x20   require_eq(x == Field::from(7u8), true);\n\
+         }\n";
+    let c = compile_with_field(
+        &write_case("require_eq_into", src),
+        "require_eq_into",
+        "bn254",
+    );
+    assert!(
+        c.status_success,
+        "Into<Field> operands should compile: {}",
+        c.stderr
+    );
+    let program = c.program();
+    assert!(solves(&program, &[("x", "7")]));
+    assert!(
+        !solves(&program, &[("x", "8")]),
+        "the converted constants must still constrain the witness"
+    );
+
+    let signed = "#![no_std]\nuse xark::prelude::*;\n\
+         pub fn circuit(x: Private<Field>) { require_eq(-1i64, x); }\n";
+    let c = compile_with_field(
+        &write_case("require_eq_signed", signed),
+        "require_eq_signed",
+        "bn254",
+    );
+    assert!(
+        !c.status_success,
+        "signed integers have no Into<Field> implementation"
+    );
+}
+
+/// An integer on the left is the same circuit as an explicit `Field::from`.
+#[test]
+fn require_eq_integer_matches_explicit_conversion() {
+    let digest = |name: &str, body: &str| {
+        let src = format!(
+            "#![no_std]\nuse xark::prelude::*;\npub fn circuit(x: Private<Field>) {{ {body} }}\n"
+        );
+        let c = compile_with_field(&write_case(name, &src), name, "bn254");
+        assert!(c.status_success, "{name} failed: {}", c.stderr);
+        c.circuit_digest()
+    };
+    assert_eq!(
+        digest("require_eq_int_lhs", "require_eq(7u64, x);"),
+        digest("require_eq_field_lhs", "require_eq(Field::from(7u64), x);"),
+    );
+}

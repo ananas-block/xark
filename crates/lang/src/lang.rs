@@ -946,6 +946,20 @@ impl<R: Into<Field>> RequireEqCircuit<R> for bool {
     }
 }
 
+// The other `Into<Field>` scalars, so either side of `require_eq` may be one
+// (`require_eq(7u64, x)` as well as `require_eq(x, 7u64)`).
+macro_rules! impl_require_eq_scalar {
+    ($($t:ty),*) => {$(
+        impl<R: Into<Field>> RequireEqCircuit<R> for $t {
+            #[inline]
+            fn require_eq_circuit(self, rhs: R) {
+                __xark_require_eq_scalar(self, rhs);
+            }
+        }
+    )*};
+}
+impl_require_eq_scalar!(u8, u16, u32, u64, u128, &str);
+
 /// Element-wise equality for fixed-size arrays: `require_eq(out, expected)` on
 /// `[T; N]` emits the per-element constraints, unrolling to the same `N` scalar
 /// `require_eq`s a manual loop produces. Recurses through nested arrays via the

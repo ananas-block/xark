@@ -121,6 +121,8 @@ gadgets now check more:
 
 ### Fixed
 
+- `require_eq` accepts an integer or decimal string on either side:
+  `require_eq(7u64, x)` no longer fails to compile.
 - The verifier docs no longer suggest `verify_strict` makes proof bytes safe
   as a replay or dedup key. It only rejects non-canonical encodings; Groth16
   proofs are re-randomizable, so anyone holding a valid proof can make another
