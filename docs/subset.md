@@ -20,11 +20,12 @@ and every operation on a witness becomes constraints. Rule of thumb:
 visibility. `require_eq(a, b)` emits an equality **constraint**.
 
 ```rust
-#![no_std]
+#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.
-pub fn circuit(secret: Private<Field>, result: Public<Field>) {
+#[circuit]
+pub fn cube(secret: Private<Field>, result: Public<Field>) {
     require_eq(secret.pow(3), result);
 }
 ```

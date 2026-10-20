@@ -23,17 +23,19 @@ xark doctor        # checks your setup
 
 ## As a language (library)
 
-Write a circuit as a `#![no_std]` function over `Field` values, using the `xark`
-prelude. `require_eq` emits a circuit equality constraint (not a native `bool`);
+Write a circuit as a `#[circuit]` function over `Field` values, using the `xark`
+prelude (`xark init` scaffolds the crate, `Cargo.toml` included; see
+`examples/cube`). `require_eq` emits a circuit equality constraint (not a native `bool`);
 `Private<T>` / `Public<T>` mark input visibility; `Field` supports `+ - *`,
 `.pow(n)` for exponentiation by a constant, and `^` as boolean XOR.
 
 ```rust
-#![no_std]
+#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.
-pub fn circuit(secret: Private<Field>, result: Public<Field>) {
+#[circuit]
+pub fn cube(secret: Private<Field>, result: Public<Field>) {
     require_eq(secret.pow(3), result);
 }
 ```
@@ -198,10 +200,10 @@ xark-poseidon = { path = "../../gadgets/xark-poseidon" }
 ```
 
 ```rust
-#![no_std]
+#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 use xark_poseidon::hash;
-// ... call `hash(..)` inside `circuit` and `require_eq` the result.
+// ... call `hash(..)` inside the `#[circuit]` fn and `require_eq` the result.
 ```
 
 ## Examples
