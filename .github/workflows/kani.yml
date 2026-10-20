@@ -115,7 +115,7 @@ jobs:
             verifier::proofs::batch_partial_entry_rejected
             verifier::proofs::batch_scratch_too_small_rejected
             verifier::proofs::totality_verify_groth16_batch
-            verifier::proofs::add_le_is_exact
+            verifier::proofs::add_mod_r_is_mod_add
           )
           failed=()
           for h in "${harnesses[@]}"; do

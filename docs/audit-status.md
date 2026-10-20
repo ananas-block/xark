@@ -256,6 +256,12 @@ stubs for `G1Point::Mul / Add / pairing`), and pairing operand assembly. The ref
 (`crates/verifier/reference-program/`) has a pinned SHA-256 in `expected.sha256` verified in CI
 by `.github/workflows/reproducible-build.yml`.
 
+`verify_groth16_batch` (several proofs of one VK in one pairing call) is new and
+has had no review beyond its own tests and Kani harnesses. An auditor should
+check the weight derivation (SHA-256 over the domain tag, the whole VK and the
+whole batch, 252-bit weights with `r₀ = 1`), that every value the pairing sees
+is covered by that hash, and the `Σ rᵢ` reduction mod `r` (`add_mod_r`).
+
 ## Out of scope
 
 * External audit cost/scoping — not yet engaged.

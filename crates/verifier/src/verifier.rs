@@ -620,13 +620,14 @@ pub fn verify_proof_only_strict(
 //   Πᵢ e(rᵢ·(-Aᵢ), Bᵢ) · e((Σrᵢ)·α, β) · e(Σ rᵢ·vk_xᵢ, γ) · e(Σ rᵢ·Cᵢ, δ) = 1
 //
 // M + 3 pairs instead of 4M. Without the weights, invalid proofs could be made
-// to cancel each other out; with weights the prover can't predict, a batch with
-// any invalid proof passes with probability about 2⁻¹²⁷. So r₀ = 1 and each other
-// rᵢ is 128 bits of SHA-256 over the domain tag, the whole VK and the whole batch
-// (fixed before any weight is known), with the top bit set so it's never 0.
+// to cancel each other out. With them, if proof j is invalid the batch passes only
+// when rⱼ hits the one value (mod r) that cancels the rest: r₀ = 1, and each other
+// rᵢ is 252 bits of SHA-256 over the domain tag, the whole VK and the whole batch,
+// so they're fixed only once everything they weigh is. The weights are public, so
+// a prover can grind: each new batch is a fresh try at about 2⁻²⁵² (full-width
+// weights cost the same as narrow ones: a scalar mul is fixed-price).
 //
-// Strict only: the hash must see each point's one canonical encoding, or the
-// bits the syscall masks would give a prover free tries at the weights.
+// Strict, like `verify_groth16_strict`: one encoding per point.
 
 /// Domain tag for the batch weights' hash.
 const BATCH_DOMAIN: &[u8] = b"xark-groth16-batch-v1";
@@ -648,26 +649,33 @@ fn g16_pairing_bytes(input: &[u8]) -> Result<[u8; 32], AltBn128Error> {
     pairing_bytes(input)
 }
 
-/// Weight `rᵢ` (`i ≥ 1`): the low 128 bits of `SHA-256(seed || i)` with bit 127
-/// set, as a 32-byte LE scalar (canonical: `< 2¹²⁸ < r`).
+/// Weight `rᵢ` (`i ≥ 1`): `SHA-256(seed || i)` as a 32-byte LE scalar in
+/// `[2²⁵², 2²⁵³)`: bits 253..255 cleared and bit 252 set, so it's never 0 and
+/// canonical (`2²⁵³ < r`), with 252 bits from the hash.
 #[inline(always)]
 fn batch_weight(seed: &[u8; 32], i: u64) -> [u8; FR_BYTES] {
-    let h = batch_hash(&[seed, &i.to_le_bytes()]);
-    let mut r = [0u8; FR_BYTES];
-    r[..16].copy_from_slice(&h[..16]);
-    r[15] |= 0x80;
+    let mut r = batch_hash(&[seed, &i.to_le_bytes()]);
+    r[31] = (r[31] & 0x0f) | 0x10;
     r
 }
 
-/// `acc += x` on 256-bit LE integers. The batch's weight sum stays below
-/// `M · 2¹²⁸ + 1`, far from overflowing (or reaching `r`).
+/// `acc = (acc + x) mod r` for canonical `acc, x < r`, on 256-bit LE integers:
+/// the sum is below `2r < 2²⁵⁵`, so one conditional subtraction reduces it.
 #[inline(always)]
-fn add_le(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
+fn add_mod_r(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
     let mut carry = 0u16;
     for i in 0..FR_BYTES {
         let t = acc[i] as u16 + x[i] as u16 + carry;
         acc[i] = t as u8;
         carry = t >> 8;
+    }
+    if !le_lt(acc, &FR_MODULUS_LE) {
+        let mut borrow = 0i16;
+        for i in 0..FR_BYTES {
+            let t = acc[i] as i16 - FR_MODULUS_LE[i] as i16 - borrow;
+            acc[i] = t as u8;
+            borrow = (t < 0) as i16;
+        }
     }
 }
 
@@ -678,7 +686,8 @@ fn add_le(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
 /// [`batch_scratch_len`]`(M)` bytes, and can be on the heap, in account data or
 /// on the stack.
 ///
-/// `Ok(true)` means every proof verifies (except with probability about 2⁻¹²⁷);
+/// `Ok(true)` means every proof verifies (except with probability about 2⁻²⁵² per
+/// batch an attacker tries);
 /// `Ok(false)` means at least one doesn't, but not which: verify them one by one
 /// to find it. Coordinates must be canonical, as in [`verify_groth16_strict`].
 pub fn verify_groth16_batch(
@@ -732,7 +741,7 @@ pub fn verify_groth16_batch(
             a
         } else {
             let r = batch_weight(&seed, i as u64);
-            add_le(&mut sum_r, &r);
+            add_mod_r(&mut sum_r, &r);
             vk_x_acc = g1_add(vk_x_acc, g1_scalar_mul(x, &r)?)?;
             c_acc = g1_add(c_acc, g1_scalar_mul(c, &r)?)?;
             g1_scalar_mul(a, &r)?
@@ -825,6 +834,31 @@ mod tests {
         assert!(coords_canonical(&buf));
         buf[2 * FR_BYTES + (FR_BYTES - 1)] = 0xFF; // make the 3rd chunk >= q
         assert!(!coords_canonical(&buf));
+    }
+
+    /// `add_mod_r` wraps at `r`, and weights are full
+    /// width, nonzero and canonical.
+    #[test]
+    fn batch_weights_and_their_sum() {
+        let mut r_minus_1 = FR_MODULUS_LE;
+        r_minus_1[0] -= 1;
+        let mut s = r_minus_1;
+        add_mod_r(&mut s, &r_minus_1); // r - 2
+        let mut two = [0u8; FR_BYTES];
+        two[0] = 2;
+        add_mod_r(&mut s, &two);
+        assert_eq!(s, [0u8; FR_BYTES], "(r-1) + (r-1) + 2 = 2r = 0");
+        let mut one = [0u8; FR_BYTES];
+        one[0] = 1;
+        let mut s = one;
+        add_mod_r(&mut s, &one);
+        assert_eq!(s[0], 2);
+
+        for i in 1..64 {
+            let w = batch_weight(&[7u8; 32], i);
+            assert!(scalar_is_canonical(&w));
+            assert_eq!(w[31] >> 4, 1, "w in [2^252, 2^253)");
+        }
     }
 
     /// BN254's G1 generator in the LE wire format: `x = 1`, `y = 2`.
@@ -1519,18 +1553,30 @@ mod proofs {
         let _ = verify_groth16_batch(&vk, &batch, &mut scratch);
     }
 
-    /// The weight sum can't overflow: `add_le` is exact 256-bit addition
-    /// whenever the true sum fits (as `1 + Σ rᵢ < M · 2¹²⁸ + 1` does).
+    /// `add_mod_r` is addition mod `r` for every canonical `a, b < r`: the
+    /// result is canonical and equals `a + b` or `a + b - r` (checked with
+    /// independent u128 limb arithmetic).
     #[kani::proof]
-    fn add_le_is_exact() {
-        let a: u128 = kani::any();
-        let b: u128 = kani::any();
-        let (mut x, mut y) = ([0u8; FR_BYTES], [0u8; FR_BYTES]);
-        x[..16].copy_from_slice(&a.to_le_bytes());
-        y[..16].copy_from_slice(&b.to_le_bytes());
-        add_le(&mut x, &y);
-        let (sum, carry) = a.overflowing_add(b);
-        assert!(x[..16] == sum.to_le_bytes());
-        assert!(x[16] == carry as u8 && x[17..].iter().all(|v| *v == 0));
+    fn add_mod_r_is_mod_add() {
+        let a: [u8; FR_BYTES] = kani::any();
+        let b: [u8; FR_BYTES] = kani::any();
+        kani::assume(u256_lt_le(&a, &FR_MODULUS_LE) && u256_lt_le(&b, &FR_MODULUS_LE));
+        let mut s = a;
+        add_mod_r(&mut s, &b);
+        assert!(u256_lt_le(&s, &FR_MODULUS_LE));
+        // a + b and s + (r or 0) as (hi, lo) u128 pairs; no carry out of hi,
+        // since everything is below 2r < 2^255.
+        let limbs = |x: &[u8; FR_BYTES]| {
+            (
+                u128::from_le_bytes(x[16..].try_into().unwrap()),
+                u128::from_le_bytes(x[..16].try_into().unwrap()),
+            )
+        };
+        let add = |(xh, xl): (u128, u128), (yh, yl): (u128, u128)| {
+            let (lo, c) = xl.overflowing_add(yl);
+            (xh + yh + c as u128, lo)
+        };
+        let want = add(limbs(&a), limbs(&b));
+        assert!(add(limbs(&s), (0, 0)) == want || add(limbs(&s), limbs(&FR_MODULUS_LE)) == want);
     }
 }

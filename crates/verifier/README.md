@@ -40,19 +40,20 @@ Measured on chain (Mollusk), proofs with one public input:
 
 | proofs | batched | one at a time |
 |---|---|---|
-| 1 | 77,617 CU | 77,043 CU |
-| 4 | 167,879 CU | 309,633 CU |
-| 16 | 510,841 CU | ~1,240,000 CU |
+| 1 | 77,579 CU | 77,043 CU |
+| 4 | 168,241 CU | 309,633 CU |
+| 16 | 513,361 CU | ~1,240,000 CU |
 
 Each extra proof costs about 29k CU instead of 77k, so a 1.4M CU transaction
 fits about 47 proofs instead of 18. A `false` result says some proof in the
 batch is invalid, not which one: verify them one by one to find it.
 
-Each proof's check is weighted by a 128-bit number taken from a SHA-256 of the
+Each proof's check is weighted by a 252-bit number taken from a SHA-256 of the
 VK and the whole batch, so invalid proofs can't be built to cancel each other
-out (a batch with an invalid proof passes with probability about 2⁻¹²⁷). The
-batch is always strict: non-canonical coordinates are rejected, so the hash
-sees each point's one encoding.
+out: a batch with an invalid proof passes with probability about 2⁻²⁵² for
+each batch an attacker tries (the weights are public, so the margin has to
+cover grinding; full-width weights cost the same as narrow ones). The batch is
+always strict: non-canonical coordinates are rejected.
 
 ## Wire format (little-endian, `x || y`)
 
