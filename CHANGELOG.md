@@ -21,6 +21,17 @@ gadgets now check more:
 
 ### Changed
 
+- **Natural input forms everywhere.** A gadget input type declares its natural
+  encoding (`schema.json`'s `encoding`: limbs of a number, fields back to back,
+  SEC1, a compressed Ed25519 point), and both `xark prove/check/verify --inputs`
+  and the generated TypeScript client accept it: `"pubkey": "0x…"` for an
+  Ed25519 `PointL` (decompressed for you), a hash's 32 bytes, a scalar's number.
+  The client also takes `[u8; N]` as hex, and its decoded public inputs have their
+  own `<Name>PublicValues` type. The old leaf-name guessing in `--inputs` also
+  mis-split Ed25519's 3×85-bit limbs; encoded types no longer go through it.
+- `xark inspect` lists inputs by name and type (`aad: [u8; 13]`), not leaf by
+  leaf, and `xark setup`'s next step shows a `--inputs` template in natural forms
+  (inline, or written to `inputs.example.json` for big circuits).
 - **One dependency per circuit crate.** `xark` re-exports the prover as
   `xark::prover` (host builds only), and `#[circuit]`/the derives use it, so a
   circuit crate no longer needs `xark-prover` (`xark init` no longer adds it,

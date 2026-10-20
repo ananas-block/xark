@@ -573,8 +573,34 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>) {
         _ => Vec::new(),
     };
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let hint = super::inputs_hint(&name_refs);
     let p = super::path_arg(path);
+    // From `schema.json`: one entry per declared input, in its natural form (a hash's
+    // `0x…` bytes, not its leaves). Short: inline; long: a file to fill in.
+    let hint = match super::encoding::summary(&project.xark_dir) {
+        Some(inputs) if !inputs.is_empty() => {
+            // In declaration order (a `serde_json::Map` would sort the keys).
+            let entries: Vec<String> = inputs
+                .iter()
+                .map(|i| format!("{:?}: {}", i.name, i.template))
+                .collect();
+            let inline = format!("{{{}}}", entries.join(", "));
+            if inline.len() <= 100 {
+                format!("--inputs '{inline}'")
+            } else {
+                let file = project.xark_dir.join("inputs.example.json");
+                let text = format!("{{\n  {}\n}}\n", entries.join(",\n  "));
+                match fs::write(&file, text) {
+                    Ok(()) => {
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        let shown = file.strip_prefix(&cwd).unwrap_or(&file);
+                        format!("--inputs {}", shown.display())
+                    }
+                    Err(_) => super::inputs_hint(&name_refs),
+                }
+            }
+        }
+        _ => super::inputs_hint(&name_refs),
+    };
     println!(
         "\n{}",
         crate::style::next_steps(&[(

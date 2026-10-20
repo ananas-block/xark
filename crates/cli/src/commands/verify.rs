@@ -77,7 +77,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
         }
         Some(arg) => {
             let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;
-            let inputs = parse_inputs_arg(arg)?;
+            let inputs = super::encoding::expand(&project.xark_dir, parse_inputs_arg(arg)?)?;
             super::check_uint_ranges(&project.xark_dir, &inputs)?;
             public_inputs_from_inputs(&prog, &inputs)?
         }

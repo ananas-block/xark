@@ -328,3 +328,29 @@ fn export_and_verify_check_the_key() {
         );
     }
 }
+
+/// `--inputs` takes a gadget type in its natural encoding (`schema.json`'s
+/// `encoding`): a SHA-256 `Hash` as its 32 bytes, rather than its two 128-bit halves.
+#[test]
+fn inputs_take_natural_encodings() {
+    use sha2::{Digest, Sha256};
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "sha256");
+    let digest = hex::encode(Sha256::digest(b"abc"));
+    let inputs = |d: &str| format!(r#"{{"msg": "0x616263", "digest": "0x{d}"}}"#);
+    let (ok, out) = run_in(&dir, &["check", "--inputs", &inputs(&digest)]);
+    assert!(ok, "sha256(\"abc\") as 32 bytes:\n{out}");
+    let mut wrong = digest.into_bytes();
+    wrong[63] = if wrong[63] == b'0' { b'1' } else { b'0' };
+    let (ok, _) = run_in(
+        &dir,
+        &[
+            "check",
+            "--inputs",
+            &inputs(std::str::from_utf8(&wrong).unwrap()),
+        ],
+    );
+    assert!(!ok, "a wrong digest was accepted");
+    let (ok, out) = run_in(&dir, &["check", "--inputs", &inputs("00")]);
+    assert!(!ok && out.contains("a Hash is 32 bytes"), "{out}");
+}

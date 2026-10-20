@@ -129,7 +129,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
     let xbc = project.circuit_xbc();
     // Inputs come from `--inputs`: inline JSON or a file path (agnostic).
     let inputs = match &args.inputs {
-        Some(arg) => parse_inputs_arg(arg)?,
+        Some(arg) => super::encoding::expand(&project.xark_dir, parse_inputs_arg(arg)?)?,
         None => Default::default(),
     };
     super::check_uint_ranges(&project.xark_dir, &inputs)?;

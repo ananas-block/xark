@@ -102,8 +102,31 @@ pub fn run(args: InspectArgs) -> Result<()> {
     } else {
         println!("Field:                {}", prog.field.name);
         println!("Variables:            {}", prog.variables.len());
-        println!("  public inputs:      {num_public} {public_names:?}");
-        println!("  private inputs:     {num_private} {private_names:?}");
+        // Declared inputs by name and type (from `schema.json`), not leaf by leaf.
+        let summary = super::encoding::summary(&project.xark_dir);
+        let line = |public: bool, n: usize, names: &[&str]| match &summary {
+            Some(inputs) => {
+                let parts: Vec<String> = inputs
+                    .iter()
+                    .filter(|i| i.public == public)
+                    .map(|i| format!("{}: {}", i.name, i.ty))
+                    .collect();
+                let leaves = if n == 1 { "leaf" } else { "leaves" };
+                match parts.is_empty() {
+                    true => "none".to_string(),
+                    false => format!("{} ({n} {leaves})", parts.join(", ")),
+                }
+            }
+            None => format!("{n} {names:?}"),
+        };
+        println!(
+            "  public inputs:      {}",
+            line(true, num_public, &public_names)
+        );
+        println!(
+            "  private inputs:     {}",
+            line(false, num_private, &private_names)
+        );
         println!("  internal:           {num_internal}");
         if let Some(names) = &derived_names {
             println!(

@@ -53,6 +53,7 @@ enum Intr {
     InputUint,
     InputsDone,
     InputStruct,
+    InputEncoding,
     InputUintHi,
     Panic,
 }
@@ -86,6 +87,7 @@ fn intrinsic(name: &str) -> Option<Intr> {
         "input_uint" => Intr::InputUint,
         "inputs_done" => Intr::InputsDone,
         "input_struct" => Intr::InputStruct,
+        "input_encoding" => Intr::InputEncoding,
         "input_uint_hi" => Intr::InputUintHi,
         "panic" => Intr::Panic,
         _ => return None,
@@ -132,6 +134,8 @@ pub struct Host {
     /// type names by path — for `schema.json`.
     pub(crate) leaves: Vec<(String, bool, Option<u32>)>,
     pub(crate) structs: Vec<(String, String)>,
+    /// Struct type → its natural encoding (JSON), from `input_encoding`.
+    pub(crate) encodings: Vec<(String, String)>,
     /// `(p, p/2)`: reduce large constants into `(−p/2, p/2]` (when the field is known).
     reduce: Option<(BigInt, BigInt)>,
     /// Comparison intrinsics executed (`==`/`<` on witnesses), for stats.
@@ -176,6 +180,7 @@ impl Host {
             n_inputs: 0,
             leaves: Vec::new(),
             structs: Vec::new(),
+            encodings: Vec::new(),
             cmp_calls: 0,
             muxes: HashMap::new(),
             sites: Vec::new(),
@@ -188,7 +193,7 @@ impl Host {
     /// The circuit's input interface as `schema.json`:
     /// rebuilt from the bound leaves' names plus the struct markers.
     pub fn schema(&self, circuit: &str) -> serde_json::Value {
-        crate::schema::build(circuit, &self.leaves, &self.structs)
+        crate::schema::build(circuit, &self.leaves, &self.structs, &self.encodings)
     }
 
     pub fn finish(self, field: FieldSpec) -> CompileResult<LowerOutput> {
@@ -1852,6 +1857,17 @@ impl crate::interp::Host for Host {
                 )
                 .into_owned();
                 self.structs.push((path, ty));
+            }
+            Intr::InputEncoding => {
+                let ty = String::from_utf8_lossy(
+                    &m.read_bytes(ptr_of(a[0])?, int_of(a[1], "len")? as u32)?,
+                )
+                .into_owned();
+                let json = String::from_utf8_lossy(
+                    &m.read_bytes(ptr_of(a[2])?, int_of(a[3], "len")? as u32)?,
+                )
+                .into_owned();
+                self.encodings.push((ty, json));
             }
             Intr::InputUintHi => {
                 let hi = self.pending_hi.take().ok_or_else(|| {

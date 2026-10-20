@@ -89,6 +89,7 @@ fn type_of(
     node: &Node,
     at: &mut Vec<Seg>,
     structs: &BTreeMap<String, String>,
+    encodings: &BTreeMap<String, Value>,
     types: &mut serde_json::Map<String, Value>,
 ) -> Value {
     if let Some(w) = node.width {
@@ -105,7 +106,7 @@ fn type_of(
                 .iter()
                 .map(|(s, k)| {
                     at.push(s.clone());
-                    let t = type_of(k, at, structs, types);
+                    let t = type_of(k, at, structs, encodings, types);
                     at.pop();
                     let n = match s {
                         Seg::Field(f) => f.clone(),
@@ -114,14 +115,18 @@ fn type_of(
                     json!({ "name": n, "type": t })
                 })
                 .collect();
-            types.insert(name.clone(), json!({ "struct": fields }));
+            let mut def = json!({ "struct": fields });
+            if let Some(e) = encodings.get(name) {
+                def["encoding"] = e.clone();
+            }
+            types.insert(name.clone(), def);
         }
         return json!({ "ref": name });
     }
     if node.kids.iter().all(|(s, _)| matches!(s, Seg::Index(_))) && !node.kids.is_empty() {
         let (s, first) = &node.kids[0];
         at.push(s.clone());
-        let of = type_of(first, at, structs, types);
+        let of = type_of(first, at, structs, encodings, types);
         at.pop();
         return json!({ "array": { "of": of, "len": node.kids.len() } });
     }
@@ -131,7 +136,7 @@ fn type_of(
         .iter()
         .map(|(s, k)| {
             at.push(s.clone());
-            let t = type_of(k, at, structs, types);
+            let t = type_of(k, at, structs, encodings, types);
             at.pop();
             t
         })
@@ -143,8 +148,14 @@ pub(crate) fn build(
     circuit: &str,
     leaves: &[(String, bool, Option<u32>)],
     structs: &[(String, String)],
+    encodings: &[(String, String)],
 ) -> Value {
     let structs: BTreeMap<String, String> = structs.iter().cloned().collect();
+    // A struct's natural encoding, as its type declared it (malformed JSON: none).
+    let encodings: BTreeMap<String, Value> = encodings
+        .iter()
+        .filter_map(|(t, j)| Some((t.clone(), serde_json::from_str(j).ok()?)))
+        .collect();
     // Parameters in first-bound order, each with its leaves' trie.
     let mut params: Vec<(String, bool, Node)> = Vec::new();
     let mut public_inputs = Vec::new();
@@ -173,7 +184,7 @@ pub(crate) fn build(
             json!({
                 "name": root,
                 "visibility": if *public { "public" } else { "private" },
-                "type": type_of(node, &mut at, &structs, &mut types),
+                "type": type_of(node, &mut at, &structs, &encodings, &mut types),
             })
         })
         .collect();

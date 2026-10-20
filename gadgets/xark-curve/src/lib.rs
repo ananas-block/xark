@@ -104,6 +104,7 @@ macro_rules! weierstrass {
         impl xark::wasm::Input for Point {
             fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
                 xark::wasm::input_struct(n, "Point");
+                xark::wasm::input_encoding("Point", "{\"concat\":\"fields\",\"sec1\":true}");
                 Point {
                     x: xark::wasm::input_field(n, "x", vis),
                     y: xark::wasm::input_field(n, "y", vis),
@@ -372,6 +373,7 @@ macro_rules! edwards {
         impl xark::wasm::Input for Point {
             fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
                 xark::wasm::input_struct(n, "Point");
+                xark::wasm::input_encoding("Point", "{\"concat\":\"fields\"}");
                 Point {
                     x: xark::wasm::input_field(n, "x", vis),
                     y: xark::wasm::input_field(n, "y", vis),

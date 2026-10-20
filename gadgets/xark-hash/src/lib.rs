@@ -27,6 +27,7 @@ pub struct Hash {
 impl xark::wasm::Input for Hash {
     fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
         xark::wasm::input_struct(n, "Hash");
+        xark::wasm::input_encoding("Hash", "{\"bytes\":32,\"concat\":[16,16]}");
         Hash {
             hi: xark::wasm::input_field(n, "hi", vis),
             lo: xark::wasm::input_field(n, "lo", vis),

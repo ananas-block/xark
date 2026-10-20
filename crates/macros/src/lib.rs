@@ -683,7 +683,7 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
     }
     let name_lit = LitStr::new(&name.to_string(), name.span());
 
-    let wasm_input = wasm_input_impl(name, data);
+    let wasm_input = wasm_input_impl(name, data, quote! {});
     Ok(quote! {
         #wasm_input
 
@@ -762,7 +762,7 @@ fn circuit_input_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// The stable-frontend input binding for a `Field`-composed struct (`--cfg xark` on
 /// `wasm32`): each field bound in declaration order under `<prefix>.<field>`, the
 /// compiler's structural-flatten names.
-fn wasm_input_impl(name: &syn::Ident, data: &DataStruct) -> TokenStream2 {
+fn wasm_input_impl(name: &syn::Ident, data: &DataStruct, encoding: TokenStream2) -> TokenStream2 {
     let binds = data.fields.iter().enumerate().map(|(i, f)| {
         let fname = match &f.ident {
             Some(id) => id.to_string(),
@@ -787,6 +787,7 @@ fn wasm_input_impl(name: &syn::Ident, data: &DataStruct) -> TokenStream2 {
         impl ::xark::wasm::Input for #name {
             fn input(__name: &mut ::xark::wasm::NameBuf, __vis: u32) -> Self {
                 ::xark::wasm::input_struct(__name, #ty_lit);
+                #encoding
                 #ctor
             }
         }
@@ -970,8 +971,10 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
 
-    // Per shape: the leaf fan-out, the byte length and decode, and the `Field` flatten.
-    let (leaves_body, bytes, from_bytes, field_len, write_fields) =
+    // Per shape: the leaf fan-out, the byte length and decode, the `Field` flatten,
+    // the natural encoding `schema.json` records, and extra host conversions.
+    let ty_lit = LitStr::new(&name.to_string(), name.span());
+    let (leaves_body, bytes, from_bytes, field_len, write_fields, encoding, extra_host) =
         if let Some(bits) = parse_transparent_bits(&input.attrs)? {
             // LEAF `{ limbs: [Field; N] }`: big-endian `[u8; N*B/8]`, limbs little-endian.
             let n = leaf_limb_count(data)?;
@@ -987,6 +990,28 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 quote! { #name { #acc: ::xark::host::limb_fields::<#n>(bytes, #bits) } },
                 quote! { #n },
                 quote! { out[..#n].copy_from_slice(&self.#acc); },
+                quote! { ::xark::wasm::input_encoding_limbs(#ty_lit, #n, #bits as usize); },
+                quote! {
+                    /// From the number, as a decimal or `0x`-hex string.
+                    #[automatically_derived]
+                    impl ::core::convert::From<&str> for #name {
+                        fn from(value: &str) -> Self {
+                            #name { #acc: ::xark::host::limb_fields_str::<#n>(value, #bits) }
+                        }
+                    }
+                    #[automatically_derived]
+                    impl ::core::convert::From<String> for #name {
+                        fn from(value: String) -> Self {
+                            Self::from(value.as_str())
+                        }
+                    }
+                    #[automatically_derived]
+                    impl ::core::convert::From<u128> for #name {
+                        fn from(value: u128) -> Self {
+                            #name { #acc: ::xark::host::limb_fields::<#n>(&value.to_be_bytes(), #bits) }
+                        }
+                    }
+                },
             )
         } else {
             // COMPOSITE of transparent fields: the fields' encodings back to back.
@@ -1036,10 +1061,12 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 ctor,
                 flen,
                 quote! { #( #writes )* },
+                quote! { ::xark::wasm::input_encoding(#ty_lit, "{\"concat\":\"fields\"}"); },
+                quote! {},
             )
         };
 
-    let wasm_input = wasm_input_impl(name, data);
+    let wasm_input = wasm_input_impl(name, data, encoding);
     // `NativeInput` lives in `xark_prover` (a `std` crate) but a gadget crate is
     // `#![no_std]`, so bring `std` in inside an anonymous const (hygienic-derive pattern).
     Ok(quote! {
@@ -1080,6 +1107,7 @@ fn transparent_impl(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     <Self as ::xark::host::FromBeBytes>::from_be_bytes(&bytes)
                 }
             }
+            #extra_host
         };
     })
 }

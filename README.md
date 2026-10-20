@@ -94,6 +94,8 @@ xark setup examples/cube
 # Writes proof.bin and public_inputs.bin next to the keys.
 xark prove examples/cube --inputs '{"secret": "3", "result": "27"}'
 # → ✅ Proof produced and self-checked (1 public input(s)).
+# A gadget type takes its natural form: an Ed25519 key or a hash as 0x-hex bytes,
+# a scalar as a number. `xark setup` prints (or writes) a template to fill in.
 
 # Check a proof against the verifying key and its public inputs.
 xark verify examples/cube
@@ -111,7 +113,9 @@ xark check examples/cube
 
 `xark build` also writes `schema.json`: every input's name, visibility, and type
 (`Field`, `uN` widths, arrays, tuples, and `#[derive(CircuitInput)]` structs), plus the
-public inputs in proof order. `xark client` turns it into one dependency-free `.ts`
+public inputs in proof order. A gadget type also records its natural encoding, so
+the client takes an Ed25519 key or a hash as bytes (`Uint8Array` or `0x`-hex) and a
+limbed scalar as a number, never as limbs. `xark client` turns it into one dependency-free `.ts`
 file with an interface per struct and typed `prove` / `verify` over the `xark-wasm`
 module you pass in:
 

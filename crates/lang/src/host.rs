@@ -19,16 +19,7 @@ pub trait FromBeBytes: Sized {
     fn from_be_bytes(bytes: &[u8]) -> Self;
 }
 
-/// The natural encoding length of a value held in `limbs` × `bits`-bit limbs: 32
-/// bytes for a field-sized value (up to 264 bits of limbs, e.g. 3 × 86 — the value
-/// itself is below 2²⁵⁶), else the limbs' bits rounded up to bytes.
-pub const fn natural_bytes(limbs: usize, bits: usize) -> usize {
-    if limbs * bits <= 264 {
-        32
-    } else {
-        (limbs * bits).div_ceil(8)
-    }
-}
+pub use crate::natural_bytes;
 
 /// `limbs` as `<prefix>.limbs[i]` leaves: the fan-out of a limbed value (a
 /// non-native field element, a bignum) whose limbs are `Field`s.

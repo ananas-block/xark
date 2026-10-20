@@ -4,6 +4,9 @@
 /** A BN254 field element: a bigint, a safe-integer number, or a decimal / 0x-hex string. */
 export type FieldLike = bigint | number | string;
 
+/** Bytes: a `Uint8Array`, an array of byte values, or a `0x`-hex string. */
+export type Bytes = Uint8Array | readonly number[] | string;
+
 /** Every input the prover supplies. */
 export interface MerkleInputs {
   leaf: FieldLike;
@@ -16,6 +19,11 @@ export interface MerkleInputs {
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface MerklePublicInputs {
+  root: FieldLike;
+}
+
+/** The public inputs as decoded from a proof (each gadget type in its struct form). */
+export interface MerklePublicValues {
   root: FieldLike;
 }
 
@@ -70,11 +78,25 @@ export type SchemaType =
   | { tuple: SchemaType[] }
   | { ref: string };
 
+/** A struct type's natural encoding: what may be passed in place of the struct. */
+export interface Encoding {
+  /** The encoded length in bytes (else the fields' lengths summed). */
+  bytes?: number;
+  /** A number whose little-endian `limbs`-bit limbs are the struct's leaves. */
+  limbs?: number;
+  /** Fields back to back: these byte lengths, or each field type's own. */
+  concat?: number[] | "fields";
+  /** Accept a leading SEC1 `0x04` tag. */
+  sec1?: boolean;
+  /** A compressed Ed25519 point, decompressed to its two coordinate fields. */
+  ed25519?: boolean;
+}
+
 export interface Schema {
   version: number;
   circuit: string;
   inputs: { name: string; visibility: "public" | "private"; type: SchemaType }[];
-  types: Record<string, { struct: { name: string; type: SchemaType }[] }>;
+  types: Record<string, { struct: { name: string; type: SchemaType }[]; encoding?: Encoding }>;
   public_inputs: string[];
 }
 
@@ -113,6 +135,106 @@ function fieldValue(v: unknown, at: string): bigint {
   return x;
 }
 
+/** `Bytes` (a `Uint8Array`, byte values, or `0x`-hex) as a `Uint8Array`. */
+function bytesOf(v: unknown, at: string): Uint8Array {
+  if (v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return Uint8Array.from(v as number[]);
+  if (typeof v === "string") {
+    const h = v.trim().replace(/^0x/i, "");
+    if (h.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(h)) throw new TypeError(`${at}: ${JSON.stringify(v)} is not 0x-hex bytes`);
+    return Uint8Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(2 * i, 2 * i + 2), 16));
+  }
+  throw new TypeError(`${at}: expected bytes (a Uint8Array or 0x-hex string)`);
+}
+
+const beToBig = (b: Uint8Array): bigint => b.reduce((acc, x) => (acc << 8n) | BigInt(x), 0n);
+const bigToBe32 = (v: bigint): Uint8Array => Uint8Array.from({ length: 32 }, (_, i) => Number((v >> BigInt(8 * (31 - i))) & 0xffn));
+
+/** The leaf names of a value of `ty` at `leaf`, in flatten order. */
+function leafNames(schema: Schema, ty: SchemaType, leaf: string, out: string[]): void {
+  if (ty === "field" || "uint" in ty) out.push(leaf);
+  else if ("array" in ty) for (let i = 0; i < ty.array.len; i++) leafNames(schema, ty.array.of, `${leaf}[${i}]`, out);
+  else if ("tuple" in ty) ty.tuple.forEach((t, i) => leafNames(schema, t, `${leaf}.${i}`, out));
+  else for (const f of schema.types[ty.ref].struct) leafNames(schema, f.type, `${leaf}.${f.name}`, out);
+}
+
+/** The encoded length of struct type `name`, in bytes. */
+function encodedLen(schema: Schema, name: string): number {
+  const e = schema.types[name].encoding!;
+  if (e.bytes !== undefined) return e.bytes;
+  return concatSizes(schema, name).reduce((a, b) => a + b, 0);
+}
+
+function concatSizes(schema: Schema, name: string): number[] {
+  const def = schema.types[name];
+  const c = def.encoding!.concat;
+  if (Array.isArray(c)) return c;
+  return def.struct.map((f) => {
+    if (typeof f.type !== "object" || !("ref" in f.type)) throw new TypeError(`${name}.${f.name} has no byte length`);
+    return encodedLen(schema, f.type.ref);
+  });
+}
+
+function modPow(b: bigint, e: bigint, m: bigint): bigint {
+  let r = 1n;
+  b %= m;
+  for (; e > 0n; e >>= 1n, b = (b * b) % m) if (e & 1n) r = (r * b) % m;
+  return r;
+}
+
+/** Decompress an Ed25519 point (`y` little-endian, `x`'s sign in the top bit). */
+function ed25519Decompress(c: Uint8Array, at: string): [bigint, bigint] {
+  const p = (1n << 255n) - 19n;
+  const d = 37095705934669439343138083508754565189542113879843219016388785533085940283555n;
+  const sqrtM1 = 19681161376707505956807079304988542015446066515923890162744021073123829784752n;
+  const yb = Uint8Array.from(c).reverse();
+  const sign = BigInt(yb[0] >> 7);
+  yb[0] &= 0x7f;
+  const y = beToBig(yb);
+  if (y >= p) throw new RangeError(`${at}: not an Ed25519 point`);
+  const y2 = (y * y) % p;
+  const u = (y2 + p - 1n) % p;
+  const v = (d * y2 + 1n) % p;
+  let x = (((u * modPow(v, 3n, p)) % p) * modPow((u * modPow(v, 7n, p)) % p, (p - 5n) / 8n, p)) % p;
+  if ((v * ((x * x) % p)) % p !== u) x = (x * sqrtM1) % p;
+  if ((v * ((x * x) % p)) % p !== u) throw new RangeError(`${at}: not an Ed25519 point`);
+  if ((x & 1n) !== sign) x = (p - x) % p;
+  return [x, y];
+}
+
+/** A number into struct type `name`'s limb leaves. */
+function encodeNumber(schema: Schema, name: string, n: bigint, leaf: string, at: string, out: Record<string, string>): void {
+  const bits = BigInt(schema.types[name].encoding!.limbs!);
+  const leaves: string[] = [];
+  leafNames(schema, { ref: name }, leaf, leaves);
+  if (n < 0n || n >> (bits * BigInt(leaves.length)) !== 0n) throw new RangeError(`${at}: ${n} doesn't fit a ${name}`);
+  leaves.forEach((l, i) => (out[l] = ((n >> (bits * BigInt(i))) & ((1n << bits) - 1n)).toString()));
+}
+
+/** Bytes in struct type `name`'s natural encoding into its leaves. */
+function encodeBytes(schema: Schema, name: string, b: Uint8Array, leaf: string, at: string, out: Record<string, string>): void {
+  const def = schema.types[name];
+  const e = def.encoding!;
+  const len = encodedLen(schema, name);
+  if (e.sec1 && b.length === len + 1 && b[0] === 4) b = b.subarray(1);
+  if (b.length !== len) throw new RangeError(`${at}: a ${name} is ${len} bytes, got ${b.length}`);
+  if (e.limbs !== undefined) return encodeNumber(schema, name, beToBig(b), leaf, at, out);
+  let sizes: number[];
+  if (e.ed25519) {
+    const [x, y] = ed25519Decompress(b, at);
+    b = Uint8Array.from([...bigToBe32(x), ...bigToBe32(y)]);
+    sizes = [32, 32];
+  } else sizes = concatSizes(schema, name);
+  let off = 0;
+  def.struct.forEach((f, i) => {
+    const chunk = b.subarray(off, off + sizes[i]);
+    off += sizes[i];
+    const l = `${leaf}.${f.name}`;
+    if (typeof f.type === "object" && "ref" in f.type) encodeBytes(schema, f.type.ref, chunk, l, `${at}.${camel(f.name)}`, out);
+    else out[l] = fieldValue(beToBig(chunk), `${at}.${camel(f.name)}`).toString();
+  });
+}
+
 /** Flatten `value` of type `ty` into `out` under the compiler's leaf names. */
 function flatten(schema: Schema, ty: SchemaType, value: unknown, leaf: string, at: string, out: Record<string, string>): void {
   if (ty === "field") {
@@ -125,7 +247,8 @@ function flatten(schema: Schema, ty: SchemaType, value: unknown, leaf: string, a
       throw new RangeError(`${at}: ${String(value)} is outside u${ty.uint}`);
     out[leaf] = x.toString();
   } else if ("array" in ty) {
-    const xs = value as ArrayLike<unknown>;
+    const u8 = typeof ty.array.of === "object" && "uint" in ty.array.of && ty.array.of.uint === 8;
+    const xs = (u8 && typeof value === "string" ? bytesOf(value, at) : value) as ArrayLike<unknown>;
     if (xs == null || typeof xs.length !== "number") throw new TypeError(`${at}: expected an array`);
     if (xs.length !== ty.array.len) throw new RangeError(`${at}: expected ${ty.array.len} elements, got ${xs.length}`);
     for (let i = 0; i < xs.length; i++) flatten(schema, ty.array.of, xs[i], `${leaf}[${i}]`, `${at}[${i}]`, out);
@@ -135,6 +258,15 @@ function flatten(schema: Schema, ty: SchemaType, value: unknown, leaf: string, a
     ty.tuple.forEach((t, i) => flatten(schema, t, xs[i], `${leaf}.${i}`, `${at}[${i}]`, out));
   } else {
     const def = schema.types[ty.ref];
+    // A value in the type's natural encoding: bytes, or a number for limbs.
+    if (def.encoding && !(typeof value === "object" && value !== null && !(value instanceof Uint8Array) && !Array.isArray(value))) {
+      const numeric = typeof value === "bigint" || typeof value === "number" || (typeof value === "string" && !/^0x/i.test(value.trim()));
+      if (def.encoding.limbs !== undefined && numeric) {
+        const n = typeof value === "bigint" ? value : BigInt(typeof value === "number" ? value : (value as string).trim());
+        return encodeNumber(schema, ty.ref, n, leaf, at, out);
+      }
+      return encodeBytes(schema, ty.ref, bytesOf(value, at), leaf, at, out);
+    }
     if (typeof value !== "object" || value === null) throw new TypeError(`${at}: expected a ${ty.ref} object`);
     const obj = value as Record<string, unknown>;
     for (const f of def.struct) {
@@ -210,7 +342,7 @@ export function decodePublicInputs(schema: Schema, bytes: Uint8Array): Record<st
 /** A proof with its public inputs, decoded and as the canonical bytes `verify` takes. */
 export interface MerkleProof {
   proof: Uint8Array;
-  publicInputs: MerklePublicInputs;
+  publicInputs: MerklePublicValues;
   publicInputBytes: Uint8Array;
 }
 
@@ -241,8 +373,8 @@ export class Merkle {
     return encodePublicInputs(MERKLE_SCHEMA, publicInputs);
   }
 
-  static decodePublicInputs(bytes: Uint8Array): MerklePublicInputs {
-    return decodePublicInputs(MERKLE_SCHEMA, bytes) as unknown as MerklePublicInputs;
+  static decodePublicInputs(bytes: Uint8Array): MerklePublicValues {
+    return decodePublicInputs(MERKLE_SCHEMA, bytes) as unknown as MerklePublicValues;
   }
 
   prove(inputs: MerkleInputs): MerkleProof {
@@ -257,7 +389,7 @@ export class Merkle {
     };
   }
 
-  verify(proof: Uint8Array, publicInputs: MerklePublicInputs | Uint8Array): boolean {
+  verify(proof: Uint8Array, publicInputs: MerklePublicInputs | MerklePublicValues | Uint8Array): boolean {
     const { verifyingKey } = this.keys;
     if (!verifyingKey) throw new Error("verifying needs `verifyingKey` (vk.bin)");
     const bytes = publicInputs instanceof Uint8Array ? publicInputs : Merkle.encodePublicInputs(publicInputs);

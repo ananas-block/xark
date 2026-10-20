@@ -297,10 +297,11 @@ pub struct Instance {
 /// as two 127-bit limbs, `lo + hi·2^127`, both below the field, so the split is
 /// injective. On the host it comes from the whole number (a decimal / `0x`-hex
 /// string, its 32 big-endian bytes, an integer); see [`wide_scalar_mul`].
-#[derive(Clone, Copy, Debug, xark::CircuitInput)]
+#[derive(Clone, Copy, Debug, xark::Transparent)]
+#[transparent(bits = 127)]
 pub struct WideScalar {
-    pub lo: Field,
-    pub hi: Field,
+    /// `[lo, hi]`.
+    pub limbs: [Field; 2],
 }
 
 /// `corr₂₅₄ = −(2^254·O)`, removing the offset accumulated over 254 doublings.
@@ -329,8 +330,8 @@ fn mux(bit: Field, t: [Field; 2], f: [Field; 2]) -> [Field; 2] {
 pub fn wide_scalar_mul(s: WideScalar, p: Affine) -> Affine {
     let p = [p.x, p.y];
     enforce_on_curve(p);
-    let lo_bits = s.lo.to_bits::<127>();
-    let hi_bits = s.hi.to_bits::<127>();
+    let lo_bits = s.limbs[0].to_bits::<127>();
+    let hi_bits = s.limbs[1].to_bits::<127>();
     let mut acc = offset();
     let mut i = 0usize;
     while i < 254usize {
@@ -350,41 +351,6 @@ pub fn wide_scalar_mul(s: WideScalar, p: Affine) -> Affine {
     // acc = 2^254·O + s·P; remove the offset.
     let r = ec_add(acc, corr254());
     Affine { x: r[0], y: r[1] }
-}
-
-/// Host side: a [`WideScalar`] from the whole number, split at bit 127.
-#[cfg(not(xark))]
-mod wide_host {
-    extern crate std;
-    use super::WideScalar;
-    use std::string::String;
-
-    fn split(be: &[u8]) -> WideScalar {
-        let [lo, hi] = xark::host::limb_fields::<2>(be, 127);
-        WideScalar { lo, hi }
-    }
-    /// From its 32 big-endian bytes (`< 2^254`).
-    impl From<[u8; 32]> for WideScalar {
-        fn from(be: [u8; 32]) -> Self {
-            split(&be)
-        }
-    }
-    /// From a decimal or `0x`-hex string (`< 2^254`).
-    impl From<&str> for WideScalar {
-        fn from(v: &str) -> Self {
-            split(&xark::host::be_bytes_of(v))
-        }
-    }
-    impl From<String> for WideScalar {
-        fn from(v: String) -> Self {
-            Self::from(v.as_str())
-        }
-    }
-    impl From<u128> for WideScalar {
-        fn from(v: u128) -> Self {
-            split(&v.to_be_bytes())
-        }
-    }
 }
 
 /// Bring the gadget's public API into scope alongside the xark circuit

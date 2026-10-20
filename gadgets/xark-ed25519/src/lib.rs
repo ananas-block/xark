@@ -114,6 +114,7 @@ impl xark::ToFields for PointL {
 impl xark::wasm::Input for PointL {
     fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
         xark::wasm::input_struct(n, "PointL");
+        xark::wasm::input_encoding("PointL", "{\"bytes\":32,\"ed25519\":true}");
         PointL {
             x: xark::wasm::input_field(n, "x", vis),
             y: xark::wasm::input_field(n, "y", vis),

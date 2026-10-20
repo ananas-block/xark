@@ -69,6 +69,18 @@ pub use crate::lang::{
 pub use crate::lang::RequireEqCircuit;
 // A circuit input type's `Field` leaves: derived structs and gadget input types.
 pub use crate::lang::ToFields;
+
+/// The natural encoding length of a value held in `limbs` × `bits`-bit limbs: 32
+/// bytes for a field-sized value (up to 264 bits of limbs, e.g. 3 × 86: the value
+/// itself is below 2²⁵⁶), else the limbs' bits rounded up to bytes.
+#[doc(hidden)]
+pub const fn natural_bytes(limbs: usize, bits: usize) -> usize {
+    if limbs * bits <= 264 {
+        32
+    } else {
+        (limbs * bits).div_ceil(8)
+    }
+}
 /// The host-side prover: load a built circuit and `check` / `prove` inputs
 /// against it (`xark::prover::circuit("name").prove(inputs)`). Host builds only.
 #[cfg(not(xark))]

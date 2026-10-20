@@ -59,6 +59,7 @@ pub use xark::wasm as __wasm;
 impl<const LIMBS: usize, const BITS: usize> xark::wasm::Input for Bignum<LIMBS, BITS> {
     fn input(n: &mut xark::wasm::NameBuf, vis: u32) -> Self {
         xark::wasm::input_struct(n, "Bignum");
+        xark::wasm::input_encoding_limbs("Bignum", LIMBS, BITS);
         Bignum {
             limbs: xark::wasm::input_field(n, "limbs", vis),
         }
@@ -341,6 +342,7 @@ macro_rules! fp {
         impl $crate::__wasm::Input for $name {
             fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
                 $crate::__wasm::input_struct(n, stringify!($name));
+                $crate::__wasm::input_encoding_limbs(stringify!($name), $limbs, $bits);
                 Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
             }
         }
@@ -440,6 +442,7 @@ macro_rules! fp {
         impl $crate::__wasm::Input for $name {
             fn input(n: &mut $crate::__wasm::NameBuf, vis: u32) -> Self {
                 $crate::__wasm::input_struct(n, stringify!($name));
+                $crate::__wasm::input_encoding_limbs(stringify!($name), $limbs, $bits);
                 Self { limbs: $crate::__wasm::input_field(n, "limbs", vis) }
             }
         }

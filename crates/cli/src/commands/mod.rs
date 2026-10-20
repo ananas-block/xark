@@ -38,6 +38,7 @@ pub mod check;
 pub mod client;
 pub mod completions;
 pub mod doctor;
+pub mod encoding;
 pub mod export;
 pub mod inspect;
 pub mod profile;

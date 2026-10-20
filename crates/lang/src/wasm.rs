@@ -91,6 +91,8 @@ mod ffi {
         pub fn xark_input_uint(name: *const u8, len: usize, vis: u32, width: u32) -> u64;
         #[cfg_attr(target_arch = "wasm32", link_name = "input_struct")]
         pub fn xark_input_struct(path: *const u8, path_len: usize, ty: *const u8, ty_len: usize);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_encoding")]
+        pub fn xark_input_encoding(ty: *const u8, ty_len: usize, json: *const u8, json_len: usize);
         #[cfg_attr(target_arch = "wasm32", link_name = "input_uint_hi")]
         pub fn xark_input_uint_hi() -> u64;
         #[cfg_attr(target_arch = "wasm32", link_name = "inputs_done")]
@@ -270,6 +272,9 @@ impl NameBuf {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
     pub fn truncate(&mut self, len: usize) {
         self.len = len;
     }
@@ -377,6 +382,26 @@ pub fn input<T: Input>(name: &mut NameBuf, root: &str, public: bool) -> T {
 /// compiler's `schema.json`); called first by every struct's [`Input::input`].
 pub fn input_struct(name: &NameBuf, ty: &str) {
     unsafe { ffi::xark_input_struct(name.buf.as_ptr(), name.len, ty.as_ptr(), ty.len()) }
+}
+
+/// Record the struct type `ty`'s natural encoding (a JSON object, `schema.json`'s
+/// `encoding`), so clients and `xark prove --inputs` accept a value in that form.
+/// Called from a gadget type's [`Input::input`] after [`input_struct`].
+pub fn input_encoding(ty: &str, json: &str) {
+    unsafe { ffi::xark_input_encoding(ty.as_ptr(), ty.len(), json.as_ptr(), json.len()) }
+}
+
+/// [`input_encoding`] for a value split into `n` little-endian `bits`-bit limbs:
+/// the struct's field leaves, in flatten order, are the limbs of the number (a
+/// big-endian byte string of [`crate::natural_bytes`]`(n, bits)` bytes).
+pub fn input_encoding_limbs(ty: &str, n: usize, bits: usize) {
+    let mut j = NameBuf::new();
+    j.push_str("{\"bytes\":");
+    j.push_usize(crate::natural_bytes(n, bits));
+    j.push_str(",\"limbs\":");
+    j.push_usize(bits);
+    j.push_str("}");
+    input_encoding(ty, j.as_str());
 }
 
 /// Bind a struct field during [`Input::input`] (used by the derives).
