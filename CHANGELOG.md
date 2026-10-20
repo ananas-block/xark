@@ -21,6 +21,11 @@ gadgets now check more:
 
 ### Changed
 
+- The on-chain verifier skips the scalar multiplication for public inputs of
+  0, 1 or up to 128 (a skip or a few point additions instead): booleans,
+  enum values and counts verify cheaper. Up to 38% less compute on a
+  circuit whose public inputs are all small, about 0.5% more on one whose
+  inputs are all large (hashes). The reference program's hash changes.
 - `xark export` no longer writes `client_call_example.rs`. It was generic
   Solana client boilerplate (and its listed dependencies didn't compile
   together); the generated README now says how to send `instruction_data.bin`.
