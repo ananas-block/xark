@@ -42,10 +42,14 @@ test("proves a compliant holder", () => {
   expect(kyc.verify(proof, { ...policy, allowed: ["US", "GB"] })).toBe(false);
 });
 
-test("refuses a holder outside the policy", () => {
-  expect(() => kyc.prove({ id, ...policy, allowed: ["GB", "FR"] })).toThrow();
-  expect(() => kyc.prove({ id, ...policy, bornBefore: new Date("1989-12-31") })).toThrow();
-  expect(() => kyc.prove({ id, ...policy, commitment: 1 })).toThrow();
+test("names the check a holder fails", () => {
+  const fails = (inputs: object) => () => kyc.prove({ id, ...policy, ...inputs });
+  expect(fails({ allowed: ["GB", "FR"] })).toThrow(
+    /the inputs fail the check at src\/lib\.rs:\d+:\d+: `id\.nationality\.require_one_of\(allowed\);`/,
+  );
+  expect(fails({ bornBefore: new Date("1989-12-31") })).toThrow(/`require\(id\.born < born_before\);`/);
+  expect(fails({ minNetWorth: 2_000_000 })).toThrow(/`require\(id\.net_worth >= min_net_worth\);`/);
+  expect(fails({ commitment: 1 })).toThrow(/`require_eq\(id\.commitment\(\), commitment\);`/);
 });
 
 test("names the input at fault", () => {

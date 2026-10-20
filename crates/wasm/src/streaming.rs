@@ -219,6 +219,44 @@ pub(crate) struct Prepared {
     vars: Vec<xark_ir::primitive::Var>,
     src: Box<dyn ConstraintSource>,
     key: Key,
+    /// `sources.json`, to name the statement a failing witness breaks.
+    sources: Option<xark_ir::SourceMap>,
+}
+
+/// `sources.json` text, parsed (a malformed one is an error: it was passed on
+/// purpose).
+pub(crate) fn parse_sources(
+    text: Option<String>,
+) -> Result<Option<xark_ir::SourceMap>, js_sys::Error> {
+    text.map(|t| {
+        xark_ir::SourceMap::from_json(&t)
+            .map_err(|e| js_error(&format!("parsing sources.json: {e}")))
+    })
+    .transpose()
+}
+
+/// The error for inputs that don't satisfy the circuit: the statement that fails,
+/// from `sources`, else the constraint. The prover's own row order can differ (a
+/// minimized key), so the failing row is found again in build order, solving the
+/// witness a second time; this only runs on the way to an error.
+fn unsatisfied(
+    xbc: &[u8],
+    ids: &std::collections::BTreeMap<u32, String>,
+    sources: Option<&xark_ir::SourceMap>,
+) -> js_sys::Error {
+    let row = xark_ir::function_decode::stream_solve_dense(xbc, ids)
+        .ok()
+        .and_then(|slots| xark_ir::function_decode::first_failing_row(xbc, &slots));
+    let Some(row) = row else {
+        return js_error("the inputs don't satisfy the circuit (a constraint fails)");
+    };
+    match sources.and_then(|s| s.at(row)) {
+        Some(site) => js_error(&format!("the inputs fail the check at {}", site.describe())),
+        None => js_error(&format!(
+            "the inputs don't satisfy the circuit: constraint #{row} fails (pass the build's \
+             sources.json to name its source line)"
+        )),
+    }
 }
 
 #[allow(clippy::large_enum_variant)] // one per preloaded circuit
@@ -345,11 +383,13 @@ fn prepare(
     } else {
         Key::Streamed(SerializedPk::new(reader).map_err(|e| js_error(&e.to_string()))?)
     };
+    let sources = parse_sources(opt_get(options, "sources").and_then(|v| v.as_string()))?;
     Ok(Prepared {
         xbc,
         vars,
         src,
         key,
+        sources,
     })
 }
 
@@ -367,7 +407,9 @@ pub(crate) fn prepare_auto(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
     resident: bool,
+    sources: Option<String>,
 ) -> Result<Prepared, js_sys::Error> {
+    let sources = parse_sources(sources)?;
     let xbc = to_bytes(circuit_xbc, "circuit.xbc")?;
     let vars = xark_ir::function_decode::decode_input_vars(&xbc);
     let reader = || -> Result<JsReader, js_sys::Error> {
@@ -388,6 +430,7 @@ pub(crate) fn prepare_auto(
         vars,
         src,
         key,
+        sources,
     })
 }
 
@@ -470,7 +513,12 @@ fn prove_prepared(
         ),
     };
     LAST_TIMINGS.with(|t| *t.borrow_mut() = std::mem::take(&mut timings.marks));
-    let proof = res.map_err(mismatch_error)?;
+    let proof = res.map_err(|e| match e {
+        xark_groth16::ProveError::Unsatisfied { .. } => {
+            unsatisfied(&p.xbc, &ids, p.sources.as_ref())
+        }
+        e => mismatch_error(e),
+    })?;
     encode_result(&proof, &z[1..ninst])
 }
 
@@ -488,6 +536,8 @@ fn prove_prepared(
 /// * `msmChunk` — proving-key points per streamed chunk (default 2¹⁸).
 /// * `spill` — keep only one quotient vector in wasm memory, parking the other in
 ///   a JS buffer (for circuits near the 4 GB wasm32 limit).
+/// * `sources` — the build's `sources.json` (text), so inputs that fail a check
+///   name its source line.
 /// * `seed` — **testing only**: deterministic prover randomness (breaks
 ///   zero-knowledge across proofs). Default: the platform CSPRNG.
 ///

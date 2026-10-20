@@ -28,6 +28,8 @@ pub struct Lowered {
     pub entry: Option<String>,
     /// The input interface (`schema.json`).
     pub schema: serde_json::Value,
+    /// Each constraint's source statement (`sources.json`; see [`write_sources`]).
+    pub sources: xark_ir::SourceMap,
 }
 
 /// Lower a circuit module (`wasm32`, built with `--cfg xark`) to a circuit.
@@ -50,7 +52,9 @@ pub fn lower_module(
 ) -> CompileResult<Lowered> {
     let timing = std::env::var_os("XARK_FRONTEND_TIME").is_some();
     let t = std::time::Instant::now();
-    let mut host = host::Host::new(profile, notes, field.modulus_decimal.as_deref());
+    // Sites are always recorded (an interned id per constraint): every build
+    // writes `sources.json`. `profile` adds the full per-constraint attribution.
+    let mut host = host::Host::new(true, notes, field.modulus_decimal.as_deref());
     let module = interp::Module::parse(wasm)?;
     let mut machine = interp::Machine::new(&module)?;
     machine
@@ -73,8 +77,13 @@ pub fn lower_module(
     let sites = std::mem::take(&mut host.sites);
     let t = std::time::Instant::now();
     let mut output = host.finish(field).map_err(|e| locate(&module, e))?;
+    let mut r = debuginfo::Resolver::new(&module);
+    let resolved: Vec<debuginfo::Attribution> = sites.iter().map(|s| r.attribute(s)).collect();
+    let sources = source_map(&output.profile, &resolved);
     if profile {
-        attribute(&module, &sites, &mut output.profile);
+        attribute(&resolved, &mut output.profile);
+    } else {
+        output.profile = Vec::new();
     }
     if timing {
         eprintln!("FRONTEND_TIME: finish = {:?}", t.elapsed());
@@ -83,6 +92,7 @@ pub fn lower_module(
         output,
         entry: module.entry.clone(),
         schema,
+        sources,
     })
 }
 
@@ -120,16 +130,46 @@ fn locate(module: &interp::Module, mut e: CompileError) -> CompileError {
     e
 }
 
+/// The source map of constraints whose sites (interned ids, carried in each
+/// profile record's `line`) resolve to `resolved`.
+fn source_map(
+    profile: &[xark_ir::profile::ConstraintProfile],
+    resolved: &[debuginfo::Attribution],
+) -> xark_ir::SourceMap {
+    // Distinct statements: many interned call stacks resolve to the same one.
+    let mut sites: Vec<xark_ir::Site> = Vec::new();
+    let mut index: std::collections::HashMap<xark_ir::Site, u32> = Default::default();
+    let ids: Vec<u32> = resolved
+        .iter()
+        .map(|a| {
+            let site = xark_ir::Site {
+                file: a.file.clone(),
+                line: a.line,
+                col: a.col,
+                text: String::new(),
+                chain: a.chain.clone(),
+            };
+            *index.entry(site.clone()).or_insert_with(|| {
+                sites.push(site);
+                sites.len() as u32 - 1
+            })
+        })
+        .collect();
+    let rows = profile.iter().map(|p| {
+        ids.get(p.line as usize)
+            .copied()
+            .unwrap_or(xark_ir::sources::NO_SITE)
+    });
+    xark_ir::SourceMap::new(rows, &sites)
+}
+
 /// Resolve each profiled constraint's site (its interned id, carried in `line`)
 /// to the source attribution.
 fn attribute(
-    module: &interp::Module,
-    sites: &[Vec<(u32, u32)>],
+    resolved: &[debuginfo::Attribution],
     profile: &mut [xark_ir::profile::ConstraintProfile],
 ) {
     use xark_ir::profile::ConstraintKind;
-    let mut r = debuginfo::Resolver::new(module);
-    let resolved: Vec<debuginfo::Attribution> = sites.iter().map(|s| r.attribute(s)).collect();
     for p in profile.iter_mut() {
         let Some(a) = resolved.get(p.line as usize) else {
             p.line = 0;
@@ -202,6 +242,40 @@ pub fn write_outputs_in(
         .as_ref()
         .expect("the DAG-function artifact is built for every circuit");
     std::fs::write(out_dir.join("circuit.xbc"), xbc)
+}
+
+/// Write `sources.json` to `out_dir`: `sources` with paths made relative to the
+/// circuit crate `root` and each statement's source line filled in.
+pub fn write_sources(
+    out_dir: &std::path::Path,
+    sources: &mut xark_ir::SourceMap,
+    root: &std::path::Path,
+) -> std::io::Result<()> {
+    let canon_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    for s in &mut sources.sites {
+        let path = root.join(&s.file); // a no-op for an absolute path
+        let path = path.canonicalize().unwrap_or(path);
+        s.file = match path.strip_prefix(&canon_root) {
+            Ok(rel) => rel.display().to_string(),
+            // Outside the crate (a dependency): from its crate dir on, so the file
+            // doesn't carry this machine's paths (`xark-poseidon2/src/lib.rs`).
+            Err(_) => {
+                let parts: Vec<_> = path.iter().collect();
+                match parts.iter().rposition(|p| *p == "src") {
+                    Some(i) if i > 0 => parts[i - 1..]
+                        .iter()
+                        .collect::<std::path::PathBuf>()
+                        .display()
+                        .to_string(),
+                    _ => path
+                        .file_name()
+                        .map_or(String::new(), |f| f.to_string_lossy().into()),
+                }
+            }
+        };
+    }
+    sources.read_text(root);
+    std::fs::write(out_dir.join("sources.json"), sources.to_json() + "\n")
 }
 
 /// Make the profile's source paths under `root` relative to it (`src/lib.rs`);

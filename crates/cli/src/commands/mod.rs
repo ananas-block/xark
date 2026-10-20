@@ -12,8 +12,8 @@ use ark_bn254::Fr;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+use xark_ir::SourceMap;
 use xark_ir::primitive::PrimitiveProgram;
-use xark_ir::profile::ProfileProgram;
 use xark_ir::solver::Fp;
 use xark_ir::{R1csProgram, VarId, Visibility};
 
@@ -604,14 +604,11 @@ pub fn load_circuit_auto(path: &std::path::Path) -> Result<PrimitiveProgram> {
     }
 }
 
-/// Best-effort load of `profile.json` (per-constraint source/function attribution)
-/// from a build directory, for richer failure diagnostics. Returns `None` when
-/// the circuit was built without profiling — `xark test` and `xark profile`
-/// profile, a plain `xark build` doesn't — or the file is malformed.
-pub fn load_profile(dir: &std::path::Path) -> Option<ProfileProgram> {
-    std::fs::read_to_string(dir.join("profile.json"))
-        .ok()
-        .and_then(|s| xark_ir::profile::from_json(&s).ok())
+/// Best-effort load of `sources.json` (each constraint's source statement) from a
+/// build directory, so a failing constraint names its line. `None` for a build
+/// from before it existed, or a malformed file.
+pub fn load_sources(dir: &std::path::Path) -> Option<SourceMap> {
+    SourceMap::load(dir)
 }
 
 /// Resolve `name → value` inputs to `VarId → decimal` for the solver. Shared by
@@ -638,18 +635,18 @@ pub fn resolve_input_ids(
 /// `xark build`/`check` is planned.
 pub fn soundness_check(
     cp: &xark_ir::CircuitProgram,
-    profile: Option<&ProfileProgram>,
+    sources: Option<&SourceMap>,
     id_inputs: &BTreeMap<VarId, String>,
 ) -> Result<BTreeMap<VarId, Fp>> {
     // Solve + check directly on the R1CS rows (no `to_primitive` flattening). On
-    // an unsatisfied witness, name *which* constraint (and, when profiled, its
+    // an unsatisfied witness, name *which* constraint (and its
     // source line / function) failed — the same explanation `xark test` surfaces;
     // the R1CS is materialized only here, on the (rare) error path.
     let describe = |e| {
         let r1cs = cp.to_r1cs();
         anyhow::anyhow!(
             "{}",
-            xark_ir::diagnose::describe_unsatisfied(&e, &r1cs, profile)
+            xark_ir::diagnose::describe_unsatisfied(&e, &r1cs, sources)
         )
     };
     let timing = dbg_flag("PROVE_TIME");
@@ -685,7 +682,7 @@ pub fn soundness_check(
 /// error message exactly when a proof is going to fail anyway.
 pub fn stream_soundness(
     bytes: &[u8],
-    profile: Option<&ProfileProgram>,
+    sources: Option<&SourceMap>,
     id_inputs: &BTreeMap<VarId, String>,
 ) -> Result<BTreeMap<VarId, Fp>> {
     let timing = dbg_flag("PROVE_TIME");
@@ -704,7 +701,7 @@ pub fn stream_soundness(
             // from the stream) just return its assignment.
             let cp = xark_ir::function_decode::expand_function_blob(bytes)
                 .map_err(|e| anyhow::anyhow!(e))?;
-            soundness_check(&cp, profile, id_inputs)
+            soundness_check(&cp, sources, id_inputs)
         }
     }
 }

@@ -74,8 +74,20 @@ test("verify throws on a malformed proof (does not silently return false)", () =
 });
 
 test("prove throws on an unsatisfiable witness", () => {
-  // Named as the inputs' fault, not the key's.
-  assert.throws(() => prove(xbc, pk, { secret: "3", result: "26" }), /inputs don't satisfy the circuit/);
+  // Named as the inputs' fault, not the key's, with the failing constraint.
+  assert.throws(
+    () => prove(xbc, pk, { secret: "3", result: "26" }),
+    /inputs don't satisfy the circuit: constraint #\d+ fails/,
+  );
+});
+
+test("prove names the failing source line given sources.json", () => {
+  const sources = readFileSync(join(D, "sources.json"), "utf8");
+  assert.throws(
+    () => prove(xbc, pk, { secret: "3", result: "26" }, sources),
+    /the inputs fail the check at src\/lib\.rs:\d+:\d+: `.+`/,
+  );
+  assert.throws(() => prove(xbc, pk, { secret: "3", result: "26" }, "{"), /parsing sources\.json/);
 });
 
 test("byte args accept a raw ArrayBuffer (browser response.arrayBuffer() flow)", () => {

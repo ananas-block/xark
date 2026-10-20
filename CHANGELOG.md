@@ -21,6 +21,16 @@ gadgets now check more:
 
 ### Changed
 
+- **Failing checks name their source line.** Every `xark build` writes
+  `sources.json` (which statement each constraint came from; `circuit.xbc` and
+  its digest are unchanged), and inputs that fail a check report that statement
+  in Rust tests, `xark prove`/`check` and xark-wasm: `src/lib.rs:77:20
+  id.nationality.require_one_of(allowed);` rather than a constraint number.
+  Before, only `xark test` and `xark profile` builds had the line. xark-wasm's
+  `prove` and `preload` take `sources.json` as an optional last argument (the
+  streaming API as `options.sources`), and the generated client as
+  `keys.sources`. Recording it costs about 10% of lowering time (0.25s on
+  the 1.6M-constraint `secp256k1_ecdsa`).
 - **`Date`, `Text`, `Bitfield<F>` and `flags!`** in `xark`: a calendar day, a
   short string and a set of enum flags, each one field, with natural forms in
   tests (`"1990-01-01"`, `[US, GB]`), `--inputs` and the TypeScript client. They

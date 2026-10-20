@@ -104,8 +104,9 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
 }
 
 /// Everything `xark build` writes (beside the keys and proofs of later commands).
-const BUILD_OUTPUTS: [&str; 8] = [
+const BUILD_OUTPUTS: [&str; 9] = [
     "circuit.xbc",
+    "sources.json",
     "circuit.json",
     "r1cs.json",
     "graph.dot",
@@ -178,6 +179,13 @@ fn build_stable(
         xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
     {
         eprintln!("xark: writing {}: {e}", out_abs.display());
+        return 1;
+    }
+    if let Err(e) = xark_frontend::write_sources(out_abs, &mut lowered.sources, crate_abs) {
+        eprintln!(
+            "xark: writing {}: {e}",
+            out_abs.join("sources.json").display()
+        );
         return 1;
     }
     if let Some(entry) = &lowered.entry {

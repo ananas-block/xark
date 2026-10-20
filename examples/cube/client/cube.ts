@@ -32,7 +32,7 @@ export interface CubePublicValues {
 
 /** The parts of `@blueshift-gg/xark-wasm` this client uses (any of its builds). */
 export interface XarkWasm {
-  prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>): { proof: Uint8Array; publicInputs: Uint8Array };
+  prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
   verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
   encodeInputs(schema: string, inputs: string): Record<string, string>;
   encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
@@ -47,11 +47,24 @@ export interface CubeProof {
 }
 
 /**
+ * The build output a `Cube` works from (`target/xark/cube/`): `circuit`
+ * (circuit.xbc) and `provingKey` (pk.bin) to prove, `verifyingKey` (vk.bin) to
+ * verify, and `sources` (sources.json, as text) so that inputs failing a check
+ * name its source line.
+ */
+export interface CubeKeys {
+  circuit?: Uint8Array;
+  provingKey?: Uint8Array;
+  verifyingKey?: Uint8Array;
+  sources?: string;
+}
+
+/**
  * Prove and verify `cube` with the xark-wasm module you pass in:
  *
  * ```ts
  * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const circuit = new Cube(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk });
+ * const circuit = new Cube(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk, sources });
  * const { proof, publicInputs } = circuit.prove(inputs);
  * circuit.verify(proof, publicInputs); // true
  * ```
@@ -62,15 +75,18 @@ export class Cube {
 
   constructor(
     private readonly wasm: XarkWasm,
-    private readonly keys: { circuit?: Uint8Array; provingKey?: Uint8Array; verifyingKey?: Uint8Array },
+    private readonly keys: CubeKeys,
   ) {}
 
-  /** Prove `inputs`. Throws if they don't satisfy the circuit, naming the input at fault. */
+  /**
+   * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
+   * check (naming its source line when `sources` was given).
+   */
   prove(inputs: CubeInputs): CubeProof {
-    const { circuit, provingKey } = this.keys;
+    const { circuit, provingKey, sources } = this.keys;
     if (!circuit || !provingKey) throw new Error("proving needs `circuit` (circuit.xbc) and `provingKey` (pk.bin)");
     const leaves = this.wasm.encodeInputs(Cube.schema, toJson(inputs));
-    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves);
+    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
     return { proof: proof.slice(), publicInputs: this.decodePublicInputs(publicInputs), publicInputBytes: publicInputs.slice() };
   }
 

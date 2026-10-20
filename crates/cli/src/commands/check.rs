@@ -14,7 +14,7 @@ use anyhow::{Result, bail};
 
 use xark_ir::primitive::VarRole;
 
-use super::{CheckArgs, load_circuit_program, load_profile, resolve_input_ids, soundness_check};
+use super::{CheckArgs, load_circuit_program, load_sources, resolve_input_ids, soundness_check};
 use crate::xark_project::XarkProject;
 
 pub fn run(args: CheckArgs) -> Result<()> {
@@ -36,10 +36,10 @@ pub fn run(args: CheckArgs) -> Result<()> {
     // Expand the self-contained `circuit.xbc` once; the soundness gate solves +
     // checks directly on its R1CS rows (no `to_primitive` flattening).
     let cp = load_circuit_program(&project.circuit_xbc())?;
-    let profile = load_profile(&project.xark_dir);
+    let sources = load_sources(&project.xark_dir);
 
     // Resolve inputs → var ids and run the shared soundness gate (no setup/prove).
-    // A best-effort profile lets a bad witness name the failing constraint (and
+    // `sources.json` (best-effort) lets a bad witness name the failing constraint (and
     // its source line), matching `xark prove` / `xark test`.
     let arg = args
         .inputs
@@ -48,7 +48,7 @@ pub fn run(args: CheckArgs) -> Result<()> {
     let inputs = super::read_inputs(&project.xark_dir, arg)?;
     super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let id_inputs = resolve_input_ids(&cp.vars, &inputs)?;
-    let _assign = soundness_check(&cp, profile.as_ref(), &id_inputs)?;
+    let _assign = soundness_check(&cp, sources.as_ref(), &id_inputs)?;
 
     let derived = cp
         .vars

@@ -183,7 +183,7 @@ and parks the other in a JS buffer.
 
 ## API
 
-### `prove(circuitXbc, pkBytes, inputs)`
+### `prove(circuitXbc, pkBytes, inputs, sources?)`
 
 Generates a Groth16 proof, streaming the constraint rows and reading the key a
 chunk at a time. For a `minimized` key it rebuilds that circuit from `circuitXbc`
@@ -194,6 +194,7 @@ itself, so no `r1cs.stream` is needed.
 | `circuitXbc` | `Uint8Array` \| `ArrayBuffer` | `circuit.xbc` (binary, self-contained build artifact) |
 | `pkBytes`    | `Uint8Array` \| `ArrayBuffer` | Proving key (`pk.bin`, binary)                        |
 | `inputs`     | `object`                      | Witness values; see [Inputs](#inputs)                 |
+| `sources`    | `string` (optional)           | `sources.json` (text) from the same build             |
 
 Returns a `ProofBundle`:
 
@@ -204,6 +205,15 @@ Returns a `ProofBundle`:
 | `numPublicInputs` | `number`     |
 
 Throws on a malformed `.xbc`, unknown input, unsatisfiable witness, or malformed key.
+Inputs that fail a check are reported as the statement that fails when `sources`
+is given (`xark build` writes `sources.json` beside `circuit.xbc`):
+
+```text
+the inputs fail the check at src/lib.rs:77:20: `id.nationality.require_one_of(allowed);`
+```
+
+and as the failing constraint's number otherwise. `preload(circuitXbc, pkBytes,
+sources?)` and the streaming API's `options.sources` take it the same way.
 
 #### Inputs
 

@@ -147,8 +147,32 @@ pub struct Host {
     /// Profiling: the distinct wasm call stacks constraints were emitted at
     /// (resolved to source by [`crate::debuginfo`] after lowering).
     pub(crate) sites: Vec<Vec<(u32, u32)>>,
-    site_ids: HashMap<Vec<(u32, u32)>, u32>,
+    site_ids: HashMap<Vec<(u32, u32)>, u32, std::hash::BuildHasherDefault<StackHasher>>,
     site_buf: Vec<(u32, u32)>,
+}
+
+/// A fast hasher for call stacks (`(func, pc)` pairs), looked up on every host
+/// call: each word is mixed in, unlike `IdHasher`'s single-key `write_u32`.
+#[derive(Default)]
+struct StackHasher(u64);
+impl std::hash::Hasher for StackHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(x as u64);
+    }
+    fn write_usize(&mut self, x: usize) {
+        self.write_u64(x as u64);
+    }
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
 }
 
 impl Host {
@@ -184,7 +208,7 @@ impl Host {
             cmp_calls: 0,
             muxes: HashMap::new(),
             sites: Vec::new(),
-            site_ids: HashMap::new(),
+            site_ids: HashMap::default(),
             site_buf: Vec::new(),
             consts: Default::default(),
         }

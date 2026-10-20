@@ -133,7 +133,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
         None => Default::default(),
     };
     super::check_uint_ranges(&project.xark_dir, &inputs)?;
-    let profile = crate::commands::load_profile(&project.xark_dir);
+    let sources = crate::commands::load_sources(&project.xark_dir);
 
     // The streaming prover: neither the R1CS nor the key is ever fully in memory.
     // A `reduced` key streams rows straight from the bytecode; a `minimized` key
@@ -168,7 +168,7 @@ pub fn run(args: ProveArgs) -> Result<()> {
         &pk_path,
         kind,
         &inputs,
-        profile.as_ref(),
+        sources.as_ref(),
         timing,
     )?;
     write_outputs(&args, &proof_out, &out_dir, proof, public)
@@ -229,7 +229,7 @@ fn prove_streaming(
     pk_path: &std::path::Path,
     kind: StreamKind,
     inputs: &BTreeMap<String, String>,
-    profile: Option<&xark_ir::profile::ProfileProgram>,
+    sources: Option<&xark_ir::SourceMap>,
     timing: bool,
 ) -> Result<(xark_groth16::Proof<ark_bn254::Bn254>, Vec<ark_bn254::Fr>)> {
     let t = std::time::Instant::now();
@@ -295,7 +295,7 @@ fn prove_streaming(
     let vars = xark_ir::function_decode::decode_input_vars(&bytes);
     let id_inputs = resolve_input_ids(&vars, inputs)?;
     drop(vars);
-    let assign_fp = stream_soundness(&bytes, profile, &id_inputs)?;
+    let assign_fp = stream_soundness(&bytes, sources, &id_inputs)?;
     let t_solve = t.elapsed();
     let z = src.layout().assignment(|id| {
         assign_fp.get(&id).map(|v| {

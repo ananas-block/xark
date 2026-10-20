@@ -934,6 +934,25 @@ pub(crate) fn row_satisfied(
     eval_lc(a, assign, modulus).mul(&eval_lc(b, assign, modulus)) == eval_lc(c, assign, modulus)
 }
 
+/// [`row_satisfied`] against dense slots (index = `VarId`), as
+/// [`crate::function_decode::stream_solve_dense`] returns them.
+pub(crate) fn row_satisfied_dense(
+    a: &LinearCombination,
+    b: &LinearCombination,
+    c: &LinearCombination,
+    slots: &[Option<Fp>],
+    modulus: &BigUint,
+) -> bool {
+    struct Slots<'a>(&'a [Option<Fp>]);
+    impl Assignment for Slots<'_> {
+        fn get_fp(&self, var: VarId) -> Option<&Fp> {
+            self.0.get(var as usize).and_then(|o| o.as_ref())
+        }
+    }
+    let s = Slots(slots);
+    eval_lc(a, &s, modulus).mul(&eval_lc(b, &s, modulus)) == eval_lc(c, &s, modulus)
+}
+
 // Under-constraint (soundness smoke-test) analyzer.
 
 /// A derived variable the analyzer could not prove is uniquely pinned by the

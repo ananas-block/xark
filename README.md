@@ -56,6 +56,18 @@ fn accepts_a_cube_root() {
 }
 ```
 
+Inputs that fail a check are reported as the statement that fails, in tests, in
+`xark prove` and in the TypeScript client alike:
+
+```text
+error: witness does not satisfy the circuit
+
+  src/lib.rs:77:20  id.nationality.require_one_of(allowed);
+```
+
+Every build writes `sources.json` beside `circuit.xbc` for this: which source
+line each constraint came from (the circuit itself is unchanged by it).
+
 Inputs can be grouped into structs with `#[derive(CircuitInput)]`, including
 gadget types: `examples/grumpkin_ivc` takes a few `Instance { cw, ce, u, x }`
 values instead of twenty separate parameters, and `to_fields()` hashes one in
@@ -168,7 +180,7 @@ export interface Identity {
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
 import { ZkKyc } from "./zk_kyc";
 
-const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey });
+const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources }); // sources.json, as text
 const { proof, publicInputs } = kyc.prove({
   id: { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: new Date("2030-01-01"), salt },
   commitment,
@@ -240,7 +252,7 @@ rewrites are proven exact in Lean (`formal/Formal/Rewrites.lean`). Details:
 ## Proving and verifying in JavaScript
 
 Prove and verify anywhere JavaScript runs with
-[`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`prove(circuit, pk, inputs)`,
+[`@blueshift-gg/xark-wasm`](crates/wasm/README.md) (`prove(circuit, pk, inputs, sources?)`,
 `verify(vk, proof, publicInputs)`), or through the typed client `xark client`
 generates over it (above). `xark prove` writes the same bytes `verify` takes:
 `proof.bin` and `public_inputs.bin`.

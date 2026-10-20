@@ -18,6 +18,7 @@ pub mod profile;
 pub mod r1cs;
 pub mod r1cs_stream;
 pub mod solver;
+pub mod sources;
 pub mod witness_search;
 
 pub use circuit::{CircuitProgram, R1csRow, expr_from_r1cs};
@@ -28,6 +29,7 @@ pub use linear_combination::{LinearCombination, Term, VarId};
 pub use minimize::minimize;
 pub use profile::{ConstraintKind, ConstraintProfile, ProfileProgram};
 pub use r1cs::{DebugInfo, FieldSpec, R1csConstraint, R1csProgram, Variable, Visibility};
+pub use sources::{Site, SourceMap};
 
 /// Developer-diagnostics env-flag probe. Only reads the environment when the
 /// `debug` feature is enabled; a normal release build compiles this to `false`

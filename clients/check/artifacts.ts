@@ -7,5 +7,10 @@ import { join } from "node:path";
 export function artifacts(example: string) {
   const dir = join(__dirname, "..", "..", "examples", example, "target", "xark", example);
   const read = (f: string) => new Uint8Array(readFileSync(join(dir, f)));
-  return { circuit: read("circuit.xbc"), provingKey: read("pk.bin"), verifyingKey: read("vk.bin") };
+  return {
+    circuit: read("circuit.xbc"),
+    provingKey: read("pk.bin"),
+    verifyingKey: read("vk.bin"),
+    sources: readFileSync(join(dir, "sources.json"), "utf8"),
+  };
 }

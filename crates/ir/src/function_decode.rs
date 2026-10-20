@@ -986,6 +986,25 @@ pub fn stream_check(
     }
 }
 
+/// The first constraint, in build order (the order `sources.json` and `r1cs.json`
+/// index), that the solved `slots` (from [`stream_solve_dense`]) don't satisfy.
+/// Rows are streamed one at a time; for naming a failure after a prover rejects
+/// a witness, whatever order its own rows are in.
+pub fn first_failing_row(b: &[u8], slots: &[Option<crate::solver::Fp>]) -> Option<usize> {
+    let (field, _vars, defs, top_c, _top_w, _keep, _num_inputs) = decode_compact(b);
+    let modulus = num_bigint::BigUint::parse_bytes(field.modulus_decimal.as_bytes(), 10)?;
+    let (mut i, mut failed) = (0usize, None);
+    expand_c_visit(&defs, &top_c, &IDENTITY, &mut |row: R1csRow| {
+        if failed.is_none()
+            && !crate::solver::row_satisfied_dense(&row.a, &row.b, &row.c, slots, &modulus)
+        {
+            failed = Some(i);
+        }
+        i += 1;
+    });
+    failed
+}
+
 /// **Streaming witness solve** — the assignment only, with no constraint check or
 /// analysis: the hint program is expanded op-by-op straight out of the bytecode, so
 /// neither the flat program nor the flat R1CS is ever materialized. For a prover

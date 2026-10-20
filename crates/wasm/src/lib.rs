@@ -204,10 +204,14 @@ fn encode_result(proof: &Proof<Bn254>, public: &[Fr]) -> Result<ProofBundle, js_
 /// writes; `pk_bytes` is the `pk.bin` from `xark setup`. The key is decoded once
 /// into wasm memory (about 2.2× its compressed size) so repeat proofs skip point
 /// decompression; for the largest circuits prefer `preloadStreaming`, which
-/// leaves it in its JS buffer.
+/// leaves it in its JS buffer. `sources`: as for [`prove`].
 #[wasm_bindgen]
-pub fn preload(circuit_xbc: &Bytes, pk_bytes: &Bytes) -> Result<(), js_sys::Error> {
-    let prepared = streaming::prepare_auto(circuit_xbc, pk_bytes, true)?;
+pub fn preload(
+    circuit_xbc: &Bytes,
+    pk_bytes: &Bytes,
+    sources: Option<String>,
+) -> Result<(), js_sys::Error> {
+    let prepared = streaming::prepare_auto(circuit_xbc, pk_bytes, true, sources)?;
     ARTIFACTS.with(|cell| *cell.borrow_mut() = Some(prepared));
     Ok(())
 }
@@ -239,14 +243,17 @@ pub fn prove_preloaded(inputs: JsValue) -> Result<ProofBundle, js_sys::Error> {
 /// against the key's verifying key before it is returned.
 ///
 /// Throws an `Error` on any error: a malformed `.xbc`, unknown input,
-/// an unsatisfiable witness, or a proving key for a different circuit.
+/// an unsatisfiable witness, or a proving key for a different circuit. Pass the
+/// build's `sources.json` (text) as `sources` and inputs that fail a check name
+/// it: `the inputs fail the check at src/lib.rs:77:20: \`…require_one_of(allowed);\``.
 #[wasm_bindgen]
 pub fn prove(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
     inputs: JsValue,
+    sources: Option<String>,
 ) -> Result<ProofBundle, js_sys::Error> {
-    let mut p = streaming::prepare_auto(circuit_xbc, pk_bytes, false)?;
+    let mut p = streaming::prepare_auto(circuit_xbc, pk_bytes, false, sources)?;
     streaming::prove_auto(&mut p, inputs)
 }
 

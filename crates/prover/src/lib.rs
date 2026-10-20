@@ -13,8 +13,8 @@ use ark_ff::{PrimeField, Zero};
 use num_bigint::{BigInt, Sign};
 use xark_groth16::{Proof, VerifyingKey};
 
+use xark_ir::SourceMap;
 use xark_ir::primitive::{PrimitiveProgram, Var, VarRole};
-use xark_ir::profile::ProfileProgram;
 use xark_ir::solver::{self, Fp};
 use xark_ir::{FieldConst, LinearCombination as IrLc, R1csProgram, VarId, Visibility};
 
@@ -372,16 +372,14 @@ pub struct Circuit {
     dir: std::path::PathBuf,
     r1cs: R1csProgram,
     prim: PrimitiveProgram,
-    /// Per-constraint source/function attribution, loaded from `profile.json` when
-    /// present (`xark test` and `xark profile` write it; a plain `xark build`
-    /// doesn't). Used to explain *which* source line / function a failing
-    /// constraint came from.
-    profile: Option<ProfileProgram>,
+    /// Each constraint's source statement (`sources.json`, from every build), to
+    /// explain *which* line a failing constraint came from.
+    sources: Option<SourceMap>,
 }
 
 /// The error from [`Circuit::check`]: a human-readable, multi-line explanation
 /// of why the witness does not satisfy the circuit (which constraint, and — when
-/// profiled — its source line and function chain).
+/// built — its source line).
 ///
 /// Its `Debug` delegates to `Display`, so `c.check(..).unwrap()` prints the
 /// message verbatim (with real newlines) instead of an escaped one-liner — the
@@ -662,18 +660,15 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
     let cp = xark_ir::function_decode::expand_function_blob(&bytes)
         .unwrap_or_else(|e| panic!("expanding {}: {e}", xbc_path.display()));
     let (prim, r1cs) = (cp.to_primitive(), cp.to_r1cs());
-    // Best-effort: load the per-constraint attribution if the circuit was built
-    // with profiling (as `xark test` does). Absent or malformed → `None`; the
-    // failure diagnostic then degrades to the constraint index + its debug note.
-    let profile = std::fs::read_to_string(dir.join("profile.json"))
-        .ok()
-        .and_then(|s| xark_ir::profile::from_json(&s).ok());
+    // Best-effort: each constraint's source line. Absent (an older build) or
+    // malformed → `None`; the failure diagnostic then names only the constraint.
+    let sources = SourceMap::load(dir);
     Circuit {
         name,
         dir: dir.to_path_buf(),
         r1cs,
         prim,
-        profile,
+        sources,
     }
 }
 
@@ -780,7 +775,7 @@ impl Circuit {
 
     /// Check that `inputs` **satisfy the circuit**: solve the witness and verify it
     /// meets every constraint. Returns `Ok(())`, or an actionable `Err` naming the
-    /// first failing constraint (with source line / function chain when profiled).
+    /// first failing constraint (and its source line).
     ///
     /// The fast, everyday circuit test — a satisfying witness *is* the proof the
     /// relation holds, so the positive test is `c.check(good).unwrap()` and the
@@ -790,13 +785,13 @@ impl Circuit {
     pub fn check<I: ProveInputs>(&self, inputs: I) -> Result<(), ProveError> {
         let id_inputs = self.resolve_inputs(inputs)?;
         // An unsatisfiable witness means the stated relation is false; explain
-        // *which* constraint (and its source line / function, when profiled)
+        // *which* constraint (and its source line)
         // failed, via the shared diagnostic.
         self.solve_and_check(&id_inputs).map_err(|e| {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
-                self.profile.as_ref(),
+                self.sources.as_ref(),
             ))
         })?;
         Ok(())
@@ -813,7 +808,7 @@ impl Circuit {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
-                self.profile.as_ref(),
+                self.sources.as_ref(),
             ))
         })?;
         let holes = solver::analyze_underconstrained(&self.prim, &assign);
@@ -855,7 +850,7 @@ impl Circuit {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
-                self.profile.as_ref(),
+                self.sources.as_ref(),
             ))
         })?;
         let fail = |what: &str, e: &dyn std::fmt::Display| {
@@ -915,7 +910,7 @@ impl Circuit {
             ProveError(xark_ir::diagnose::describe_unsatisfied(
                 &e,
                 &self.r1cs,
-                self.profile.as_ref(),
+                self.sources.as_ref(),
             ))
         })?;
         let assign = lower_witness(&assign_fp);
