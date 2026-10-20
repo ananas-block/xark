@@ -55,6 +55,24 @@ each batch an attacker tries (the weights are public, so the margin has to
 cover grinding; full-width weights cost the same as narrow ones). The batch is
 always strict: non-canonical coordinates are rejected.
 
+### Using batches safely
+
+- **Reject duplicates inside the batch.** Anyone can copy or re-randomize a
+  valid proof, so one batch can hold the same statement twice. Check each
+  entry's nullifier (or nonce) against the others in the batch as well as
+  against storage, before recording any of them. Checking every entry against
+  storage first and writing afterwards lets the same nullifier through twice.
+- **Act only on the bytes you verified.** The result covers exactly the
+  `batch` buffer passed in: read each entry's public inputs (amounts,
+  recipients, …) from that same buffer, not from another account or offset.
+- **One bad proof fails the batch.** If you batch other people's proofs (a
+  relayer), verify each one off-chain first, or a single invalid proof keeps
+  everyone else's from landing.
+- **Don't alias `scratch` and `batch`.** Safe Rust can't, but a program that
+  builds both from raw account memory with `unsafe` must keep them apart: the
+  pairing operands are written while entries are still being read.
+- As with single proofs, anything but `Ok(true)` is a rejection.
+
 ## Wire format (little-endian, `x || y`)
 
 ```

@@ -690,6 +690,11 @@ fn add_mod_r(acc: &mut [u8; FR_BYTES], x: &[u8; FR_BYTES]) {
 /// batch an attacker tries);
 /// `Ok(false)` means at least one doesn't, but not which: verify them one by one
 /// to find it. Coordinates must be canonical, as in [`verify_groth16_strict`].
+///
+/// A batch can hold the same statement twice (proofs can be copied or
+/// re-randomized): reject duplicate nullifiers *within* the batch as well as
+/// against storage, and read each entry's public inputs from this same `batch`.
+/// See the crate README's "Using batches safely".
 pub fn verify_groth16_batch(
     vk_bytes: &[u8],
     batch: &[u8],
