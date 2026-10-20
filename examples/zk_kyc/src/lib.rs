@@ -93,16 +93,11 @@ mod tests {
         }
     }
 
-    /// The issuer's commitment, computed off-circuit with the same Poseidon2.
-    fn commitment(id: &Identity) -> Field {
-        xark_poseidon2::native::hash(id.to_fields().map(Into::into)).into()
-    }
-
     /// Born before 2008-10-20, worth ≥ 500k, valid on 2026-10-20, from US/GB/FR/DE.
     fn check(id: Identity) -> Result<(), xark::prover::ProveError> {
         zk_kyc(
             id,
-            commitment(&id),
+            id.commitment(),
             "2008-10-20",
             500_000,
             "2026-10-20",
@@ -139,7 +134,7 @@ mod tests {
         let any = Date::from_raw(99_999_999);
         zk_kyc(
             id,
-            commitment(&id),
+            id.commitment(),
             any,
             0,
             Date::from_raw(0),

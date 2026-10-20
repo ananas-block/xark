@@ -143,16 +143,49 @@ fn circuit_schema_describes_nested_types() {
     );
 }
 
-/// Off-circuit, `Field` operations don't compute: they panic with an explanation
-/// instead of hanging in an infinite loop.
+/// Off-circuit, circuit code runs natively: `Field` arithmetic, comparisons and
+/// hints compute what the solver would, and a failed `require` panics at its line.
 #[test]
-fn field_arithmetic_on_host_panics_with_explanation() {
-    let r = std::panic::catch_unwind(|| Field::from(1u8) + Field::from(2u8));
-    let msg = r.expect_err("host Field arithmetic must not return");
-    let msg = msg
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| msg.downcast_ref::<&str>().copied())
-        .unwrap_or_default();
-    assert!(msg.contains("outside a circuit"), "{msg}");
+fn circuit_code_runs_natively_on_the_host() {
+    use xark::{require, require_eq};
+    let (a, b) = (Field::from(6u8), Field::from(7u8));
+    assert_eq!((a * b + a - b).to_decimal(), "41");
+    assert_eq!((-a + a).to_decimal(), "0");
+    assert_eq!((a.inv() * a).to_decimal(), "1");
+    assert_eq!(a.pow(3).to_decimal(), "216");
+    assert!(a == Field::from(6u8) && a != b);
+    assert!(a.lt::<8>(b) && !b.lt::<8>(a) && a < 7u8);
+    assert_eq!(
+        Field::from(5u8).to_bits::<3>().map(|b| b.to_decimal()),
+        ["1", "0", "1"]
+    );
+    let qr = Field::hint_div_rem(Field::from(17u8), Field::from(5u8));
+    assert_eq!([qr[0].to_decimal(), qr[1].to_decimal()], ["3", "2"]);
+    // p − 1 is −1.
+    assert_eq!(
+        (Field::from(0u8) - Field::from(1u8) + Field::from(1u8)).to_decimal(),
+        "0"
+    );
+
+    require(a < 7u8);
+    require_eq(a * b, 42u64);
+    let fails = |f: fn()| {
+        let msg = std::panic::catch_unwind(f).expect_err("must fail");
+        let msg = msg
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| msg.downcast_ref::<&str>().copied())
+            .unwrap_or_default()
+            .to_string();
+        assert!(msg.contains("requirement failed"), "{msg}");
+    };
+    fails(|| require(Field::from(9u8) < 7u8));
+    fails(|| require_eq(Field::from(1u8), 2u64));
+    fails(|| {
+        let _ = Field::from(8u8).to_bits::<3>(); // 8 doesn't fit 3 bits
+    });
+    // Inside a witness-only region requirements aren't constraints, so aren't checked.
+    xark::witness_begin();
+    require_eq(Field::from(1u8), 2u64);
+    xark::witness_end();
 }

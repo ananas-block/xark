@@ -40,10 +40,10 @@ use crate::intrinsics::*;
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Field {
-    /// Little-endian 4×64-bit value of a *compile-time-constant* field element.
-    /// Meaningful only for constants (`Field::from`/`Field::constant` `const fn`s):
-    /// the compiler reads this out of a `const Field`. For witnesses the value is
-    /// tracked symbolically and these limbs are never read.
+    /// Little-endian 4×64-bit value. In a circuit build it is meaningful only for
+    /// constants (the compiler reads it out of a `const Field`; a witness is
+    /// tracked symbolically). In a host build every `Field` holds its value here,
+    /// in `[0, p)`: circuit code runs natively there.
     _limbs: [u64; 4],
 }
 
@@ -51,7 +51,7 @@ pub struct Field {
 /// raw limbs, so you can read the value straight out of a `{:?}` dump — of a bare
 /// `Field`, a `#[derive(CircuitInput)]` struct, or a generated `<Fn>Inputs` — and
 /// feed it to `xark prove`. Like [`Field::to_decimal`], the value is meaningful
-/// only for a *constant* `Field` (a witness's limbs are symbolic).
+/// on the host, or for a constant (in a circuit, a witness is symbolic).
 impl core::fmt::Debug for Field {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Field({})", self.to_decimal())
@@ -95,19 +95,17 @@ impl Field {
         Field::constant_u64(1)
     }
 
-    /// The little-endian 4×64-bit limbs of a **compile-time-constant** `Field`.
-    /// Meaningful only for constants; for witnesses the value is symbolic and
-    /// these limbs are unspecified. Exposed for *tooling* (a host-side input
+    /// The little-endian 4×64-bit limbs of a `Field`'s value: on the host, or for a
+    /// constant (in a circuit a witness is symbolic and these are unspecified). Exposed for *tooling* (a host-side input
     /// builder reads a constant's value back to decimal); authors never need it.
     #[doc(hidden)]
     pub const fn to_limbs(self) -> [u64; 4] {
         self._limbs
     }
 
-    /// The decimal value of a **compile-time-constant** `Field` (built via
-    /// `Field::from`/`Field::constant`) — the host reads a constructed input back out
-    /// to feed the prover. Meaningful only for constants (a witness's limbs are
-    /// symbolic). `#[doc(hidden)]` tooling; authors never call it.
+    /// The decimal value of a `Field` on the host (or of a constant): how the host
+    /// reads an input back out to feed the prover. In a circuit a witness's limbs
+    /// are symbolic. `#[doc(hidden)]` tooling; authors never call it.
     #[doc(hidden)]
     pub fn to_decimal(self) -> alloc::string::String {
         use alloc::string::String;
@@ -304,6 +302,7 @@ impl Field {
     /// boolean (`b² == b`) and the bits are pinned to recompose to `self`
     /// (`Σ bitᵢ·2ⁱ == self`) — which also proves `self < 2^N`. Composed entirely
     /// from `Field` primitives (`hint_bit` + arithmetic + `require_eq`).
+    #[cfg_attr(not(xark), track_caller)]
     pub fn to_bits<const N: usize>(self) -> [Field; N] {
         // N > 253 wraps mod r, so recomposition wouldn't pin `self`
         const {
@@ -402,6 +401,7 @@ impl Field {
     }
 
     /// Assert `self ∈ {0, 1}` — the booleanity constraint `self² == self`.
+    #[cfg_attr(not(xark), track_caller)]
     pub fn require_bool(self) {
         __xark_require_eq_scalar(self * self, self);
     }
@@ -645,9 +645,9 @@ impl Field {
 }
 
 /// Circuit equality: `self == other` / `self != other` return a `bool` that is a
-/// `{0,1}` field wire (the compiler lowers this to the equality gadget). It is
-/// *not* a host comparison — `Field` holds a symbolic witness with no host
-/// value, so the derived `PartialEq`/`Eq`/`Hash` were dropped on purpose.
+/// `{0,1}` field wire (the compiler lowers this to the equality gadget). On the
+/// host it compares the values. There is no `Eq`/`Hash`: in a circuit a `Field` is
+/// a symbolic witness, not a value to key on.
 impl PartialEq for Field {
     fn eq(&self, other: &Field) -> bool {
         __xark_eq(*self, *other)
@@ -664,11 +664,9 @@ impl From<bool> for Field {
     }
 }
 
-/// A constructed **constant** `Field` to the prover's scalar (`ark_bn254::Fr`), reduced
-/// mod the field order — the same value the solver feeds the circuit. Host-only tooling
-/// (`cfg(not(xark))`); lets a `Field` input flow straight into off-circuit reference
-/// code (`poseidon2::hash([field, …])`) without a hand-written conversion. Meaningful
-/// only for constants; a witness's limbs are symbolic.
+/// A `Field` to the prover's scalar (`ark_bn254::Fr`), reduced mod the field order —
+/// the same value the solver feeds the circuit. Host-only (`cfg(not(xark))`), where a
+/// `Field` always holds its value; also what the native intrinsics compute with.
 #[cfg(not(xark))]
 impl From<Field> for ark_bn254::Fr {
     fn from(f: Field) -> ark_bn254::Fr {
@@ -964,17 +962,24 @@ impl_field_int_rem!(u8 => 8, u16 => 16, u32 => 32, u64 => 64);
 /// (`Field`/`bool`), fixed arrays `[T; N]` element-wise, and composite gadget
 /// outputs (e.g. a SHA-256 digest `[[Field; 32]; 8]` vs a `Digest`).
 /// Every leaf bottoms out at the recognized scalar intrinsic
-/// ([`__xark_require_eq_scalar`]). A marker: the compiler lowers each leaf to an
-/// R1CS constraint rather than executing it.
+/// ([`__xark_require_eq_scalar`]). In a circuit the compiler lowers each leaf to an
+/// R1CS constraint rather than executing it. Run natively (a host build), it
+/// checks the values and panics here if they differ.
 #[inline]
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_eq<A: RequireEqCircuit<B>, B>(a: A, b: B) {
     a.require_eq_circuit(b);
 }
 
 /// Constrain a boolean wire to be true.
 ///
-/// `require(cond)` decomposes into `require_eq(cond, true)` at lowering time.
+/// `require(cond)` decomposes into `require_eq(cond, true)` at lowering time. Run
+/// natively (a host build), it panics here if `cond` is false.
+#[cfg_attr(not(xark), track_caller)]
 pub fn require(cond: bool) {
+    #[cfg(not(xark))]
+    crate::intrinsics::native::require(cond);
+    #[cfg(xark)]
     __xark_require_eq_scalar(cond, true);
 }
 
@@ -989,7 +994,11 @@ pub fn require(cond: bool) {
 /// Scalars only (`Field`/`bool`, via [`Into<Field>`]); there is no element-wise
 /// array form because `[a] != [b]` is ambiguous (all-differ vs not-all-equal).
 #[inline]
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_ne(a: impl Into<Field>, b: impl Into<Field>) {
+    #[cfg(not(xark))]
+    crate::intrinsics::native::require(a.into() != b.into());
+    #[cfg(xark)]
     let _ = (a.into() - b.into()).inv();
 }
 
@@ -1004,12 +1013,15 @@ pub fn require_ne(a: impl Into<Field>, b: impl Into<Field>) {
 /// `require_eq`/`assert!` there is not enforced — so every value that must be
 /// trusted has to be pinned afterwards. Nothing done in the region counts as proven
 /// later: recomputing a value after `witness_end` (a `to_bits`, a select, a bounded
-/// subtraction) constrains it afresh. A marker — never executes.
+/// subtraction) constrains it afresh. Run natively, the region's `require`s
+/// aren't checked either.
 #[inline(never)]
 pub fn witness_begin() {
     #[cfg(all(xark, target_arch = "wasm32"))]
     crate::wasm::witness_begin();
-    #[cfg(not(all(xark, target_arch = "wasm32")))]
+    #[cfg(not(xark))]
+    crate::intrinsics::native::witness_begin();
+    #[cfg(all(xark, not(target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 
@@ -1018,7 +1030,9 @@ pub fn witness_begin() {
 pub fn witness_end() {
     #[cfg(all(xark, target_arch = "wasm32"))]
     crate::wasm::witness_end();
-    #[cfg(not(all(xark, target_arch = "wasm32")))]
+    #[cfg(not(xark))]
+    crate::intrinsics::native::witness_end();
+    #[cfg(all(xark, not(target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 
@@ -1033,6 +1047,7 @@ pub trait RequireEqCircuit<Rhs> {
 
 impl<R: Into<Field>> RequireEqCircuit<R> for Field {
     #[inline]
+    #[cfg_attr(not(xark), track_caller)]
     fn require_eq_circuit(self, rhs: R) {
         __xark_require_eq_scalar(self, rhs);
     }
@@ -1040,6 +1055,7 @@ impl<R: Into<Field>> RequireEqCircuit<R> for Field {
 
 impl<R: Into<Field>> RequireEqCircuit<R> for bool {
     #[inline]
+    #[cfg_attr(not(xark), track_caller)]
     fn require_eq_circuit(self, rhs: R) {
         __xark_require_eq_scalar(self, rhs);
     }
@@ -1051,6 +1067,7 @@ macro_rules! impl_require_eq_scalar {
     ($($t:ty),*) => {$(
         impl<R: Into<Field>> RequireEqCircuit<R> for $t {
             #[inline]
+            #[cfg_attr(not(xark), track_caller)]
             fn require_eq_circuit(self, rhs: R) {
                 __xark_require_eq_scalar(self, rhs);
             }
@@ -1066,6 +1083,7 @@ impl_require_eq_scalar!(u8, u16, u32, u64, u128, &str);
 /// leaves this compares.
 impl<const N: usize, A: Copy + RequireEqCircuit<B>, B: Copy> RequireEqCircuit<[B; N]> for [A; N] {
     #[inline]
+    #[cfg_attr(not(xark), track_caller)]
     fn require_eq_circuit(self, rhs: [B; N]) {
         let mut i = 0usize;
         while i < N {
@@ -1110,32 +1128,39 @@ pub fn bytes_to_fields<const N: usize>(bytes: [u8; N]) -> [Field; N] {
 /// The scalar equality **intrinsic** the compiler recognizes by name and lowers
 /// to a two-`Field` R1CS constraint — the leaf every [`RequireEqCircuit`] impl
 /// bottoms out at. `#[doc(hidden)]` plumbing; authors write [`require_eq`], which
-/// dispatches here. Marker body; never executed in a circuit.
+/// dispatches here. Never executed in a circuit; on the host it checks the values.
 #[doc(hidden)]
 #[inline(never)]
+#[cfg_attr(not(xark), track_caller)]
 pub fn __xark_require_eq_scalar<L: Into<Field>, R: Into<Field>>(_lhs: L, _rhs: R) {
     #[cfg(all(xark, target_arch = "wasm32"))]
     crate::wasm::require_eq(_lhs.into(), _rhs.into());
-    #[cfg(not(all(xark, target_arch = "wasm32")))]
+    #[cfg(not(xark))]
+    crate::intrinsics::native::require_eq(_lhs.into(), _rhs.into());
+    #[cfg(all(xark, not(target_arch = "wasm32")))]
     crate::intrinsics::__xark_marker()
 }
 
 /// Emit a circuit constraint `a < b` (less than).
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_lt<A: PartialOrd<B>, B>(a: A, b: B) {
     __xark_require_eq_scalar(a < b, true);
 }
 
 /// Emit a circuit constraint `a <= b` (less than or equal).
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_le<A: PartialOrd<B>, B>(a: A, b: B) {
     __xark_require_eq_scalar(a <= b, true);
 }
 
 /// Emit a circuit constraint `a > b` (greater than).
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_gt<A: PartialOrd<B>, B>(a: A, b: B) {
     __xark_require_eq_scalar(a > b, true);
 }
 
 /// Emit a circuit constraint `a >= b` (greater than or equal).
+#[cfg_attr(not(xark), track_caller)]
 pub fn require_ge<A: PartialOrd<B>, B>(a: A, b: B) {
     __xark_require_eq_scalar(a >= b, true);
 }

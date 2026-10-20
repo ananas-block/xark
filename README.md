@@ -68,6 +68,14 @@ error: witness does not satisfy the circuit
 Every build writes `sources.json` beside `circuit.xbc` for this: which source
 line each constraint came from (the circuit itself is unchanged by it).
 
+Circuit code also runs as plain Rust on the host: `Field` arithmetic,
+comparisons, hints and whole gadgets compute their values, and a failed
+`require` panics at its line. So tests and services call the same helpers the
+circuit does. `zk_kyc`'s tests make the issuer's commitment with
+`id.commitment()`, the very function the circuit checks it with, and
+`pubkey.verify(sig, digest)` checks an ECDSA signature off-circuit. (Calling the
+`#[circuit]` fn itself still checks the circuit through the prover.)
+
 Inputs can be grouped into structs with `#[derive(CircuitInput)]`, including
 gadget types: `examples/grumpkin_ivc` takes a few `Instance { cw, ce, u, x }`
 values instead of twenty separate parameters, and `to_fields()` hashes one in

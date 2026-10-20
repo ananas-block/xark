@@ -21,6 +21,16 @@ gadgets now check more:
 
 ### Changed
 
+- **Circuit code runs natively on the host.** In a host build the `Field`
+  intrinsics compute instead of panicking: arithmetic on BN254, comparisons,
+  and every hint as the solver computes it (bits, division, inverses, the
+  bignum hints). A failed `require`/`require_eq` panics at the caller's line
+  (`#[track_caller]`, host only), and `witness_begin`/`witness_end` regions
+  skip their checks as a circuit does. So a helper such as `id.commitment()`,
+  or a whole gadget (`xark_sha256::sha256`, ECDSA `verify`), runs in tests and
+  services: zk_kyc's tests no longer re-implement the commitment with a
+  separate native Poseidon2. Circuit builds are unchanged. Only hint-less
+  `Field::advice()` has no host value.
 - **Failing checks name their source line.** Every `xark build` writes
   `sources.json` (which statement each constraint came from; `circuit.xbc` and
   its digest are unchanged), and inputs that fail a check report that statement

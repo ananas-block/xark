@@ -25,6 +25,10 @@
 // `Field::to_decimal` (host-side input tooling) allocates a `String`. `alloc` links
 // in both builds; the allocation only ever runs host-side, never in a circuit.
 extern crate alloc;
+// Host builds run circuit code natively (`intrinsics::native`), with a per-thread
+// witness-region depth.
+#[cfg(not(xark))]
+extern crate std;
 
 // Self-alias so the `#[derive(CircuitInput)]` macro's generated `::xark::Field`
 // paths resolve *inside* this crate (where the derive is used on `Digest`), the
