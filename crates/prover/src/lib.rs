@@ -533,10 +533,44 @@ fn try_autobuild(dir: &std::path::Path) {
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
     let xark = std::env::var("XARK").unwrap_or_else(|_| "xark".to_string());
+    // A CLI from another release would build a circuit this prover can't read (or
+    // fail on the source outright): say so instead of running it.
+    if let Some(found) = cli_version(&xark)
+        && major_minor(&found) != major_minor(env!("CARGO_PKG_VERSION"))
+    {
+        eprintln!(
+            "warning: not rebuilding {}: `{xark}` is xark {found}, but this is xark-prover {}. \
+             Install the matching CLI (`cargo install xark-cli --version {}`), or point \
+             $XARK at one.",
+            crate_dir.display(),
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION"),
+        );
+        return;
+    }
     let _ = std::process::Command::new(xark)
         .arg("build")
         .arg(&crate_dir)
         .status();
+}
+
+/// `xark --version`'s version (`xark 0.3.0 (…)` → `0.3.0`); `None` if it can't run.
+fn cli_version(xark: &str) -> Option<String> {
+    let out = std::process::Command::new(xark)
+        .arg("--version")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().nth(1).map(str::to_string)
+}
+
+/// `0.3.0` → `(0, 3)`: releases before 1.0 are compatible within a minor version.
+fn major_minor(v: &str) -> (String, String) {
+    let mut it = v.split('.');
+    (
+        it.next().unwrap_or_default().to_string(),
+        it.next().unwrap_or_default().to_string(),
+    )
 }
 
 /// A file of the crate (`Cargo.toml`, or anything under `src/`) changed since
@@ -611,8 +645,8 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
     }
     if let Some(src) = newer_source(dir) {
         eprintln!(
-            "warning: {} changed since {} was built, and it couldn't be rebuilt (no \
-             `xark` on PATH?); testing the previous build. Run `xark test` instead.",
+            "warning: {} changed since {} was built, and it couldn't be rebuilt; testing \
+             the previous build. Run `xark test` instead.",
             src.display(),
             xbc_path.display()
         );
