@@ -49,8 +49,10 @@ Measured on chain (Mollusk), proofs with one public input:
 | 4 | 168,199 CU | 309,633 CU |
 | 16 | 513,223 CU | ~1,240,000 CU |
 
-Each extra proof costs about 29k CU instead of 77k, so a 1.4M CU transaction
-fits about 47 proofs instead of 18. A `false` result says some proof in the
+Each extra proof costs about 29k CU instead of 77k, so the 1.4M CU compute
+limit allows about 46 proofs instead of 18. How many fit in the transaction
+itself depends on the transaction format (each one-input entry is 288 bytes);
+past that, pass the batch in account data. A `false` result says some proof in the
 batch is invalid, not which one: verify them one by one to find it.
 
 Each proof's check is weighted by a 252-bit number taken from a SHA-256 of the

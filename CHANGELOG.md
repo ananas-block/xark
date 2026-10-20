@@ -92,8 +92,8 @@ gadgets now check more:
 
 - `xark_verifier::verify_groth16_batch`: several proofs of one circuit in a
   single pairing call (`M + 3` pairs instead of `4M`). On chain each extra
-  proof costs about 29k CU instead of 77k (4 proofs: 168k vs 310k), so a
-  transaction fits about 47 proofs instead of 18. Needs
+  proof costs about 29k CU instead of 77k (4 proofs: 168k vs 310k), so the
+  compute limit allows about 46 proofs instead of 18. Needs
   `solana-nostd-alt-bn128` 0.1.3 (`pairing_bytes`).
 - `xark_poseidon2::native`: the Poseidon2 permutation, `hash2` and `hash` on
   the host (over `ark_bn254::Fr`), from the same code as the circuit gadget, so

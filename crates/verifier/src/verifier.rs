@@ -622,7 +622,8 @@ pub fn verify_proof_only_strict(
 // M + 3 pairs instead of 4M. Without the weights, invalid proofs could be made
 // to cancel each other out. With them, if proof j is invalid the batch passes only
 // when rⱼ hits the one value (mod r) that cancels the rest: r₀ = 1, and each other
-// rᵢ is 252 bits of SHA-256 over the domain tag, the whole VK and the whole batch,
+// rᵢ is 252 bits of SHA-256 over the domain tag, the VK (length-prefixed) and the
+// whole batch,
 // so they're fixed only once everything they weigh is. The weights are public, so
 // a prover can grind: each new batch is a fresh try at about 2⁻²⁵² (full-width
 // weights cost the same as narrow ones: a scalar mul is fixed-price).
@@ -728,7 +729,12 @@ pub fn verify_groth16_batch(
 
     // One proof needs no weights (r₀ = 1): skip the hash, and `α · 1` below.
     let seed = if n > 1 {
-        batch_hash(&[BATCH_DOMAIN, vk_bytes, batch])
+        batch_hash(&[
+            BATCH_DOMAIN,
+            &(vk_bytes.len() as u64).to_le_bytes(),
+            vk_bytes,
+            batch,
+        ])
     } else {
         [0u8; 32]
     };
@@ -1553,6 +1559,32 @@ mod proofs {
     fn totality_verify_groth16_batch() {
         let vk: [u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES] = kani::any();
         let batch: [u8; 2 * (PROOF_BYTES + FR_BYTES)] = kani::any();
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3];
+        let _ = verify_groth16_batch(&vk, &batch, &mut scratch);
+    }
+
+    /// Totality with one proof: the `M == 1` path (no hash, `α` unscaled).
+    #[kani::proof]
+    #[kani::stub(super::g1_scalar_mul, stub_g1_scalar_mul)]
+    #[kani::stub(super::g1_add, stub_g1_add)]
+    #[kani::stub(super::g16_pairing_bytes, stub_g16_pairing_bytes)]
+    #[kani::stub(super::batch_hash, stub_batch_hash)]
+    fn totality_verify_groth16_batch_m1() {
+        let vk: [u8; VK_FIXED_PREFIX_BYTES + 2 * G1_BYTES] = kani::any();
+        let batch: [u8; PROOF_BYTES + FR_BYTES] = kani::any();
+        let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 1 + 3];
+        let _ = verify_groth16_batch(&vk, &batch, &mut scratch);
+    }
+
+    /// Totality with no public inputs (`N == 0`, 256-byte entries), two proofs.
+    #[kani::proof]
+    #[kani::stub(super::g1_scalar_mul, stub_g1_scalar_mul)]
+    #[kani::stub(super::g1_add, stub_g1_add)]
+    #[kani::stub(super::g16_pairing_bytes, stub_g16_pairing_bytes)]
+    #[kani::stub(super::batch_hash, stub_batch_hash)]
+    fn totality_verify_groth16_batch_n0() {
+        let vk: [u8; VK_FIXED_PREFIX_BYTES + G1_BYTES] = kani::any();
+        let batch: [u8; 2 * PROOF_BYTES] = kani::any();
         let mut scratch = [[0u8; PAIRING_PAIR_BYTES]; 2 + 3];
         let _ = verify_groth16_batch(&vk, &batch, &mut scratch);
     }

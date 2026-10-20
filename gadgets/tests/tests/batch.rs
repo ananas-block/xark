@@ -34,9 +34,12 @@ fn g2(b: &[u8]) -> G2Affine {
     G2Affine::deserialize_uncompressed(b).unwrap()
 }
 /// A point's raw `x || y` coordinates: the wire format has no flag bits (ark's
-/// point serialization would set them in `y`).
+/// point serialization would set them in `y`). The point at infinity is all zeros.
 fn put<P: AffineRepr>(p: &P, out: &mut [u8]) {
-    let (x, y) = p.xy().unwrap();
+    let Some((x, y)) = p.xy() else {
+        out.fill(0);
+        return;
+    };
     let half = out.len() / 2;
     x.serialize_uncompressed(&mut out[..half]).unwrap();
     y.serialize_uncompressed(&mut out[half..]).unwrap();
@@ -248,4 +251,57 @@ fn batch_fixture_is_16_distinct_valid_proofs() {
         assert!(entries[..i].iter().all(|p| p != e), "#{i} repeats");
     }
     assert_eq!(batch_verify(&vk, &batch, 16), Ok(true));
+}
+
+/// Proof 0 carries no weight (`r₀ = 1`): a tampered `A` there still fails.
+#[test]
+fn tampered_first_proof_fails() {
+    let (vk, batch) = valid_batch("arithmetic_square", 3, 21);
+    let mut bad = batch.clone();
+    let a = g1(&bad[..64]);
+    put(&(a + G1Affine::generator()).into_affine(), &mut bad[..64]);
+    assert_eq!(verify_proof_only(&vk, &bad[..batch.len() / 3]), Ok(false));
+    assert_eq!(batch_verify(&vk, &bad, 3), Ok(false));
+}
+
+/// A circuit with no public inputs (256-byte entries), from a synthetic VK with a
+/// known trapdoor: α = a·G₁, β = b·G₂, γ = δ = G₂, ic₀ = k·G₁, and the proof
+/// `(A, B, C) = (x·G₁, G₂, (x - ab - k)·G₁)` for any `x`.
+#[test]
+fn zero_input_circuit_batches() {
+    use ark_bn254::{G1Projective, G2Projective};
+    use ark_ec::PrimeGroup;
+    let (g1g, g2g) = (G1Projective::generator(), G2Projective::generator());
+    let (a, b, k) = (Fr::from(3u64), Fr::from(5u64), Fr::from(7u64));
+    let mut vk = vec![0u8; 448 + 64];
+    put(&(g1g * a).into_affine(), &mut vk[..64]);
+    put(&(g2g * b).into_affine(), &mut vk[64..192]);
+    put(&g2g.into_affine(), &mut vk[192..320]);
+    put(&g2g.into_affine(), &mut vk[320..448]);
+    put(&(g1g * k).into_affine(), &mut vk[448..]);
+    let proof = |x: u64, valid: bool| {
+        let x = Fr::from(x);
+        let mut p = vec![0u8; PROOF_BYTES];
+        put(&(-(g1g * x)).into_affine(), &mut p[..64]); // the wire `A` is negated
+        put(&g2g.into_affine(), &mut p[64..192]);
+        let c = x - a * b - k + Fr::from(!valid as u64);
+        put(&(g1g * c).into_affine(), &mut p[192..]);
+        p
+    };
+    assert_eq!(verify_proof_only(&vk, &proof(11, true)), Ok(true));
+    assert_eq!(verify_proof_only(&vk, &proof(11, false)), Ok(false));
+    assert_eq!(batch_verify(&vk, &proof(11, true), 1), Ok(true));
+    assert_eq!(batch_verify(&vk, &proof(11, false), 1), Ok(false));
+    let good: Vec<_> = (11..14).map(|x| proof(x, true)).collect();
+    assert_eq!(batch_verify(&vk, &good.concat(), 3), Ok(true));
+    for j in 0..3 {
+        let mut v = good.clone();
+        v[j] = proof(20 + j as u64, false);
+        assert_eq!(batch_verify(&vk, &v.concat(), 3), Ok(false), "bad #{j}");
+    }
+    // The same invalid proof twice can't cancel itself.
+    assert_eq!(
+        batch_verify(&vk, &[proof(11, false), proof(11, false)].concat(), 2),
+        Ok(false)
+    );
 }
