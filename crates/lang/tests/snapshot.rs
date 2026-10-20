@@ -5802,3 +5802,15 @@ fn require_eq_integer_matches_explicit_conversion() {
         digest("require_eq_field_lhs", "require_eq(Field::from(7u64), x);"),
     );
 }
+
+/// `#[circuit]` rejects arguments rather than ignoring them: an option like
+/// `max_constraints` would otherwise compile and look enforced.
+#[test]
+fn circuit_attribute_rejects_arguments() {
+    let src = "use xark::prelude::*;\n\
+         #[circuit(max_constraints = 10)]\n\
+         pub fn square(x: Private<Field>, y: Public<Field>) { require_eq(x * x, y); }\n";
+    let c = compile_with_field(&write_case("circuit_args", src), "circuit_args", "bn254");
+    assert!(!c.status_success, "arguments to #[circuit] were accepted");
+    assert!(c.stderr.contains("takes no arguments"), "{}", c.stderr);
+}

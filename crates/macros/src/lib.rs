@@ -30,7 +30,15 @@ use syn::{
 };
 
 #[proc_macro_attribute]
-pub fn circuit(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn circuit(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Rejected, not ignored: an option like `max_constraints = …` would
+    // otherwise compile and look enforced.
+    if !attr.is_empty() {
+        let attr = TokenStream2::from(attr);
+        return syn::Error::new_spanned(attr, "`#[circuit]` takes no arguments")
+            .to_compile_error()
+            .into();
+    }
     let func = parse_macro_input!(item as ItemFn);
     match circuit_impl(&func) {
         Ok(ts) => ts.into(),
