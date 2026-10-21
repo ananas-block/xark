@@ -1,7 +1,0 @@
-{
-  // For editors: the example clients and their vitest tests (`examples/*/client/`),
-  // with the settings and types (node, vitest globals) of clients/check, where
-  // scripts/client-check.sh typechecks and runs them.
-  "extends": "../clients/check/tsconfig.json",
-  "include": ["../clients/check/artifacts.ts", "*/client/*.ts"]
-}

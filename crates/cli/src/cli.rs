@@ -206,6 +206,9 @@ fn build_stable(
         lowered.output.r1cs.constraints.len(),
         p.witness_gen.len(),
     );
+    if !profile {
+        print_hotspots(&lowered.sources, lowered.output.r1cs.constraints.len());
+    }
     eprintln!("{} circuit digest {digest}", crate::style::tag());
     eprintln!(
         "{} wrote {}",
@@ -213,6 +216,30 @@ fn build_stable(
         crate::style::brand(&out_abs.display().to_string())
     );
     0
+}
+
+/// The three source lines that cost the most constraints, so every build shows
+/// where a circuit's size comes from.
+fn print_hotspots(sources: &xark_ir::SourceMap, rows: usize) {
+    let costs = sources.line_costs(rows);
+    if rows == 0 || costs.is_empty() {
+        return;
+    }
+    eprintln!("{} most constraints come from", crate::style::tag());
+    // Lines under 1% would be noise.
+    for (site, n) in costs.iter().take(3).filter(|(_, n)| n * 100 >= rows) {
+        let pct = format!("{:.0}%", 100.0 * *n as f64 / rows as f64);
+        let at = format!("{}:{}", site.file, site.line);
+        eprintln!(
+            "      {pct:>4}  {}  {}",
+            crate::style::brand(&at),
+            crate::style::dim(&site.text)
+        );
+    }
+    eprintln!(
+        "      {}",
+        crate::style::dim("`xark profile` breaks down every line")
+    );
 }
 
 /// `xark clean` — remove **every** xark output tree under the current directory:

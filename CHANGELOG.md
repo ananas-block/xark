@@ -88,6 +88,12 @@ gadgets now check more:
   `encodeInputs(schema, …)` first, as generated clients already do. The old
   resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
   limbs) are gone.
+- **Builds show where the constraints go.** `xark build` lists the three source
+  lines that cost the most constraints. `xark profile` ends with a breakdown by
+  kind, saying what each kind is and how to have fewer of them, and the
+  costliest functions including what they call (`commitment → hash → perm`).
+  `--json` carries both (`kinds`, `functions`). xark-wasm's `bench` feature,
+  `lastTimings` and the pool's `configure` are gone.
 - **Circuit crates can use `std`.** The circuit build links `std` (which
   `wasm32-unknown-unknown` ships), and panics reach the compiler through a panic
   hook the `#[circuit]` entry installs, rather than a `#[panic_handler]` that

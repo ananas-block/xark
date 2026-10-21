@@ -134,6 +134,30 @@ impl SourceMap {
         self.sites.get(self.runs[2 * i + 1] as usize)
     }
 
+    /// Constraints per source line, costliest first, for a circuit of `rows`
+    /// constraints. Each line is represented by its first site; unattributed
+    /// constraints are left out.
+    pub fn line_costs(&self, rows: usize) -> Vec<(&Site, usize)> {
+        let mut by_line: std::collections::HashMap<(&str, u32), (usize, usize)> =
+            Default::default();
+        for (i, run) in self.runs.as_chunks::<2>().0.iter().enumerate() {
+            let end = self.runs.get(2 * i + 2).map_or(rows, |&s| s as usize);
+            let Some(site) = self.sites.get(run[1] as usize) else {
+                continue;
+            };
+            let e = by_line
+                .entry((&site.file, site.line))
+                .or_insert((run[1] as usize, 0));
+            e.1 += end.saturating_sub(run[0] as usize);
+        }
+        let mut out: Vec<(&Site, usize)> = by_line
+            .into_values()
+            .map(|(site, n)| (&self.sites[site], n))
+            .collect();
+        out.sort_by(|a, b| (b.1, &a.0.file, a.0.line).cmp(&(a.1, &b.0.file, b.0.line)));
+        out
+    }
+
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("a SourceMap serializes")
     }
@@ -175,6 +199,18 @@ mod tests {
             [Some(2), Some(2), None, Some(1), Some(1), Some(2), Some(2)]
         );
         assert_eq!(SourceMap::from_json(&m.to_json()).unwrap(), m);
+    }
+
+    #[test]
+    fn costs_lines() {
+        let mut other_col = site(2);
+        other_col.col = 9;
+        let sites = [site(1), site(2), other_col, Site::default()];
+        // Rows 0..2 ← line 2; 2 ← unattributed; 3..5 ← line 1; 5..9 ← line 2 again,
+        // from another column.
+        let m = SourceMap::new([1, 1, 3, 0, 0, 2, 2, 2, 2], &sites);
+        let costs: Vec<_> = m.line_costs(9).iter().map(|(s, n)| (s.line, *n)).collect();
+        assert_eq!(costs, [(2, 6), (1, 2)]);
     }
 
     #[test]

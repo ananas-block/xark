@@ -74,6 +74,13 @@ pub fn run(args: ProfileArgs) -> Result<()> {
 struct Aggregate {
     lines: Vec<LineAgg>,
     total: u64,
+    /// Every constraint by kind, most first.
+    kinds: Vec<(ConstraintKind, u64)>,
+    /// Constraints per function, counting everything it called (so a hash
+    /// function includes its rounds), most first. A function that only ever
+    /// runs inside another at the same cost shares its row, outermost first
+    /// (`commitment → hash → perm`).
+    functions: Vec<(Vec<String>, u64)>,
 }
 
 struct LineAgg {
@@ -123,7 +130,17 @@ fn agg_to_json(agg: &Aggregate) -> serde_json::Value {
             })
         })
         .collect();
-    json!({ "lines": lines, "total": agg.total })
+    let kinds: Vec<serde_json::Value> = agg
+        .kinds
+        .iter()
+        .map(|(k, n)| json!({ "kind": k.as_str(), "count": n, "explain": explain(*k) }))
+        .collect();
+    let functions: Vec<serde_json::Value> = agg
+        .functions
+        .iter()
+        .map(|(path, n)| json!({ "functions": path, "count": n }))
+        .collect();
+    json!({ "lines": lines, "total": agg.total, "kinds": kinds, "functions": functions })
 }
 
 /// Group `profile` by `(file, line)` → `chain` → `kind`, summing counts, and
@@ -135,8 +152,12 @@ fn aggregate(profile: &ProfileProgram) -> Aggregate {
     type KindMap = BTreeMap<ConstraintKind, u64>;
     type ChainMap = BTreeMap<Vec<String>, KindMap>;
     let mut lines: BTreeMap<(String, u32), ChainMap> = BTreeMap::new();
+    let mut kinds: BTreeMap<ConstraintKind, u64> = BTreeMap::new();
+    let mut chains: BTreeMap<&[String], u64> = BTreeMap::new();
 
     for c in &profile.constraints {
+        *kinds.entry(c.kind).or_default() += 1;
+        *chains.entry(&c.chain).or_default() += 1;
         let key = (c.file.clone(), c.line);
         *lines
             .entry(key)
@@ -197,9 +218,104 @@ fn aggregate(profile: &ProfileProgram) -> Aggregate {
     });
 
     let total = line_aggs.iter().map(|l| l.total).sum();
+    let mut kinds: Vec<(ConstraintKind, u64)> = kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let functions = function_costs(&chains);
     Aggregate {
         lines: line_aggs,
         total,
+        kinds,
+        functions,
+    }
+}
+
+/// Inclusive cost per function from per-chain counts, with functions that only
+/// ever run inside another at the same cost folded into its row.
+fn function_costs(chains: &BTreeMap<&[String], u64>) -> Vec<(Vec<String>, u64)> {
+    use std::collections::BTreeSet;
+    // Per function: its cost, and the functions every call of it runs inside.
+    let mut costs: BTreeMap<&str, (u64, Option<BTreeSet<&str>>)> = BTreeMap::new();
+    for (chain, &n) in chains {
+        let mut outer: BTreeSet<&str> = BTreeSet::new();
+        for f in chain.iter() {
+            // A recursive function counts each constraint once.
+            if outer.contains(f.as_str()) {
+                continue;
+            }
+            let e = costs.entry(f).or_default();
+            e.0 += n;
+            e.1 = Some(match e.1.take() {
+                None => outer.clone(),
+                Some(prev) => prev.intersection(&outer).copied().collect(),
+            });
+            outer.insert(f);
+        }
+    }
+    let mut sorted: Vec<(&str, u64, BTreeSet<&str>)> = costs
+        .into_iter()
+        .map(|(f, (n, outer))| (f, n, outer.unwrap_or_default()))
+        .collect();
+    // Costliest first; at equal cost, outermost first.
+    sorted.sort_by(|a, b| (b.1, a.2.len(), a.0).cmp(&(a.1, b.2.len(), b.0)));
+    let mut rows: Vec<(Vec<&str>, u64)> = Vec::new();
+    for (f, n, outer) in sorted {
+        match rows
+            .iter_mut()
+            .find(|(path, m)| *m == n && outer.contains(path[path.len() - 1]))
+        {
+            Some((path, _)) => path.push(f),
+            None => rows.push((vec![f], n)),
+        }
+    }
+    rows.into_iter()
+        .map(|(path, n)| (path.into_iter().map(str::to_string).collect(), n))
+        .collect()
+}
+
+/// What a kind of constraint is, and how to have fewer of them.
+fn explain(kind: ConstraintKind) -> &'static str {
+    match kind {
+        ConstraintKind::RangeCheck => {
+            "proving a value fits in N bits, one constraint per bit. These come from \
+             `uN` inputs, wrapping arithmetic, bit operations and comparisons; use the \
+             narrowest integer type that fits."
+        }
+        ConstraintKind::Comparison => {
+            "the extra steps of `<`, `<=`, `>` and `>=` (each also range-checks the \
+             difference). Compare at the narrowest width, and compare once and reuse \
+             the result."
+        }
+        ConstraintKind::Booleanity => "`require_bool`: one per value proven to be 0 or 1.",
+        ConstraintKind::Mul => {
+            "multiplying two values the prover supplies, one each. Additions and \
+             multiplying by a constant are free."
+        }
+        ConstraintKind::Equality => {
+            "`require_eq`, and joining split bits back into their value: one each."
+        }
+        ConstraintKind::Xor | ConstraintKind::Or => {
+            "bitwise logic, one per bit. Hashes built on it (SHA-256, Keccak) are costly \
+             here; a field-native hash such as Poseidon2 is far cheaper."
+        }
+        ConstraintKind::HintPin => {
+            "checking a value worked out outside the circuit, such as an inverse: one each."
+        }
+        ConstraintKind::Other => "a sum the compiler had to store as its own value: one each.",
+    }
+}
+
+/// A kind's name for people.
+fn kind_name(kind: ConstraintKind) -> &'static str {
+    match kind {
+        ConstraintKind::Mul => "multiplications",
+        ConstraintKind::Booleanity => "bool checks",
+        ConstraintKind::RangeCheck => "range checks",
+        ConstraintKind::Comparison => "comparisons",
+        ConstraintKind::Equality => "equalities",
+        ConstraintKind::Xor => "xor",
+        ConstraintKind::Or => "or",
+        ConstraintKind::HintPin => "hint checks",
+        ConstraintKind::Other => "stored sums",
     }
 }
 
@@ -310,4 +426,99 @@ fn print_tree(agg: &Aggregate) {
         crate::style::brand("TOTAL"),
         agg.total
     );
+    print_summary(agg);
+}
+
+/// Split `text` into lines of at most `width` chars, at spaces.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = vec![String::new()];
+    for word in text.split(' ') {
+        let line = lines.last_mut().expect("starts with a line");
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(word.to_string());
+        } else {
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+    }
+    lines
+}
+
+/// Percent of the circuit, for display.
+fn pct(n: u64, total: u64) -> String {
+    let p = 100.0 * n as f64 / total.max(1) as f64;
+    if n > 0 && p < 0.5 {
+        "<1%".into()
+    } else {
+        format!("{p:.0}%")
+    }
+}
+
+/// The circuit-wide view: what kinds of constraints it has, what each means,
+/// and which functions cost the most.
+fn print_summary(agg: &Aggregate) {
+    println!();
+    println!("{}", crate::style::brand("By kind"));
+    for &(kind, n) in &agg.kinds {
+        println!("  {:>4}  {n:>8}  {}", pct(n, agg.total), kind_name(kind));
+        for line in wrap(explain(kind), 72) {
+            println!("        {}", crate::style::dim(&line));
+        }
+    }
+    if !agg.functions.is_empty() {
+        println!();
+        println!(
+            "{}",
+            crate::style::brand("Costliest functions (including what they call)")
+        );
+        for (path, n) in agg.functions.iter().take(5) {
+            println!("  {:>4}  {n:>8}  {}", pct(*n, agg.total), path.join(" → "));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chain(fs: &[&str]) -> Vec<String> {
+        fs.iter().map(|f| f.to_string()).collect()
+    }
+
+    #[test]
+    fn functions_fold_wrappers_and_count_inclusively() {
+        let commit = chain(&["commitment", "hash", "perm", "round"]);
+        let commit_other = chain(&["commitment", "hash", "perm", "sbox"]);
+        let le = chain(&["le"]);
+        let nested_le = chain(&["require", "le", "le"]);
+        let mut chains: BTreeMap<&[String], u64> = BTreeMap::new();
+        chains.insert(&commit, 30);
+        chains.insert(&commit_other, 10);
+        chains.insert(&le, 4);
+        chains.insert(&nested_le, 1);
+        let rows = function_costs(&chains);
+        let rows: Vec<(String, u64)> = rows.into_iter().map(|(p, n)| (p.join(" → "), n)).collect();
+        assert_eq!(
+            rows,
+            [
+                ("commitment → hash → perm".to_string(), 40),
+                ("round".to_string(), 30),
+                ("sbox".to_string(), 10),
+                // `le` also runs outside `require`, so it keeps its own row, and
+                // its recursive call counts once.
+                ("le".to_string(), 5),
+                ("require".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn wraps_at_spaces() {
+        assert_eq!(wrap("aa bb cc dd", 5), ["aa bb", "cc dd"]);
+        assert_eq!(wrap("toolongword x", 4), ["toolongword", "x"]);
+        assert_eq!(pct(1, 1000), "<1%");
+        assert_eq!(pct(0, 1000), "0%");
+    }
 }
