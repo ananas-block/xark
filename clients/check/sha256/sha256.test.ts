@@ -1,7 +1,7 @@
 // The generated `sha256` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `sha256.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
-import { artifacts } from "../../../clients/check/artifacts";
+import { artifacts } from "../artifacts";
 import { Sha256 } from "./sha256";
 
 const sha256 = new Sha256(wasm, artifacts("sha256"));

@@ -1,7 +1,7 @@
 // The generated `merkle` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `merkle.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
-import { artifacts } from "../../../clients/check/artifacts";
+import { artifacts } from "../artifacts";
 import { Merkle } from "./merkle";
 
 const merkle = new Merkle(wasm, artifacts("merkle"));

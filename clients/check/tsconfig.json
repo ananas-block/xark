@@ -9,5 +9,5 @@
     "typeRoots": ["./node_modules/@types", "./node_modules"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["artifacts.ts", "../../examples/*/client/*.ts"]
+  "include": ["artifacts.ts", "*/*.ts"]
 }

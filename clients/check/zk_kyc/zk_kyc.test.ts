@@ -1,7 +1,7 @@
 // The generated `zk_kyc` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
-import { artifacts } from "../../../clients/check/artifacts";
+import { artifacts } from "../artifacts";
 import { Country, Identity, initClient, Policy, ZkKyc } from "./zk_kyc";
 
 const kyc = new ZkKyc(wasm, artifacts("zk_kyc"));

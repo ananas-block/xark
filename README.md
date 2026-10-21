@@ -254,7 +254,7 @@ a field's name (`Policy.minNetWorth(policy, 500_000)` then).
 
 The client holds no encoding logic of its own: xark-wasm encodes values against
 the embedded schema with the same Rust code as `xark prove --inputs`, so the two
-can't drift, and a mistake names its input (`id.document: "…" is longer than 31 bytes`). `examples/{zk_kyc,cube,sha256,merkle}/client/` hold generated clients and
+can't drift, and a mistake names its input (`id.document: "…" is longer than 31 bytes`). `clients/check/{zk_kyc,cube,sha256,merkle}/` hold those examples' generated clients and
 their vitest tests; `scripts/client-check.sh` (run in CI) regenerates them, fails
 if a committed one is stale, and runs the tests.
 

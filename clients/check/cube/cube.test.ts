@@ -1,7 +1,7 @@
 // The generated `cube` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `cube.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
-import { artifacts, serve } from "../../../clients/check/artifacts";
+import { artifacts, serve } from "../artifacts";
 import { Cube } from "./cube";
 
 const cube = new Cube(wasm, artifacts("cube"));
