@@ -33,6 +33,6 @@ for n in $EXAMPLES; do
 done
 [ $stale -eq 0 ]
 cd "$root/clients/check"
-[ -d node_modules ] || npm ci --silent
+[ -e node_modules/@blueshift-gg/xark-wasm ] || npm ci --silent
 npx tsc --noEmit
 npx vitest run

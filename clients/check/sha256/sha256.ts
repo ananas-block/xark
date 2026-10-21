@@ -9,76 +9,8 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-/**
- * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
- * a safe integer, a decimal or `0x`-hex string, little-endian bytes (a `Uint8Array`
- * of at most 32, as proofs and Rust's `Field::from_le_bytes` have them), or another
- * `Field`, and throws unless it's an integer in [0, p).
- */
-export class Field {
-  /** The field's modulus, p (BN254's scalar field). */
-  static readonly MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-  /** The element, in [0, p). */
-  readonly value: bigint;
-
-  constructor(x: Field | bigint | number | string | Uint8Array) {
-    const v = fieldValue(x);
-    if (v < 0n) throw new RangeError(`Field: ${v} is negative`);
-    if (v >= Field.MODULUS) throw new RangeError(`Field: ${v} is not below the field's modulus`);
-    this.value = v;
-  }
-
-  /** From big-endian bytes (at most 32), as some outside formats have them. */
-  static fromBeBytes(bytes: Uint8Array): Field {
-    return new Field(bytes.slice().reverse());
-  }
-
-  /** Whether `other` is the same element. */
-  equals(other: Field | bigint | number | string | Uint8Array): boolean {
-    return this.value === new Field(other).value;
-  }
-
-  /** The element as 32 little-endian bytes, as proofs have it. */
-  toBytes(): Uint8Array {
-    const out = new Uint8Array(32);
-    for (let i = 0, v = this.value; i < 32; i++, v >>= 8n) out[i] = Number(v & 0xffn);
-    return out;
-  }
-
-  /** Decimal. */
-  toString(): string {
-    return this.value.toString();
-  }
-
-  toJSON(): string {
-    return this.value.toString();
-  }
-}
-
-function fieldValue(x: unknown): bigint {
-  if (typeof x === "bigint") return x;
-  if (typeof x === "number") {
-    if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
-    return BigInt(x);
-  }
-  if (typeof x === "string") {
-    const s = x.trim();
-    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
-    return BigInt(s);
-  }
-  if (x instanceof Uint8Array) {
-    if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
-    return x.reduceRight((v, b) => (v << 8n) | BigInt(b), 0n);
-  }
-  // A `Field`, from this client or another.
-  if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
-    return (x as { value: bigint }).value;
-  }
-  throw new TypeError(`Field: can't make a field element from ${typeof x}`);
-}
-
-/** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
-export type Bytes = Uint8Array | readonly number[] | string;
+import { Circuit, Field, fromHex, type Bytes, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+export { Field };
 
 /** Every input of `sha256`. */
 export interface Sha256Inputs {
@@ -99,153 +31,33 @@ export interface Sha256PublicValues {
   digest: Uint8Array;
 }
 
-/** The parts of `@blueshift-gg/xark-wasm` this client uses (any of its builds). */
-export interface XarkWasm {
-  prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
-  verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
-  encodeInputs(schema: string, inputs: string): Record<string, string>;
-  encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
-  decodePublicValues(schema: string, publicInputs: Uint8Array): string;
-  valueFields(schema: string, typeName: string, value: string): string[];
-}
-
-/** A proof, with its public inputs decoded and as the bytes `verify` takes. */
-export interface Sha256Proof {
-  proof: Uint8Array;
-  publicInputs: Sha256PublicValues;
-  publicInputBytes: Uint8Array;
-}
-
 /**
- * The build output a `Sha256` works from (`target/xark/sha256/`): `circuit`
- * (circuit.xbc) and `provingKey` (pk.bin) to prove, `verifyingKey` (vk.bin) to
- * verify, and `sources` (sources.json, as text) so that inputs failing a check
- * name its source line.
- */
-export interface Sha256Keys {
-  circuit?: Uint8Array;
-  provingKey?: Uint8Array;
-  verifyingKey?: Uint8Array;
-  sources?: string;
-}
-
-/** Each part of `Sha256Keys` as `xark build` and `xark setup` name its file. */
-const FILES = {
-  circuit: "circuit.xbc",
-  provingKey: "pk.bin",
-  verifyingKey: "vk.bin",
-  sources: "sources.json",
-} as const;
-
-/**
- * Prove and verify `sha256` with the xark-wasm module you pass in:
+ * `sha256`: make a prover or verifier with the xark-wasm module you pass in,
+ * from a URL serving a copy of `target/xark/sha256/` (relative to the page in a
+ * browser) or from the bytes:
  *
  * ```ts
  * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const circuit = new Sha256(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk, sources });
- * const { proof, publicInputs } = circuit.prove(inputs);
- * circuit.verify(proof, publicInputs); // true
+ * const prover = await Sha256.prover(wasm, "/circuits/sha256/");
+ * const proof = prover.prove(inputs);
+ * send(proof.toBytes());
+ * const verifier = await Sha256.verifier(wasm, vkBytes);
+ * verifier.verify(proof.toBytes()); // true
  * ```
  */
-export class Sha256 {
-  /** The circuit's `schema.json`. */
-  static readonly schema = "{\"circuit\":\"sha256\",\"inputs\":[{\"name\":\"msg\",\"type\":{\"array\":{\"len\":3,\"of\":{\"uint\":8}}},\"visibility\":\"private\"},{\"name\":\"digest\",\"type\":{\"ref\":\"Hash\"},\"visibility\":\"public\"}],\"public_inputs\":[\"digest.hi\",\"digest.lo\"],\"types\":{\"Hash\":{\"encoding\":{\"bytes\":32,\"concat\":[16,16]},\"struct\":[{\"name\":\"hi\",\"type\":\"field\"},{\"name\":\"lo\",\"type\":\"field\"}]}},\"version\":2}";
+export const Sha256 = new Circuit<Sha256Inputs, Sha256PublicInputs, Sha256PublicValues, {}>({
+  name: "sha256",
+  schema: "{\"circuit\":\"sha256\",\"inputs\":[{\"name\":\"msg\",\"type\":{\"array\":{\"len\":3,\"of\":{\"uint\":8}}},\"visibility\":\"private\"},{\"name\":\"digest\",\"type\":{\"ref\":\"Hash\"},\"visibility\":\"public\"}],\"public_inputs\":[\"digest.hi\",\"digest.lo\"],\"types\":{\"Hash\":{\"encoding\":{\"bytes\":32,\"concat\":[16,16]},\"struct\":[{\"name\":\"hi\",\"type\":\"field\"},{\"name\":\"lo\",\"type\":\"field\"}]}},\"version\":2}",
+  decodePublic,
+  client: false,
+});
 
-  constructor(
-    private readonly wasm: XarkWasm,
-    private readonly keys: Sha256Keys,
-  ) {}
-
-  /**
-   * Fetch the build output from `base`, a URL serving a copy of
-   * `target/xark/sha256/` (relative to the page in a browser):
-   * `await Sha256.load(wasm, "/circuits/sha256/")`. `only` fetches less
-   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
-   */
-  static async load(
-    wasm: XarkWasm,
-    base: string | URL,
-    only: readonly (keyof Sha256Keys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
-    init?: RequestInit,
-  ): Promise<Sha256> {
-    const page = (globalThis as { location?: { href: string } }).location?.href;
-    if (!page && !URL.canParse(base)) {
-      throw new Error(`load: ${base} is relative, and there's no page to resolve it against; pass an absolute URL`);
-    }
-    const root = new URL(base, page);
-    if (!root.pathname.endsWith("/")) root.pathname += "/";
-    const keys: Record<string, Uint8Array | string> = {};
-    await Promise.all(
-      only.map(async (part) => {
-        const url = new URL(FILES[part], root);
-        const res = await fetch(url, init);
-        if (!res.ok) {
-          if (part === "sources" && res.status === 404) return;
-          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
-        }
-        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
-      }),
-    );
-    return new Sha256(wasm, keys as Sha256Keys);
-  }
-
-  /**
-   * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
-   * check (naming its source line when `sources` was given).
-   */
-  prove(inputs: Sha256Inputs): Sha256Proof {
-    const { circuit, provingKey, sources } = this.keys;
-    if (!circuit || !provingKey) throw new Error("proving needs `circuit` (circuit.xbc) and `provingKey` (pk.bin)");
-    const leaves = this.wasm.encodeInputs(Sha256.schema, toJson(inputs));
-    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
-    return { proof: proof.slice(), publicInputs: this.decodePublicInputs(publicInputs), publicInputBytes: publicInputs.slice() };
-  }
-
-  /** Whether `proof` proves these public inputs. */
-  verify(proof: Uint8Array, publicInputs: Sha256PublicInputs | Sha256PublicValues | Uint8Array): boolean {
-    const { verifyingKey } = this.keys;
-    if (!verifyingKey) throw new Error("verifying needs `verifyingKey` (vk.bin)");
-    const bytes = publicInputs instanceof Uint8Array ? publicInputs : this.encodePublicInputs(publicInputs);
-    try {
-      return this.wasm.verify(verifyingKey, proof, bytes);
-    } catch {
-      return false; // malformed proof bytes
-    }
-  }
-
-  /** The public inputs as the canonical bytes (`public_inputs.bin`). */
-  encodePublicInputs(publicInputs: Sha256PublicInputs | Sha256PublicValues): Uint8Array {
-    return this.wasm.encodePublicInputs(Sha256.schema, toJson(publicInputs));
-  }
-
-  /** Canonical public-input bytes, decoded. */
-  decodePublicInputs(bytes: Uint8Array): Sha256PublicValues {
-    return decodePublic(JSON.parse(this.wasm.decodePublicValues(Sha256.schema, bytes)));
-  }
-}
+export type Sha256Prover = Prover<Sha256Inputs, Sha256PublicInputs, Sha256PublicValues, {}>;
+export type Sha256Verifier = Verifier<Sha256PublicInputs, Sha256PublicValues, {}>;
+export type Sha256Proof = Proof<Sha256PublicValues>;
 
 function decodePublic(v: any): Sha256PublicValues {
   return {
     digest: fromHex(v.digest),
   };
-}
-
-/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
-function toJson(value: unknown): string {
-  return JSON.stringify(value, function (this: any, key: string, v: unknown) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      if (Number.isNaN(raw.getTime())) throw new TypeError(`${key}: invalid Date`);
-      return raw.toISOString().slice(0, 10);
-    }
-    if (typeof raw === "bigint") return raw.toString();
-    if (raw instanceof Uint8Array) return "0x" + Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
-    if (raw instanceof Set) return [...raw];
-    return v;
-  });
-}
-
-function fromHex(s: string): Uint8Array {
-  const h = s.slice(2);
-  return Uint8Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(2 * i, 2 * i + 2), 16));
 }

@@ -17,7 +17,7 @@ export function artifacts(example: string) {
     provingKey: read("pk.bin"),
     verifyingKey: read("vk.bin"),
     sources: readFileSync(join(dir, "sources.json"), "utf8"),
-    /** `client.wasm`: the crate's `#[xark::export]` functions, when it has some. */
+    /** `client.wasm`: the circuit's Rust functions, when it has some. */
     client: existsSync(join(dir, "client.wasm")) ? read("client.wasm") : undefined,
   };
 }

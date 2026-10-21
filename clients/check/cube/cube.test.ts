@@ -2,25 +2,46 @@
 // scripts/client-check.sh, which regenerates `cube.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts, serve } from "../artifacts";
-import { Cube, Field } from "./cube";
+import { Cube, CubeProver, CubeVerifier, Field } from "./cube";
 import { Field as KycField } from "../zk_kyc/zk_kyc";
 
-const cube = new Cube(wasm, artifacts("cube"));
 // The BN254 scalar field modulus: p + 3 would prove as 3 if it wrapped.
 const p = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-
 const inputs = { secret: new Field(3), result: new Field(27) };
 
+let prover: CubeProver;
+let verifier: CubeVerifier;
+beforeAll(async () => {
+  prover = await Cube.prover(wasm, artifacts("cube"));
+  verifier = await Cube.verifier(wasm, artifacts("cube").verifyingKey);
+});
+
 test("proves and verifies", () => {
-  const { proof, publicInputs } = cube.prove(inputs);
-  expect(publicInputs).toEqual({ result: new Field(27) });
-  expect(publicInputs.result.equals(27)).toBe(true);
-  expect(cube.verify(proof, publicInputs)).toBe(true);
-  expect(cube.verify(proof, { result: new Field(28) })).toBe(false);
+  const proof = prover.prove(inputs);
+  expect(proof.publicInputs).toEqual({ result: new Field(27) });
+  expect(proof.publicInputs.result.equals(27)).toBe(true);
+  expect(verifier.verify(proof)).toBe(true);
+  // Against the public inputs a verifier requires.
+  expect(verifier.verify(proof, { result: new Field(27) })).toBe(true);
+  expect(verifier.verify(proof, { result: new Field(28) })).toBe(false);
+});
+
+test("a proof travels as one blob", () => {
+  const proof = prover.prove(inputs);
+  const blob = proof.toBytes();
+  expect(verifier.verify(blob)).toBe(true);
+  expect(verifier.decode(blob)).toEqual(proof);
+  expect(verifier.verify(blob, { result: new Field(28) })).toBe(false);
+  const tampered = blob.slice();
+  tampered[tampered.length - 32] ^= 1; // the public input, 27 → 26
+  expect(verifier.decode(tampered).publicInputs.result.equals(26)).toBe(true);
+  expect(verifier.verify(tampered)).toBe(false);
+  expect(verifier.verify(blob.slice(0, 10))).toBe(false);
+  expect(() => verifier.decode(blob.slice(0, 10))).toThrow(/not a serialized proof/);
 });
 
 test("refuses bad inputs", () => {
-  expect(() => cube.prove({ ...inputs, result: new Field(28) })).toThrow();
+  expect(() => prover.prove({ ...inputs, result: new Field(28) })).toThrow();
 });
 
 test("a Field is checked when it's made", () => {
@@ -36,8 +57,8 @@ test("a Field is checked when it's made", () => {
   expect(big).toEqual(Uint8Array.from(Buffer.from((p - 1n).toString(16).padStart(64, "0"), "hex")).reverse());
   expect(new Field(big).value).toBe(p - 1n);
   expect(JSON.stringify({ x: three })).toBe('{"x":"3"}');
-  // Each generated client has its own copy of the class; a Field from one passes to another.
-  expect(cube.verify(cube.prove({ ...inputs, secret: new KycField(3) }).proof, { result: new KycField(27) })).toBe(true);
+  // Every client re-exports the one `Field`.
+  expect(KycField).toBe(Field);
   // Not below p, negative, inexact or malformed: refused, rather than wrapped.
   expect(() => new Field(p + 3n)).toThrow(/not below the field's modulus/);
   expect(() => new Field(new Uint8Array(32).fill(0xff))).toThrow(/not below the field's modulus/);
@@ -53,14 +74,16 @@ test("a Field is checked when it's made", () => {
 test("loads its build output from a URL", async () => {
   const server = await serve("cube");
   try {
-    const fetched = await Cube.load(wasm, server.url);
-    const { proof, publicInputs } = fetched.prove(inputs);
-    // A verifier needs only the verifying key.
-    const verifier = await Cube.load(wasm, new URL(server.url), ["verifyingKey"]);
-    expect(verifier.verify(proof, publicInputs)).toBe(true);
-    expect(() => verifier.prove(inputs)).toThrow(/needs `circuit`/);
-    await expect(Cube.load(wasm, server.url + "missing/")).rejects.toThrow(/404/);
-    await expect(Cube.load(wasm, "/circuits/cube/")).rejects.toThrow(/pass an absolute URL/);
+    const proof = (await Cube.prover(wasm, server.url)).prove(inputs);
+    // A verifier fetches only the verifying key, and can't prove.
+    const fetched = await Cube.verifier(wasm, new URL(server.url));
+    expect(fetched.verify(proof)).toBe(true);
+    // @ts-expect-error: a verifier has no `prove` (tsc checks this line)
+    expect(fetched.prove).toBeUndefined();
+    await expect(Cube.prover(wasm, server.url + "missing/")).rejects.toThrow(/404/);
+    await expect(Cube.verifier(wasm, "/circuits/cube/")).rejects.toThrow(/pass an absolute URL/);
+    // @ts-expect-error: proving needs the circuit and proving key (tsc checks this line)
+    await expect(Cube.prover(wasm, { verifyingKey: artifacts("cube").verifyingKey })).rejects.toThrow(/needs `circuit`/);
   } finally {
     await server.close();
   }

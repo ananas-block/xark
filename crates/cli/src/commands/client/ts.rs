@@ -1,10 +1,12 @@
-//! The TypeScript target: one `.ts` file over the xark-wasm module you pass in.
+//! The TypeScript target: one `.ts` file holding what's specific to the circuit, over
+//! the shared runtime `@blueshift-gg/xark-wasm/client` (`Field`, `Proof`, `Circuit`).
 //!
 //! * per enum, its variants as constants and their type (`Country.US`, or `"US"`);
 //! * an interface per input struct, every value in its natural TypeScript form;
 //! * the inputs, the public inputs as given, and as decoded from a proof;
-//! * a class with `prove`, `verify`, the public-input encode/decode, `load` (the
-//!   build output from a URL) and `fields` (a value's field elements, to hash it).
+//! * the circuit, a runtime `Circuit` that makes its provers and verifiers
+//!   (`ZkKyc.prover(wasm, url)`), with their types (`ZkKycProver`, `ZkKycProof`);
+//! * the crate's Rust functions (`#[input] impl`), run from `client.wasm`.
 //!
 //! | standard type          | as given                      | decoded       |
 //! |------------------------|-------------------------------|---------------|
@@ -165,7 +167,8 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
     if m.exports.is_empty() {
         return String::new();
     }
-    let mut out = String::from(CLIENT);
+    let circuit = pascal(&m.circuit);
+    let mut out = String::new();
     let mut types: Vec<&str> = Vec::new();
     for e in &m.exports {
         if !types.contains(&e.ty.as_str()) {
@@ -228,7 +231,7 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
                 all_params.insert(0, format!("{this}: {t}"));
                 all_names.insert(0, this.clone());
             }
-            let call = format!("callRust({:?}, [{}])", e.export, all_names.join(", "));
+            let call = format!("{circuit}.call({:?}, [{}])", e.export, all_names.join(", "));
             let (ret, body) = result(&e.returns, call, value_structs);
             out.push_str(&jsdoc(&e.doc, "  "));
             let _ = writeln!(
@@ -264,7 +267,7 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
                  A method named like a field is only `{t}.method(value, …)`.\n */\n\
                  export interface {t}Methods {{\n{methods}}}\n\n\
                  function with{t}Methods<T extends object>(value: T): T & {t}Methods {{\n  \
-                 return Object.defineProperties(value, {{\n{binds}  }}) as T & {t}Methods;\n}}\n\n"
+                 return Object.defineProperties(value, {{\n{binds}  }}) as T & {t}Methods;\n}}\n"
             );
         }
     }
@@ -310,12 +313,8 @@ pub fn generate(m: &Model) -> Result<String> {
         sig.join(", ")
     );
 
-    // Shared value types.
-    out.push_str(FIELD);
-    out.push_str(
-        "/** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */\n\
-         export type Bytes = Uint8Array | readonly number[] | string;\n\n",
-    );
+    // The runtime's imports go here, once the body says which it uses.
+    let head = std::mem::take(&mut out);
 
     // Enums: the variants as constants (`Country.US`) and their type (`"AD" | …`), so
     // a value is checked, and either form passes.
@@ -424,307 +423,79 @@ pub fn generate(m: &Model) -> Result<String> {
     out.push_str(&structs);
     out.push_str(&body);
 
-    // A value's field elements, per input struct (to hash one as the circuit does).
-    let mut fields = String::new();
-    if !m.structs.is_empty() {
-        fields.push_str(
-            "\n  /**\n   * A value's field elements in input order, as `to_fields()` gives them in\n   \
-             * Rust: hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).\n   \
-             */\n",
+    // The structs `fields` takes, by name.
+    let structs = if m.structs.is_empty() {
+        "{}".to_string()
+    } else {
+        let _ = writeln!(
+            out,
+            "/** The input structs, by name: what `fields` takes. */\nexport interface {name}Structs {{"
         );
         for r in m.structs.keys() {
-            let _ = writeln!(fields, "  fields(type: {r:?}, value: {r}): Field[];");
+            let _ = writeln!(out, "  {}: {r};", prop(r));
         }
-        fields.push_str(
-            "  fields(type: string, value: unknown): Field[] {\n    \
-             return this.wasm.valueFields(__NAME__.schema, type, toJson(value)).map((f) => new Field(f));\n  }\n",
-        );
-    }
+        out.push_str("}\n\n");
+        format!("{name}Structs")
+    };
 
-    // The class.
-    let has = !m.exports.is_empty();
-    let pick = |yes: &'static str| if has { yes } else { "" };
-    out.push_str(
-        &CLASS
-            .replace("__FIELDS__", &fields)
-            .replace("__CLIENT_KEY__", pick("\n  /** `client.wasm`: the Rust functions (`load` runs `initClient`). */\n  client?: Uint8Array;"))
-            .replace("__CLIENT_FILE__", pick("\n  client: \"client.wasm\","))
-            .replace("__CLIENT_PART__", pick(", \"client\""))
-            .replace("__LOAD_DOC__", pick("\n   * `client.wasm` is loaded with `initClient`, for the Rust functions."))
-            .replace("__LOAD_CLIENT__", pick("        if (part === \"client\") return initClient(await res.arrayBuffer());\n"))
-            .replace("__NAME__", &name)
-            .replace("__CIRCUIT__", circuit)
-            .replace("__SCHEMA__", &format!("{:?}", m.schema)),
+    // The circuit.
+    let _ = writeln!(
+        out,
+        "/**\n \
+         * `{circuit}`: make a prover or verifier with the xark-wasm module you pass in,\n \
+         * from a URL serving a copy of `target/xark/{circuit}/` (relative to the page in a\n \
+         * browser) or from the bytes:\n \
+         *\n \
+         * ```ts\n \
+         * import * as wasm from \"@blueshift-gg/xark-wasm\"; // node, web (after `await init()`), or bundler\n \
+         * const prover = await {name}.prover(wasm, \"/circuits/{circuit}/\");\n \
+         * const proof = prover.prove(inputs);\n \
+         * send(proof.toBytes());\n \
+         * const verifier = await {name}.verifier(wasm, vkBytes);\n \
+         * verifier.verify(proof.toBytes()); // true\n \
+         * ```\n \
+         */\n\
+         export const {name} = new Circuit<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>({{\n  \
+         name: {circuit:?},\n  \
+         schema: {:?},\n  \
+         decodePublic,\n  \
+         client: {},\n\
+         }});\n\n\
+         export type {name}Prover = Prover<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>;\n\
+         export type {name}Verifier = Verifier<{name}PublicInputs, {name}PublicValues, {structs}>;\n\
+         export type {name}Proof = Proof<{name}PublicValues>;\n",
+        m.schema,
+        !m.exports.is_empty(),
     );
     out.push_str(&exports);
     out.push_str(&decode);
-    out.push_str(HELPERS);
-    Ok(out)
-}
+    let out = out.trim_end().to_string() + "\n";
 
-const CLASS: &str = r#"/** The parts of `@blueshift-gg/xark-wasm` this client uses (any of its builds). */
-export interface XarkWasm {
-  prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
-  verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
-  encodeInputs(schema: string, inputs: string): Record<string, string>;
-  encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
-  decodePublicValues(schema: string, publicInputs: Uint8Array): string;
-  valueFields(schema: string, typeName: string, value: string): string[];
-}
-
-/** A proof, with its public inputs decoded and as the bytes `verify` takes. */
-export interface __NAME__Proof {
-  proof: Uint8Array;
-  publicInputs: __NAME__PublicValues;
-  publicInputBytes: Uint8Array;
-}
-
-/**
- * The build output a `__NAME__` works from (`target/xark/__CIRCUIT__/`): `circuit`
- * (circuit.xbc) and `provingKey` (pk.bin) to prove, `verifyingKey` (vk.bin) to
- * verify, and `sources` (sources.json, as text) so that inputs failing a check
- * name its source line.
- */
-export interface __NAME__Keys {
-  circuit?: Uint8Array;
-  provingKey?: Uint8Array;
-  verifyingKey?: Uint8Array;
-  sources?: string;__CLIENT_KEY__
-}
-
-/** Each part of `__NAME__Keys` as `xark build` and `xark setup` name its file. */
-const FILES = {
-  circuit: "circuit.xbc",
-  provingKey: "pk.bin",
-  verifyingKey: "vk.bin",
-  sources: "sources.json",__CLIENT_FILE__
-} as const;
-
-/**
- * Prove and verify `__CIRCUIT__` with the xark-wasm module you pass in:
- *
- * ```ts
- * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const circuit = new __NAME__(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk, sources });
- * const { proof, publicInputs } = circuit.prove(inputs);
- * circuit.verify(proof, publicInputs); // true
- * ```
- */
-export class __NAME__ {
-  /** The circuit's `schema.json`. */
-  static readonly schema = __SCHEMA__;
-
-  constructor(
-    private readonly wasm: XarkWasm,
-    private readonly keys: __NAME__Keys,
-  ) {}
-
-  /**
-   * Fetch the build output from `base`, a URL serving a copy of
-   * `target/xark/__CIRCUIT__/` (relative to the page in a browser):
-   * `await __NAME__.load(wasm, "/circuits/__CIRCUIT__/")`. `only` fetches less
-   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.__LOAD_DOC__
-   */
-  static async load(
-    wasm: XarkWasm,
-    base: string | URL,
-    only: readonly (keyof __NAME__Keys)[] = ["circuit", "provingKey", "verifyingKey", "sources"__CLIENT_PART__],
-    init?: RequestInit,
-  ): Promise<__NAME__> {
-    const page = (globalThis as { location?: { href: string } }).location?.href;
-    if (!page && !URL.canParse(base)) {
-      throw new Error(`load: ${base} is relative, and there's no page to resolve it against; pass an absolute URL`);
+    // Import what the body uses from the runtime, and re-export `Field`.
+    let mut values = vec!["Circuit", "Field"];
+    if out.contains("fromHex(") {
+        values.push("fromHex");
     }
-    const root = new URL(base, page);
-    if (!root.pathname.endsWith("/")) root.pathname += "/";
-    const keys: Record<string, Uint8Array | string> = {};
-    await Promise.all(
-      only.map(async (part) => {
-        const url = new URL(FILES[part], root);
-        const res = await fetch(url, init);
-        if (!res.ok) {
-          if (part === "sources" && res.status === 404) return;
-          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
-        }
-__LOAD_CLIENT__        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
-      }),
-    );
-    return new __NAME__(wasm, keys as __NAME__Keys);
-  }
-
-  /**
-   * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
-   * check (naming its source line when `sources` was given).
-   */
-  prove(inputs: __NAME__Inputs): __NAME__Proof {
-    const { circuit, provingKey, sources } = this.keys;
-    if (!circuit || !provingKey) throw new Error("proving needs `circuit` (circuit.xbc) and `provingKey` (pk.bin)");
-    const leaves = this.wasm.encodeInputs(__NAME__.schema, toJson(inputs));
-    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
-    return { proof: proof.slice(), publicInputs: this.decodePublicInputs(publicInputs), publicInputBytes: publicInputs.slice() };
-  }
-
-  /** Whether `proof` proves these public inputs. */
-  verify(proof: Uint8Array, publicInputs: __NAME__PublicInputs | __NAME__PublicValues | Uint8Array): boolean {
-    const { verifyingKey } = this.keys;
-    if (!verifyingKey) throw new Error("verifying needs `verifyingKey` (vk.bin)");
-    const bytes = publicInputs instanceof Uint8Array ? publicInputs : this.encodePublicInputs(publicInputs);
-    try {
-      return this.wasm.verify(verifyingKey, proof, bytes);
-    } catch {
-      return false; // malformed proof bytes
+    let mut types = vec!["Proof", "Prover", "Verifier"];
+    if out.contains(": Bytes") {
+        types.insert(0, "Bytes");
     }
-  }
-
-  /** The public inputs as the canonical bytes (`public_inputs.bin`). */
-  encodePublicInputs(publicInputs: __NAME__PublicInputs | __NAME__PublicValues): Uint8Array {
-    return this.wasm.encodePublicInputs(__NAME__.schema, toJson(publicInputs));
-  }
-
-  /** Canonical public-input bytes, decoded. */
-  decodePublicInputs(bytes: Uint8Array): __NAME__PublicValues {
-    return decodePublic(JSON.parse(this.wasm.decodePublicValues(__NAME__.schema, bytes)));
-  }
-__FIELDS__}
-
-"#;
-
-const CLIENT: &str = r#"// The Rust functions (`#[input]` on an `impl`, here or in a dependency), compiled to `client.wasm`.
-let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
-
-/**
- * Load `client.wasm` (`xark client` writes it beside `circuit.xbc`; `load` fetches
- * it): the circuit's Rust functions. Once, before calling them.
- */
-export async function initClient(wasm: BufferSource | WebAssembly.Module): Promise<void> {
-  const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
-  rust = { module, instance: await WebAssembly.instantiate(module, {}) };
+    let imports: Vec<String> = values
+        .iter()
+        .map(|v| v.to_string())
+        .chain(types.iter().map(|t| format!("type {t}")))
+        .collect();
+    Ok(format!(
+        "{head}\
+         import {{ {} }} from \"{RUNTIME}\";\n\
+         export {{ Field }};\n\n\
+         {out}",
+        imports.join(", ")
+    ))
 }
 
-/** Call an exported Rust function with JSON arguments; its result, as JSON. */
-function callRust(name: string, args: unknown[]): any {
-  if (!rust) throw new Error("call `initClient(client.wasm)` before the circuit's Rust functions");
-  const x = rust.instance.exports as any;
-  const input = new TextEncoder().encode(toJson(args));
-  const ptr = x.xark_alloc(input.length);
-  new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
-  let packed: bigint;
-  try {
-    packed = x[name](ptr, input.length);
-  } catch (e) {
-    const message = take(x, x.xark_panic());
-    rust.instance = new WebAssembly.Instance(rust.module, {}); // a panic may leave the heap mid-update
-    throw new Error(message || String(e));
-  }
-  x.xark_free(ptr, input.length);
-  const out = JSON.parse(take(x, packed));
-  if ("err" in out) throw new Error(out.err);
-  return out.ok;
-}
-
-/** The string a Rust function handed over (`ptr << 32 | len`), freed. */
-function take(x: any, packed: bigint): string {
-  const ptr = Number(packed >> 32n);
-  const len = Number(packed & 0xffffffffn);
-  const s = new TextDecoder().decode(new Uint8Array(x.memory.buffer, ptr, len));
-  x.xark_free(ptr, len);
-  return s;
-}
-
-"#;
-
-/// The field element type every client shares. Structural, so a `Field` from one
-/// generated client passes to another.
-const FIELD: &str = r#"/**
- * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
- * a safe integer, a decimal or `0x`-hex string, little-endian bytes (a `Uint8Array`
- * of at most 32, as proofs and Rust's `Field::from_le_bytes` have them), or another
- * `Field`, and throws unless it's an integer in [0, p).
- */
-export class Field {
-  /** The field's modulus, p (BN254's scalar field). */
-  static readonly MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-  /** The element, in [0, p). */
-  readonly value: bigint;
-
-  constructor(x: Field | bigint | number | string | Uint8Array) {
-    const v = fieldValue(x);
-    if (v < 0n) throw new RangeError(`Field: ${v} is negative`);
-    if (v >= Field.MODULUS) throw new RangeError(`Field: ${v} is not below the field's modulus`);
-    this.value = v;
-  }
-
-  /** From big-endian bytes (at most 32), as some outside formats have them. */
-  static fromBeBytes(bytes: Uint8Array): Field {
-    return new Field(bytes.slice().reverse());
-  }
-
-  /** Whether `other` is the same element. */
-  equals(other: Field | bigint | number | string | Uint8Array): boolean {
-    return this.value === new Field(other).value;
-  }
-
-  /** The element as 32 little-endian bytes, as proofs have it. */
-  toBytes(): Uint8Array {
-    const out = new Uint8Array(32);
-    for (let i = 0, v = this.value; i < 32; i++, v >>= 8n) out[i] = Number(v & 0xffn);
-    return out;
-  }
-
-  /** Decimal. */
-  toString(): string {
-    return this.value.toString();
-  }
-
-  toJSON(): string {
-    return this.value.toString();
-  }
-}
-
-function fieldValue(x: unknown): bigint {
-  if (typeof x === "bigint") return x;
-  if (typeof x === "number") {
-    if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
-    return BigInt(x);
-  }
-  if (typeof x === "string") {
-    const s = x.trim();
-    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
-    return BigInt(s);
-  }
-  if (x instanceof Uint8Array) {
-    if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
-    return x.reduceRight((v, b) => (v << 8n) | BigInt(b), 0n);
-  }
-  // A `Field`, from this client or another.
-  if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
-    return (x as { value: bigint }).value;
-  }
-  throw new TypeError(`Field: can't make a field element from ${typeof x}`);
-}
-
-"#;
-
-const HELPERS: &str = r#"/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
-function toJson(value: unknown): string {
-  return JSON.stringify(value, function (this: any, key: string, v: unknown) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      if (Number.isNaN(raw.getTime())) throw new TypeError(`${key}: invalid Date`);
-      return raw.toISOString().slice(0, 10);
-    }
-    if (typeof raw === "bigint") return raw.toString();
-    if (raw instanceof Uint8Array) return "0x" + Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
-    if (raw instanceof Set) return [...raw];
-    return v;
-  });
-}
-
-function fromHex(s: string): Uint8Array {
-  const h = s.slice(2);
-  return Uint8Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(2 * i, 2 * i + 2), 16));
-}
-"#;
+/// The module every generated client imports: `Field`, `Proof`, `Circuit`.
+const RUNTIME: &str = "@blueshift-gg/xark-wasm/client";
 
 #[cfg(test)]
 mod tests {
@@ -783,9 +554,11 @@ mod tests {
             "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "export class KycCheck {",
-            "  fields(type: \"Identity\", value: Identity): Field[];",
-            "static async load(",
+            "import { Circuit, Field, type Bytes, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nexport { Field };",
+            "export interface KycCheckStructs {\n  Identity: Identity;\n}",
+            "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",
+            "  client: false,\n});",
+            "export type KycCheckProof = Proof<KycCheckPublicValues>;",
         ] {
             assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
         }

@@ -196,8 +196,10 @@ xark check examples/cube
 `Input::TYPE`, plus the public inputs in proof order. `xark client` resolves it
 into the standard types and writes one `.ts` file: constants and a type per enum,
 an interface per struct, the inputs, the public inputs as given and as decoded, and
-a class over the `xark-wasm` module you pass in. Each type is the one you'd write
-by hand:
+the circuit, which makes provers and verifiers over the `xark-wasm` module you pass
+in. What every client shares (`Field`, `Proof`, loading) is xark-wasm's
+`@blueshift-gg/xark-wasm/client`, so the file holds only the circuit. Each type is
+the one you'd write by hand:
 
 ```ts
 export const Country = { AD: "AD", AE: "AE", /* … */ US: "US", ZW: "ZW" } as const;
@@ -219,19 +221,27 @@ decimal or `0x`-hex string, or little-endian bytes (as proofs and Rust's
 throws unless it's below the field's modulus, so a value that would wrap never
 reaches the prover. Decoded public inputs and Rust functions return `Field`s too.
 
+A prover and a verifier are separate, each made from a URL serving a copy of
+`target/xark/<circuit>/` or from the bytes, so each has only the methods it can
+run. A proof travels as one blob, `proof.toBytes()`:
 
 ```ts
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
 import { Country, Field, Identity, Policy, ZkKyc } from "./zk_kyc";
 
-const kyc = await ZkKyc.load(wasm, "/circuits/zk_kyc/"); // a copy of target/xark/zk_kyc/
-// (or `new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources })` with bytes you have)
+// In the app: fetches circuit.xbc, pk.bin, sources.json and client.wasm.
+const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
 const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt: new Field(saltBytes) };
 const commitment = Identity.commitment(id); // the circuit's own Rust (below)
 const policy = Policy.on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
-const { proof, publicInputs } = kyc.prove({ id, commitment, policy });
-publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
-kyc.verify(proof, publicInputs); // true
+const proof = prover.prove({ id, commitment, policy });
+proof.publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
+send(proof.toBytes());
+
+// On the server: check it proves the policy you require, not just any.
+const verifier = await ZkKyc.verifier(wasm, vkBytes); // or { verifyingKey, client }
+verifier.verify(body, { commitment, policy: required }); // true
+verifier.decode(body).publicInputs; // what it claims, typed
 ```
 
 `Policy.on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
@@ -250,7 +260,8 @@ impl Policy {
 ```
 
 `xark client` builds the crate's host code once more as `client.wasm` (beside
-`circuit.xbc`; `load` fetches it, or call `initClient(bytes)`), with no JS glue, and
+`circuit.xbc`; a prover or verifier made from a URL fetches it, or pass it as
+`client`), with no JS glue, and
 each call runs it: values cross in their natural forms, a Rust panic arrives as an
 exception with its message. Parameters and results are any `Input` type. It
 works from any crate: a gadget that puts `#[input]` on its types and their `impl`s

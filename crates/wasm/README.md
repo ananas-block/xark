@@ -279,6 +279,23 @@ const { publicInputs } = prove(xbc, pk, { secret: "3", result: "27" });
 decode_public_inputs(publicInputs); // ["27"]
 ```
 
+### Typed clients (`@blueshift-gg/xark-wasm/client`)
+
+What every client `xark client` generates shares, as plain JavaScript with types:
+`Field` (a field element, checked when it's made), `Proof` (a proof and its public
+inputs; `toBytes()` is the one blob to send), and `Circuit`, which a generated file
+instantiates with its circuit's schema to make a `Prover` or a `Verifier` from a
+URL serving the build output or from its bytes:
+
+```js
+import * as wasm from "@blueshift-gg/xark-wasm";
+import { ZkKyc } from "./zk_kyc"; // generated; imports this module
+const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+const proof = prover.prove(inputs);
+const verifier = await ZkKyc.verifier(wasm, vkBytes);
+verifier.verify(proof.toBytes(), requiredPublicInputs); // true
+```
+
 ### Typed values (`schema.json`)
 
 A generated client (`xark client`) calls these with the circuit's

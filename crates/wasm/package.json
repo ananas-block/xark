@@ -44,6 +44,10 @@
     "./stream": {
       "types": "./js/stream.d.ts",
       "default": "./js/stream.mjs"
+    },
+    "./client": {
+      "types": "./js/client.d.ts",
+      "default": "./js/client.mjs"
     }
   }
 }

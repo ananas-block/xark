@@ -9,76 +9,8 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-/**
- * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
- * a safe integer, a decimal or `0x`-hex string, little-endian bytes (a `Uint8Array`
- * of at most 32, as proofs and Rust's `Field::from_le_bytes` have them), or another
- * `Field`, and throws unless it's an integer in [0, p).
- */
-export class Field {
-  /** The field's modulus, p (BN254's scalar field). */
-  static readonly MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-  /** The element, in [0, p). */
-  readonly value: bigint;
-
-  constructor(x: Field | bigint | number | string | Uint8Array) {
-    const v = fieldValue(x);
-    if (v < 0n) throw new RangeError(`Field: ${v} is negative`);
-    if (v >= Field.MODULUS) throw new RangeError(`Field: ${v} is not below the field's modulus`);
-    this.value = v;
-  }
-
-  /** From big-endian bytes (at most 32), as some outside formats have them. */
-  static fromBeBytes(bytes: Uint8Array): Field {
-    return new Field(bytes.slice().reverse());
-  }
-
-  /** Whether `other` is the same element. */
-  equals(other: Field | bigint | number | string | Uint8Array): boolean {
-    return this.value === new Field(other).value;
-  }
-
-  /** The element as 32 little-endian bytes, as proofs have it. */
-  toBytes(): Uint8Array {
-    const out = new Uint8Array(32);
-    for (let i = 0, v = this.value; i < 32; i++, v >>= 8n) out[i] = Number(v & 0xffn);
-    return out;
-  }
-
-  /** Decimal. */
-  toString(): string {
-    return this.value.toString();
-  }
-
-  toJSON(): string {
-    return this.value.toString();
-  }
-}
-
-function fieldValue(x: unknown): bigint {
-  if (typeof x === "bigint") return x;
-  if (typeof x === "number") {
-    if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
-    return BigInt(x);
-  }
-  if (typeof x === "string") {
-    const s = x.trim();
-    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
-    return BigInt(s);
-  }
-  if (x instanceof Uint8Array) {
-    if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
-    return x.reduceRight((v, b) => (v << 8n) | BigInt(b), 0n);
-  }
-  // A `Field`, from this client or another.
-  if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
-    return (x as { value: bigint }).value;
-  }
-  throw new TypeError(`Field: can't make a field element from ${typeof x}`);
-}
-
-/** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
-export type Bytes = Uint8Array | readonly number[] | string;
+import { Circuit, Field, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+export { Field };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */
 export const Country = {
@@ -171,187 +103,36 @@ export interface ZkKycPublicValues {
   policy: PolicyValue;
 }
 
-/** The parts of `@blueshift-gg/xark-wasm` this client uses (any of its builds). */
-export interface XarkWasm {
-  prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
-  verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
-  encodeInputs(schema: string, inputs: string): Record<string, string>;
-  encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
-  decodePublicValues(schema: string, publicInputs: Uint8Array): string;
-  valueFields(schema: string, typeName: string, value: string): string[];
-}
-
-/** A proof, with its public inputs decoded and as the bytes `verify` takes. */
-export interface ZkKycProof {
-  proof: Uint8Array;
-  publicInputs: ZkKycPublicValues;
-  publicInputBytes: Uint8Array;
+/** The input structs, by name: what `fields` takes. */
+export interface ZkKycStructs {
+  Identity: Identity;
+  Policy: Policy;
 }
 
 /**
- * The build output a `ZkKyc` works from (`target/xark/zk_kyc/`): `circuit`
- * (circuit.xbc) and `provingKey` (pk.bin) to prove, `verifyingKey` (vk.bin) to
- * verify, and `sources` (sources.json, as text) so that inputs failing a check
- * name its source line.
- */
-export interface ZkKycKeys {
-  circuit?: Uint8Array;
-  provingKey?: Uint8Array;
-  verifyingKey?: Uint8Array;
-  sources?: string;
-  /** `client.wasm`: the Rust functions (`load` runs `initClient`). */
-  client?: Uint8Array;
-}
-
-/** Each part of `ZkKycKeys` as `xark build` and `xark setup` name its file. */
-const FILES = {
-  circuit: "circuit.xbc",
-  provingKey: "pk.bin",
-  verifyingKey: "vk.bin",
-  sources: "sources.json",
-  client: "client.wasm",
-} as const;
-
-/**
- * Prove and verify `zk_kyc` with the xark-wasm module you pass in:
+ * `zk_kyc`: make a prover or verifier with the xark-wasm module you pass in,
+ * from a URL serving a copy of `target/xark/zk_kyc/` (relative to the page in a
+ * browser) or from the bytes:
  *
  * ```ts
  * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const circuit = new ZkKyc(wasm, { circuit: xbc, provingKey: pk, verifyingKey: vk, sources });
- * const { proof, publicInputs } = circuit.prove(inputs);
- * circuit.verify(proof, publicInputs); // true
+ * const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+ * const proof = prover.prove(inputs);
+ * send(proof.toBytes());
+ * const verifier = await ZkKyc.verifier(wasm, vkBytes);
+ * verifier.verify(proof.toBytes()); // true
  * ```
  */
-export class ZkKyc {
-  /** The circuit's `schema.json`. */
-  static readonly schema = "{\"circuit\":\"zk_kyc\",\"inputs\":[{\"name\":\"id\",\"type\":{\"ref\":\"Identity\"},\"visibility\":\"private\"},{\"name\":\"commitment\",\"type\":\"field\",\"visibility\":\"public\"},{\"name\":\"policy\",\"type\":{\"ref\":\"Policy\"},\"visibility\":\"public\"}],\"public_inputs\":[\"commitment\",\"policy.today\",\"policy.born_by\",\"policy.min_net_worth\",\"policy.allowed\"],\"types\":{\"Bitfield<Country>\":{\"encoding\":{\"set\":\"Country\"},\"newtype\":\"field\"},\"Choice<Country>\":{\"encoding\":{\"choice\":\"Country\"},\"newtype\":\"field\"},\"Country\":{\"enum\":[\"AD\",\"AE\",\"AF\",\"AG\",\"AI\",\"AL\",\"AM\",\"AO\",\"AQ\",\"AR\",\"AS\",\"AT\",\"AU\",\"AW\",\"AX\",\"AZ\",\"BA\",\"BB\",\"BD\",\"BE\",\"BF\",\"BG\",\"BH\",\"BI\",\"BJ\",\"BL\",\"BM\",\"BN\",\"BO\",\"BQ\",\"BR\",\"BS\",\"BT\",\"BV\",\"BW\",\"BY\",\"BZ\",\"CA\",\"CC\",\"CD\",\"CF\",\"CG\",\"CH\",\"CI\",\"CK\",\"CL\",\"CM\",\"CN\",\"CO\",\"CR\",\"CU\",\"CV\",\"CW\",\"CX\",\"CY\",\"CZ\",\"DE\",\"DJ\",\"DK\",\"DM\",\"DO\",\"DZ\",\"EC\",\"EE\",\"EG\",\"EH\",\"ER\",\"ES\",\"ET\",\"FI\",\"FJ\",\"FK\",\"FM\",\"FO\",\"FR\",\"GA\",\"GB\",\"GD\",\"GE\",\"GF\",\"GG\",\"GH\",\"GI\",\"GL\",\"GM\",\"GN\",\"GP\",\"GQ\",\"GR\",\"GS\",\"GT\",\"GU\",\"GW\",\"GY\",\"HK\",\"HM\",\"HN\",\"HR\",\"HT\",\"HU\",\"ID\",\"IE\",\"IL\",\"IM\",\"IN\",\"IO\",\"IQ\",\"IR\",\"IS\",\"IT\",\"JE\",\"JM\",\"JO\",\"JP\",\"KE\",\"KG\",\"KH\",\"KI\",\"KM\",\"KN\",\"KP\",\"KR\",\"KW\",\"KY\",\"KZ\",\"LA\",\"LB\",\"LC\",\"LI\",\"LK\",\"LR\",\"LS\",\"LT\",\"LU\",\"LV\",\"LY\",\"MA\",\"MC\",\"MD\",\"ME\",\"MF\",\"MG\",\"MH\",\"MK\",\"ML\",\"MM\",\"MN\",\"MO\",\"MP\",\"MQ\",\"MR\",\"MS\",\"MT\",\"MU\",\"MV\",\"MW\",\"MX\",\"MY\",\"MZ\",\"NA\",\"NC\",\"NE\",\"NF\",\"NG\",\"NI\",\"NL\",\"NO\",\"NP\",\"NR\",\"NU\",\"NZ\",\"OM\",\"PA\",\"PE\",\"PF\",\"PG\",\"PH\",\"PK\",\"PL\",\"PM\",\"PN\",\"PR\",\"PS\",\"PT\",\"PW\",\"PY\",\"QA\",\"RE\",\"RO\",\"RS\",\"RU\",\"RW\",\"SA\",\"SB\",\"SC\",\"SD\",\"SE\",\"SG\",\"SH\",\"SI\",\"SJ\",\"SK\",\"SL\",\"SM\",\"SN\",\"SO\",\"SR\",\"SS\",\"ST\",\"SV\",\"SX\",\"SY\",\"SZ\",\"TC\",\"TD\",\"TF\",\"TG\",\"TH\",\"TJ\",\"TK\",\"TL\",\"TM\",\"TN\",\"TO\",\"TR\",\"TT\",\"TV\",\"TW\",\"TZ\",\"UA\",\"UG\",\"UM\",\"US\",\"UY\",\"UZ\",\"VA\",\"VC\",\"VE\",\"VG\",\"VI\",\"VN\",\"VU\",\"WF\",\"WS\",\"YE\",\"YT\",\"ZA\",\"ZM\",\"ZW\"]},\"Date\":{\"encoding\":{\"date\":\"yyyymmdd\"},\"newtype\":\"field\"},\"Identity\":{\"struct\":[{\"name\":\"document\",\"type\":{\"ref\":\"Text\"}},{\"name\":\"born\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"nationality\",\"type\":{\"ref\":\"Choice<Country>\"}},{\"name\":\"net_worth\",\"type\":{\"uint\":64}},{\"name\":\"expires\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"salt\",\"type\":\"field\"}]},\"Policy\":{\"struct\":[{\"name\":\"today\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"born_by\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"min_net_worth\",\"type\":{\"uint\":64}},{\"name\":\"allowed\",\"type\":{\"ref\":\"Bitfield<Country>\"}}]},\"Text\":{\"encoding\":{\"text\":31},\"newtype\":\"field\"}},\"version\":2}";
+export const ZkKyc = new Circuit<ZkKycInputs, ZkKycPublicInputs, ZkKycPublicValues, ZkKycStructs>({
+  name: "zk_kyc",
+  schema: "{\"circuit\":\"zk_kyc\",\"inputs\":[{\"name\":\"id\",\"type\":{\"ref\":\"Identity\"},\"visibility\":\"private\"},{\"name\":\"commitment\",\"type\":\"field\",\"visibility\":\"public\"},{\"name\":\"policy\",\"type\":{\"ref\":\"Policy\"},\"visibility\":\"public\"}],\"public_inputs\":[\"commitment\",\"policy.today\",\"policy.born_by\",\"policy.min_net_worth\",\"policy.allowed\"],\"types\":{\"Bitfield<Country>\":{\"encoding\":{\"set\":\"Country\"},\"newtype\":\"field\"},\"Choice<Country>\":{\"encoding\":{\"choice\":\"Country\"},\"newtype\":\"field\"},\"Country\":{\"enum\":[\"AD\",\"AE\",\"AF\",\"AG\",\"AI\",\"AL\",\"AM\",\"AO\",\"AQ\",\"AR\",\"AS\",\"AT\",\"AU\",\"AW\",\"AX\",\"AZ\",\"BA\",\"BB\",\"BD\",\"BE\",\"BF\",\"BG\",\"BH\",\"BI\",\"BJ\",\"BL\",\"BM\",\"BN\",\"BO\",\"BQ\",\"BR\",\"BS\",\"BT\",\"BV\",\"BW\",\"BY\",\"BZ\",\"CA\",\"CC\",\"CD\",\"CF\",\"CG\",\"CH\",\"CI\",\"CK\",\"CL\",\"CM\",\"CN\",\"CO\",\"CR\",\"CU\",\"CV\",\"CW\",\"CX\",\"CY\",\"CZ\",\"DE\",\"DJ\",\"DK\",\"DM\",\"DO\",\"DZ\",\"EC\",\"EE\",\"EG\",\"EH\",\"ER\",\"ES\",\"ET\",\"FI\",\"FJ\",\"FK\",\"FM\",\"FO\",\"FR\",\"GA\",\"GB\",\"GD\",\"GE\",\"GF\",\"GG\",\"GH\",\"GI\",\"GL\",\"GM\",\"GN\",\"GP\",\"GQ\",\"GR\",\"GS\",\"GT\",\"GU\",\"GW\",\"GY\",\"HK\",\"HM\",\"HN\",\"HR\",\"HT\",\"HU\",\"ID\",\"IE\",\"IL\",\"IM\",\"IN\",\"IO\",\"IQ\",\"IR\",\"IS\",\"IT\",\"JE\",\"JM\",\"JO\",\"JP\",\"KE\",\"KG\",\"KH\",\"KI\",\"KM\",\"KN\",\"KP\",\"KR\",\"KW\",\"KY\",\"KZ\",\"LA\",\"LB\",\"LC\",\"LI\",\"LK\",\"LR\",\"LS\",\"LT\",\"LU\",\"LV\",\"LY\",\"MA\",\"MC\",\"MD\",\"ME\",\"MF\",\"MG\",\"MH\",\"MK\",\"ML\",\"MM\",\"MN\",\"MO\",\"MP\",\"MQ\",\"MR\",\"MS\",\"MT\",\"MU\",\"MV\",\"MW\",\"MX\",\"MY\",\"MZ\",\"NA\",\"NC\",\"NE\",\"NF\",\"NG\",\"NI\",\"NL\",\"NO\",\"NP\",\"NR\",\"NU\",\"NZ\",\"OM\",\"PA\",\"PE\",\"PF\",\"PG\",\"PH\",\"PK\",\"PL\",\"PM\",\"PN\",\"PR\",\"PS\",\"PT\",\"PW\",\"PY\",\"QA\",\"RE\",\"RO\",\"RS\",\"RU\",\"RW\",\"SA\",\"SB\",\"SC\",\"SD\",\"SE\",\"SG\",\"SH\",\"SI\",\"SJ\",\"SK\",\"SL\",\"SM\",\"SN\",\"SO\",\"SR\",\"SS\",\"ST\",\"SV\",\"SX\",\"SY\",\"SZ\",\"TC\",\"TD\",\"TF\",\"TG\",\"TH\",\"TJ\",\"TK\",\"TL\",\"TM\",\"TN\",\"TO\",\"TR\",\"TT\",\"TV\",\"TW\",\"TZ\",\"UA\",\"UG\",\"UM\",\"US\",\"UY\",\"UZ\",\"VA\",\"VC\",\"VE\",\"VG\",\"VI\",\"VN\",\"VU\",\"WF\",\"WS\",\"YE\",\"YT\",\"ZA\",\"ZM\",\"ZW\"]},\"Date\":{\"encoding\":{\"date\":\"yyyymmdd\"},\"newtype\":\"field\"},\"Identity\":{\"struct\":[{\"name\":\"document\",\"type\":{\"ref\":\"Text\"}},{\"name\":\"born\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"nationality\",\"type\":{\"ref\":\"Choice<Country>\"}},{\"name\":\"net_worth\",\"type\":{\"uint\":64}},{\"name\":\"expires\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"salt\",\"type\":\"field\"}]},\"Policy\":{\"struct\":[{\"name\":\"today\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"born_by\",\"type\":{\"ref\":\"Date\"}},{\"name\":\"min_net_worth\",\"type\":{\"uint\":64}},{\"name\":\"allowed\",\"type\":{\"ref\":\"Bitfield<Country>\"}}]},\"Text\":{\"encoding\":{\"text\":31},\"newtype\":\"field\"}},\"version\":2}",
+  decodePublic,
+  client: true,
+});
 
-  constructor(
-    private readonly wasm: XarkWasm,
-    private readonly keys: ZkKycKeys,
-  ) {}
-
-  /**
-   * Fetch the build output from `base`, a URL serving a copy of
-   * `target/xark/zk_kyc/` (relative to the page in a browser):
-   * `await ZkKyc.load(wasm, "/circuits/zk_kyc/")`. `only` fetches less
-   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
-   * `client.wasm` is loaded with `initClient`, for the Rust functions.
-   */
-  static async load(
-    wasm: XarkWasm,
-    base: string | URL,
-    only: readonly (keyof ZkKycKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources", "client"],
-    init?: RequestInit,
-  ): Promise<ZkKyc> {
-    const page = (globalThis as { location?: { href: string } }).location?.href;
-    if (!page && !URL.canParse(base)) {
-      throw new Error(`load: ${base} is relative, and there's no page to resolve it against; pass an absolute URL`);
-    }
-    const root = new URL(base, page);
-    if (!root.pathname.endsWith("/")) root.pathname += "/";
-    const keys: Record<string, Uint8Array | string> = {};
-    await Promise.all(
-      only.map(async (part) => {
-        const url = new URL(FILES[part], root);
-        const res = await fetch(url, init);
-        if (!res.ok) {
-          if (part === "sources" && res.status === 404) return;
-          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
-        }
-        if (part === "client") return initClient(await res.arrayBuffer());
-        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
-      }),
-    );
-    return new ZkKyc(wasm, keys as ZkKycKeys);
-  }
-
-  /**
-   * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
-   * check (naming its source line when `sources` was given).
-   */
-  prove(inputs: ZkKycInputs): ZkKycProof {
-    const { circuit, provingKey, sources } = this.keys;
-    if (!circuit || !provingKey) throw new Error("proving needs `circuit` (circuit.xbc) and `provingKey` (pk.bin)");
-    const leaves = this.wasm.encodeInputs(ZkKyc.schema, toJson(inputs));
-    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
-    return { proof: proof.slice(), publicInputs: this.decodePublicInputs(publicInputs), publicInputBytes: publicInputs.slice() };
-  }
-
-  /** Whether `proof` proves these public inputs. */
-  verify(proof: Uint8Array, publicInputs: ZkKycPublicInputs | ZkKycPublicValues | Uint8Array): boolean {
-    const { verifyingKey } = this.keys;
-    if (!verifyingKey) throw new Error("verifying needs `verifyingKey` (vk.bin)");
-    const bytes = publicInputs instanceof Uint8Array ? publicInputs : this.encodePublicInputs(publicInputs);
-    try {
-      return this.wasm.verify(verifyingKey, proof, bytes);
-    } catch {
-      return false; // malformed proof bytes
-    }
-  }
-
-  /** The public inputs as the canonical bytes (`public_inputs.bin`). */
-  encodePublicInputs(publicInputs: ZkKycPublicInputs | ZkKycPublicValues): Uint8Array {
-    return this.wasm.encodePublicInputs(ZkKyc.schema, toJson(publicInputs));
-  }
-
-  /** Canonical public-input bytes, decoded. */
-  decodePublicInputs(bytes: Uint8Array): ZkKycPublicValues {
-    return decodePublic(JSON.parse(this.wasm.decodePublicValues(ZkKyc.schema, bytes)));
-  }
-
-  /**
-   * A value's field elements in input order, as `to_fields()` gives them in
-   * Rust: hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).
-   */
-  fields(type: "Identity", value: Identity): Field[];
-  fields(type: "Policy", value: Policy): Field[];
-  fields(type: string, value: unknown): Field[] {
-    return this.wasm.valueFields(ZkKyc.schema, type, toJson(value)).map((f) => new Field(f));
-  }
-}
-
-// The Rust functions (`#[input]` on an `impl`, here or in a dependency), compiled to `client.wasm`.
-let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
-
-/**
- * Load `client.wasm` (`xark client` writes it beside `circuit.xbc`; `load` fetches
- * it): the circuit's Rust functions. Once, before calling them.
- */
-export async function initClient(wasm: BufferSource | WebAssembly.Module): Promise<void> {
-  const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
-  rust = { module, instance: await WebAssembly.instantiate(module, {}) };
-}
-
-/** Call an exported Rust function with JSON arguments; its result, as JSON. */
-function callRust(name: string, args: unknown[]): any {
-  if (!rust) throw new Error("call `initClient(client.wasm)` before the circuit's Rust functions");
-  const x = rust.instance.exports as any;
-  const input = new TextEncoder().encode(toJson(args));
-  const ptr = x.xark_alloc(input.length);
-  new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
-  let packed: bigint;
-  try {
-    packed = x[name](ptr, input.length);
-  } catch (e) {
-    const message = take(x, x.xark_panic());
-    rust.instance = new WebAssembly.Instance(rust.module, {}); // a panic may leave the heap mid-update
-    throw new Error(message || String(e));
-  }
-  x.xark_free(ptr, input.length);
-  const out = JSON.parse(take(x, packed));
-  if ("err" in out) throw new Error(out.err);
-  return out.ok;
-}
-
-/** The string a Rust function handed over (`ptr << 32 | len`), freed. */
-function take(x: any, packed: bigint): string {
-  const ptr = Number(packed >> 32n);
-  const len = Number(packed & 0xffffffffn);
-  const s = new TextDecoder().decode(new Uint8Array(x.memory.buffer, ptr, len));
-  x.xark_free(ptr, len);
-  return s;
-}
+export type ZkKycProver = Prover<ZkKycInputs, ZkKycPublicInputs, ZkKycPublicValues, ZkKycStructs>;
+export type ZkKycVerifier = Verifier<ZkKycPublicInputs, ZkKycPublicValues, ZkKycStructs>;
+export type ZkKycProof = Proof<ZkKycPublicValues>;
 
 /** `Policy`'s Rust functions (`#[input] impl Policy`), run from `client.wasm`. */
 export const Policy = {
@@ -360,25 +141,25 @@ export const Policy = {
    * with the other constructors.
    */
   on(today: Date): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(callRust("Policy.on", [today])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.on", [today])));
   },
   /**
    * At least `years` old on `today`.
    */
   minAge(policy: Policy, years: number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(callRust("Policy.min_age", [policy, years])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.min_age", [policy, years])));
   },
   /**
    * Worth at least `amount`, in the attestor's unit.
    */
   minNetWorth(policy: Policy, amount: bigint | number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(callRust("Policy.min_net_worth", [policy, amount])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.min_net_worth", [policy, amount])));
   },
   /**
    * A national of one of `allowed` (a country, or a list of them).
    */
   nationalities(policy: Policy, allowed: Country | readonly Country[]): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(callRust("Policy.nationalities", [policy, allowed])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.nationalities", [policy, allowed])));
   },
 };
 
@@ -404,14 +185,13 @@ function withPolicyMethods<T extends object>(value: T): T & PolicyMethods {
   }) as T & PolicyMethods;
 }
 
-
 /** `Identity`'s Rust functions (`#[input] impl Identity`), run from `client.wasm`. */
 export const Identity = {
   /**
    * The issuer's commitment: Poseidon2 over every field, so adding one extends it.
    */
   commitment(identity: Identity): Field {
-    return new Field(callRust("Identity.commitment", [identity]));
+    return new Field(ZkKyc.call("Identity.commitment", [identity]));
   },
 };
 
@@ -429,24 +209,4 @@ function decodePolicy(v: any): PolicyValue {
     minNetWorth: BigInt(v.minNetWorth),
     allowed: v.allowed,
   };
-}
-
-/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
-function toJson(value: unknown): string {
-  return JSON.stringify(value, function (this: any, key: string, v: unknown) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      if (Number.isNaN(raw.getTime())) throw new TypeError(`${key}: invalid Date`);
-      return raw.toISOString().slice(0, 10);
-    }
-    if (typeof raw === "bigint") return raw.toString();
-    if (raw instanceof Uint8Array) return "0x" + Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
-    if (raw instanceof Set) return [...raw];
-    return v;
-  });
-}
-
-function fromHex(s: string): Uint8Array {
-  const h = s.slice(2);
-  return Uint8Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(2 * i, 2 * i + 2), 16));
 }

@@ -88,6 +88,15 @@ gadgets now check more:
   `encodeInputs(schema, …)` first, as generated clients already do. The old
   resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
   limbs) are gone.
+- **Generated clients: a prover, a verifier and a proof.** `ZkKyc.prover(wasm,
+  source)` and `ZkKyc.verifier(wasm, source)` replace `new ZkKyc(wasm, keys)` and
+  `ZkKyc.load`: `source` is a URL serving the build output or its bytes, each has
+  only the methods it can run, and either loads `client.wasm` (no `initClient`
+  step). `prove` returns a `Proof`; `proof.toBytes()` is one blob that
+  `verifier.verify(bytes, required)` and `verifier.decode(bytes)` read. The shared
+  code (`Field`, `Proof`, loading, the Rust-function bridge) is xark-wasm's
+  `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
+  `cube.ts` went from 248 lines to 60.
 - **Field elements are a `Field` class in TypeScript.** Generated clients take and
   return `Field` (replacing `FieldLike` and `bigint`): `new Field(x)` takes a
   `bigint`, a safe integer, a decimal or `0x`-hex string, little-endian bytes

@@ -110,5 +110,5 @@ fn no_functions_no_module() {
     let out_dir = dir.join("target/xark/arithmetic_square");
     assert!(!out_dir.join("client.wasm").exists());
     let ts = std::fs::read_to_string(out_dir.join("arithmetic_square.ts")).unwrap();
-    assert!(!ts.contains("initClient"));
+    assert!(ts.contains("  client: false,") && !ts.contains(".call("));
 }

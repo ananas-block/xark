@@ -2,10 +2,16 @@
 // scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts } from "../artifacts";
-import { Country, Field, Identity, initClient, Policy, ZkKyc } from "./zk_kyc";
+import { Country, Field, Identity, Policy, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
 
-const kyc = new ZkKyc(wasm, artifacts("zk_kyc"));
-beforeAll(() => initClient(artifacts("zk_kyc").client!));
+// Made from the build output, the prover also loads `client.wasm`: the Rust
+// functions (`Policy.on`, `Identity.commitment`) work from then on.
+let prover: ZkKycProver;
+let verifier: ZkKycVerifier;
+beforeAll(async () => {
+  prover = await ZkKyc.prover(wasm, artifacts("zk_kyc"));
+  verifier = await ZkKyc.verifier(wasm, artifacts("zk_kyc"));
+});
 
 // The holder's credential, in the circuit's own types: `Text`, `Date`, a `Country`.
 // A `Date` is read as its UTC day: `new Date("1990-01-01")` is 1990-01-01 anywhere.
@@ -30,15 +36,15 @@ const policy: Policy = {
 };
 
 test("builds the policy and the commitment with the circuit's Rust code", () => {
-  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[xark::export]`.
+  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[input] impl`.
   // (`minNetWorth` is also a field, so it isn't a method on the value: `Policy.minNetWorth(…)`.)
   const adult = Policy.on(new Date("2026-10-20")).minAge(18);
   const built = Policy.minNetWorth(adult, 500_000).nationalities(["US", "GB", "FR", "DE"]);
   expect(built).toEqual({ ...policy, minNetWorth: 500_000n, allowed: ["DE", "FR", "GB", "US"] });
   expect(Policy.minAge(policy, 21).bornBy).toEqual(new Date("2005-10-20"));
   expect(Identity.commitment(id)).toEqual(commitment);
-  const { proof, publicInputs } = kyc.prove({ id, commitment: Identity.commitment(id), policy: built });
-  expect(kyc.verify(proof, publicInputs)).toBe(true);
+  const proof = prover.prove({ id, commitment: Identity.commitment(id), policy: built });
+  expect(verifier.verify(proof, { commitment, policy: built })).toBe(true);
   // A Rust panic is an exception with its message, and the module keeps working.
   expect(() => built.minAge(3000)).toThrow(/a date before year 0/);
   expect(Policy.on(new Date("2024-02-29")).minAge(1).bornBy).toEqual(new Date("2023-02-28"));
@@ -50,14 +56,14 @@ test("countries are typed", () => {
   expect(Country.US).toBe("US");
   // @ts-expect-error: not an ISO 3166 code, so not a `Country` (tsc checks this line)
   const unknown: Country = "XX";
-  expect(() => kyc.prove({ id: { ...id, nationality: unknown }, commitment, policy })).toThrow(
+  expect(() => prover.prove({ id: { ...id, nationality: unknown }, commitment, policy })).toThrow(
     /"XX" is not a Country/,
   );
 });
 
 test("proves a compliant holder", () => {
-  const { proof, publicInputs, publicInputBytes } = kyc.prove({ id, commitment, policy });
-  expect(publicInputs).toEqual({
+  const proof = prover.prove({ id, commitment, policy });
+  expect(proof.publicInputs).toEqual({
     commitment,
     policy: {
       today: new Date("2026-10-20"),
@@ -66,36 +72,45 @@ test("proves a compliant holder", () => {
       allowed: ["DE", "FR", "GB", "US"], // in bit order
     },
   });
-  expect(kyc.verify(proof, publicInputs)).toBe(true);
-  expect(kyc.verify(proof, { commitment, policy })).toBe(true);
-  expect(kyc.verify(proof, publicInputBytes)).toBe(true);
-  expect(kyc.verify(proof, { commitment, policy: { ...policy, allowed: ["US", "GB"] } })).toBe(false);
+  // A verifier checks the proof against the policy it requires: the proof's own
+  // public inputs only say what it proves.
+  const sent = proof.toBytes();
+  expect(verifier.verify(sent, { commitment, policy })).toBe(true);
+  expect(verifier.decode(sent).publicInputs.policy.allowed).toEqual(["DE", "FR", "GB", "US"]);
+  expect(verifier.verify(sent, { commitment, policy: { ...policy, allowed: ["US", "GB"] } })).toBe(false);
 });
 
 test("names the check a holder fails", () => {
   const fails = (rules: Partial<Policy>) => () =>
-    kyc.prove({ id, commitment, policy: { ...policy, ...rules } });
+    prover.prove({ id, commitment, policy: { ...policy, ...rules } });
   expect(fails({ allowed: ["GB", "FR"] })).toThrow(
     /the inputs fail the check at src\/lib\.rs:\d+:\d+: `id\.nationality\.require_in\(policy\.allowed\);`/,
   );
   expect(fails({ bornBy: new Date("1989-12-31") })).toThrow(/`require\(id\.born <= policy\.born_by\);`/);
   expect(fails({ minNetWorth: 2_000_000 })).toThrow(/`require\(id\.net_worth >= policy\.min_net_worth\);`/);
-  expect(() => kyc.prove({ id, commitment: new Field(1), policy })).toThrow(
+  expect(() => prover.prove({ id, commitment: new Field(1), policy })).toThrow(
     /`require_eq\(id\.commitment\(\), commitment\);`/,
   );
 });
 
 test("computes the issuer's commitment as the circuit does", () => {
   // `xark_poseidon2::hash(id.to_fields())`, the circuit's `id.commitment()`.
-  const fields = kyc.fields("Identity", id);
+  const fields = prover.fields("Identity", id);
   expect(fields).toHaveLength(6);
   expect(new Field(wasm.poseidon2(fields.map(String)))).toEqual(commitment);
+  // @ts-expect-error: `fields` takes the circuit's structs by name (tsc checks this line)
+  expect(() => prover.fields("Nope", id)).toThrow();
 });
 
 test("names the input at fault", () => {
   const long = { ...id, document: "a document number past 31 bytes" + "!" };
-  expect(() => kyc.prove({ id: long, commitment, policy })).toThrow(/id\.document.*longer than 31 bytes/);
-  expect(() => kyc.prove({ id, commitment, policy: { ...policy, today: new Date("not a day") } })).toThrow(
+  expect(() => prover.prove({ id: long, commitment, policy })).toThrow(/id\.document.*longer than 31 bytes/);
+  expect(() => prover.prove({ id, commitment, policy: { ...policy, today: new Date("not a day") } })).toThrow(
     /today: invalid Date/,
   );
+});
+
+test("a verifier needs only the verifying key", async () => {
+  const bare = await ZkKyc.verifier(wasm, artifacts("zk_kyc").verifyingKey);
+  expect(bare.verify(prover.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
 });
