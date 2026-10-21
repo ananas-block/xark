@@ -527,14 +527,30 @@ fn major_minor(v: &str) -> (String, String) {
     )
 }
 
-/// A file of the crate (`Cargo.toml`, or anything under `src/`) changed since
-/// `circuit.xbc` in `<crate>/target/xark/<name>/` was built — `cargo test` after
-/// an edit, without `xark test` or `xark build`. Only for that layout; changes
-/// in path dependencies aren't seen.
+/// A source the circuit came from changed since `circuit.xbc` in
+/// `<crate>/target/xark/<name>/` was built — `cargo test` after an edit, without
+/// `xark test` or `xark build`: a file `xark build` listed in `deps` (the crate's
+/// own and its path dependencies', gadgets included), the crate's `Cargo.toml`, or
+/// anything under its `src/`.
 fn newer_source(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let built = std::fs::metadata(dir.join("circuit.xbc"))
         .and_then(|m| m.modified())
         .ok()?;
+    let changed = |p: &std::path::Path| {
+        // A listed file that is gone changed too (moved, or a module removed).
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .map_or(true, |t| t > built)
+    };
+    if let Ok(deps) = std::fs::read_to_string(dir.join("deps"))
+        && let Some(p) = deps
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(std::path::Path::new)
+            .find(|p| changed(p))
+    {
+        return Some(p.to_path_buf());
+    }
     let xark = dir.parent()?;
     let target = xark.parent()?;
     if xark.file_name()? != "xark" || target.file_name()? != "target" {

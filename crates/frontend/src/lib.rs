@@ -336,15 +336,11 @@ impl Default for BuildOptions {
     }
 }
 
-/// [`build_crate`] with [`BuildOptions`].
-pub fn build_crate_with(
-    crate_dir: &std::path::Path,
-    target_dir: &std::path::Path,
-    opts: &BuildOptions,
-) -> Result<Vec<u8>, String> {
+/// The `[package]` name in `crate_dir/Cargo.toml`.
+fn package_name(crate_dir: &std::path::Path) -> Result<String, String> {
     let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml"))
         .map_err(|e| format!("reading {}/Cargo.toml: {e}", crate_dir.display()))?;
-    let name = manifest
+    manifest
         .lines()
         .skip_while(|l| l.trim() != "[package]")
         .find_map(|l| {
@@ -352,7 +348,53 @@ pub fn build_crate_with(
             let v = l.strip_prefix("name")?.trim_start().strip_prefix('=')?;
             Some(v.trim().trim_matches('"').to_string())
         })
-        .ok_or("no package name in Cargo.toml")?;
+        .ok_or_else(|| "no package name in Cargo.toml".into())
+}
+
+/// Every local source file the last [`build_crate_with`] into `target_dir` read: the
+/// circuit crate's, its path dependencies' (gadgets, `xark` itself), from cargo's
+/// dep-info. (Registry crates don't change in place, so cargo leaves them out.)
+pub fn circuit_sources(
+    crate_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    let name = package_name(crate_dir)?.replace('-', "_");
+    let d = target_dir
+        .join("wasm32-unknown-unknown/release")
+        .join(format!("{name}.d"));
+    let text = std::fs::read_to_string(&d).map_err(|e| format!("reading {}: {e}", d.display()))?;
+    Ok(parse_dep_info(&text))
+}
+
+/// The prerequisites of a make-style dep-info file (`out: a b\ c`), unescaped.
+fn parse_dep_info(text: &str) -> Vec<std::path::PathBuf> {
+    let line = text.lines().next().unwrap_or_default();
+    let deps = line.split_once(": ").map_or("", |(_, d)| d);
+    let (mut out, mut cur, mut chars) = (Vec::new(), String::new(), deps.chars());
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => cur.extend(chars.next()),
+            ' ' => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur).into());
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur.into());
+    }
+    out
+}
+
+/// [`build_crate`] with [`BuildOptions`].
+pub fn build_crate_with(
+    crate_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+    opts: &BuildOptions,
+) -> Result<Vec<u8>, String> {
+    let name = package_name(crate_dir)?;
     ensure_wasm_target(crate_dir)?;
     let mut cmd = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()));
     cmd.current_dir(crate_dir)
@@ -454,5 +496,18 @@ fn ensure_wasm_target(crate_dir: &std::path::Path) -> Result<(), String> {
              `rustup target add wasm32-unknown-unknown`"
                 .into(),
         )
+    }
+}
+
+#[cfg(test)]
+mod dep_info_tests {
+    #[test]
+    fn parses_escaped_paths() {
+        let deps =
+            super::parse_dep_info("/t/c.wasm: /a/src/lib.rs /my\\ dir/g.rs\n\n/a/src/lib.rs:\n");
+        assert_eq!(
+            deps,
+            ["/a/src/lib.rs", "/my dir/g.rs"].map(std::path::PathBuf::from)
+        );
     }
 }

@@ -104,9 +104,10 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
 }
 
 /// Everything `xark build` writes (beside the keys and proofs of later commands).
-const BUILD_OUTPUTS: [&str; 9] = [
+const BUILD_OUTPUTS: [&str; 10] = [
     "circuit.xbc",
     "sources.json",
+    "deps",
     "circuit.json",
     "r1cs.json",
     "graph.dot",
@@ -190,6 +191,12 @@ fn build_stable(
     }
     if let Some(entry) = &lowered.entry {
         let _ = std::fs::write(out_abs.join("entry"), entry);
+    }
+    // The source files the circuit came from, gadgets included: how a plain `cargo
+    // test` notices the circuit is out of date (`xark_prover::circuit`).
+    if let Ok(deps) = xark_frontend::circuit_sources(crate_abs, &target_dir) {
+        let list: String = deps.iter().map(|p| format!("{}\n", p.display())).collect();
+        let _ = std::fs::write(out_abs.join("deps"), list);
     }
     if let Some(d) = &digest {
         let _ = std::fs::write(out_abs.join("digest"), format!("{d}\n"));
