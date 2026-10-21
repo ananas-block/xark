@@ -80,7 +80,9 @@ circuit does. `zk_kyc`'s tests make the issuer's commitment with
 
 Every circuit parameter's type implements `xark::Input`, which says how its value
 maps to field elements and how clients see it. Group inputs into structs with
-`#[input]`, including gadget types: `examples/grumpkin_ivc` takes a few
+`#[input]` (which also derives `Clone`, `Copy` and `Debug` unless the type lists
+them; `#[input(no_derive)]` for a type with its own), including gadget types:
+`examples/grumpkin_ivc` takes a few
 `Instance { cw, ce, u, x }` values instead of twenty separate parameters, and
 `to_fields()` hashes one in a single call. The generated `<Fn>Inputs` struct
 holds the same values for `xark::prover::circuit(..).check(..)`, `.prove(..)`
@@ -101,12 +103,10 @@ and each with its natural form in tests, `--inputs` and the TypeScript client:
 
 ```rust
 #[input]
-#[derive(Clone, Copy, Debug)]
 pub struct Identity { document: Text, born: Date, nationality: Choice<Country>, net_worth: u64, expires: Date, salt: Field }
 
 /// A verifier's rules, a public input: one circuit serves every policy.
 #[input]
-#[derive(Clone, Copy, Debug)]
 pub struct Policy { today: Date, born_by: Date, min_net_worth: u64, allowed: Bitfield<Country> }
 
 #[circuit]
@@ -126,7 +126,7 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Polic
 `examples/zk_kyc` is this circuit in full. A `bool` input works too: one field
 element, checked to be 0 or 1.
 
-A type the derive doesn't cover implements `Input` by hand, in one impl that
+A type `#[input]` doesn't cover implements `Input` by hand, in one impl that
 serves the circuit and the host alike:
 
 ```rust

@@ -55,7 +55,6 @@ use xark::{Field, input, require_eq};
 /// `unpack`. `#[input]` derives its host conversions (`[u8; 32]`
 /// → `<name>.limbs[0..2]`) from this declaration.
 #[input(number(bits = 128))]
-#[derive(Clone, Copy, Debug)]
 pub struct Scalar {
     pub limbs: [Field; 2],
 }
@@ -65,7 +64,6 @@ pub struct Scalar {
 /// (flattening to `<name>.x.limbs[i]` / `<name>.y.limbs[i]`) in-circuit. Verify a
 /// signature against it with [`Point::verify`].
 #[input(bytes)]
-#[derive(Clone, Copy, Debug)]
 pub struct Point {
     pub x: Scalar,
     pub y: Scalar,
@@ -74,7 +72,6 @@ pub struct Point {
 /// A P-256 ECDSA signature `(r, s)` — `[u8; 64]` (`r ‖ s`) on the host, `{ r, s }`
 /// in-circuit. Pass it to [`Point::verify`] with the message digest.
 #[input(bytes)]
-#[derive(Clone, Copy, Debug)]
 pub struct Signature {
     pub r: Scalar,
     pub s: Scalar,

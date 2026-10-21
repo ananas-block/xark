@@ -43,13 +43,13 @@ fn a_gadgets_functions_reach_the_client() {
         &tmp.path().join("gadget/src/lib.rs"),
         "#![cfg_attr(xark, no_std)]\nuse xark::prelude::*;\n\
          /// A range of positions.\n\
-         #[input]\n#[derive(Clone, Copy, Debug)]\npub struct Span { pub lo: u32, pub hi: u32 }\n\
+         #[input]\npub struct Span { pub lo: u32, pub hi: u32 }\n\
          #[input]\nimpl Span {\n\
          /// `lo..hi`, checked.\n\
          pub fn new(lo: u32, hi: u32) -> Span { assert!(lo <= hi, \"lo above hi\"); Span { lo, hi } }\n\
          /// How many positions.\n\
          pub fn len(&self) -> u32 { self.hi - self.lo }\n}\n\
-         #[input]\n#[derive(Clone, Copy, Debug)]\npub struct Unused { pub x: Field }\n\
+         #[input]\npub struct Unused { pub x: Field }\n\
          #[input]\nimpl Unused {\npub fn zero() -> Unused { Unused { x: Field::zero() } }\n}\n",
     );
     write(

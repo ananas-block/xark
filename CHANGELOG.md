@@ -49,7 +49,9 @@ gadgets now check more:
   few lines with no `cfg`s. The `#[input]` attribute implements it for a
   struct, and with `#[input(number(bits = B))]` or `#[input(bytes)]` gives one a
   standard encoding plus its host conversions; on a fieldless enum it implements
-  `xark::Enum`, and on an `impl` block it makes client functions (below). This
+  `xark::Enum`, and on an `impl` block it makes client functions (below). It
+  derives `Clone`, `Copy` and `Debug` (and `PartialEq`, `Eq` on an enum) unless
+  the type lists them; `#[input(no_derive)]` leaves them to you. This
   replaces `#[derive(CircuitInput)]`,
   `#[derive(Transparent)]`, `xark::flags!`, `ToFields`, `NativeInput` and the
   per-gadget `wasm::Input` impls. `schema.json` is now version 2, written from

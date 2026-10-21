@@ -626,7 +626,6 @@ mod tests {
     use super::*;
 
     #[crate::input]
-    #[derive(Clone, Copy, Debug, PartialEq)]
     enum Color {
         Red,
         Green,

@@ -300,7 +300,6 @@ pub mod blocks {
 /// `R`'s (decompressing) bytes then `S`'s, so on the host it comes from a `[u8; 64]`:
 /// compressed `R ‖ big-endian S`. Pass it to [`PointL::verify`].
 #[input(bytes)]
-#[derive(Clone, Copy, Debug)]
 pub struct Signature {
     pub r: PointL,
     pub s: Scalar,

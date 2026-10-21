@@ -225,7 +225,6 @@ pub fn multi_scalar_mul(scalars: [Field; K], points: [[Field; 2]; K]) -> [Field;
 /// no non-native limbs — `x`/`y` are ordinary field elements. Flattens to the
 /// leaves `<name>.x` / `<name>.y`.
 #[xark::input]
-#[derive(Clone, Copy, Debug)]
 pub struct Affine {
     pub x: Field,
     pub y: Field,
@@ -256,7 +255,6 @@ mod host {
 /// the error `E`, the slack `u` and the public `x`. Flattens (and so hashes, via
 /// `to_fields`) as `[cw.x, cw.y, ce.x, ce.y, u, x]`.
 #[xark::input]
-#[derive(Clone, Copy, Debug)]
 pub struct Instance {
     pub cw: Affine,
     pub ce: Affine,
@@ -269,7 +267,6 @@ pub struct Instance {
 /// injective. On the host it comes from the whole number (a decimal / `0x`-hex
 /// string, its 32 big-endian bytes, an integer); see [`wide_scalar_mul`].
 #[xark::input(number(bits = 127))]
-#[derive(Clone, Copy, Debug)]
 pub struct WideScalar {
     /// `[lo, hi]`.
     pub limbs: [Field; 2],

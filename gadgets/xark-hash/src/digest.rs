@@ -38,7 +38,6 @@ use xark::{Field, Input, RequireEqCircuit, input};
 /// `#[input]` makes it a circuit input whose 256 bits are leaves
 /// `bits[w][j]`, in that order on the host and in the circuit alike.
 #[input]
-#[derive(Clone, Copy, Debug)]
 pub struct Digest {
     /// 8 words × 32 little-endian bits, identical to the `sha256` gadget output.
     bits: [[Field; 32]; 8],

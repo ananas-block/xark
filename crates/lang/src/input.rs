@@ -6,7 +6,6 @@
 //!
 //! ```ignore
 //! #[input]
-//! #[derive(Clone, Copy, Debug)]
 //! pub struct Identity { pub born: Date, pub net_worth: u64, pub salt: Field }
 //! ```
 //!

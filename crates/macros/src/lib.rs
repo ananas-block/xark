@@ -398,9 +398,12 @@ fn to_pascal(s: &str) -> String {
 ///
 /// ```ignore
 /// #[input]
-/// #[derive(Clone, Copy, Debug)]
 /// pub struct Identity { pub born: Date, pub nationality: Choice<Country>, pub salt: Field }
 /// ```
+///
+/// It derives `Clone`, `Copy` and `Debug` unless the type lists them already (an
+/// enum also `PartialEq` and `Eq`); `#[input(no_derive)]` leaves them to you, for a
+/// type with its own impl of one.
 ///
 /// A struct can be given in a standard encoding instead, with host conversions to
 /// match:
@@ -417,7 +420,6 @@ fn to_pascal(s: &str) -> String {
 ///
 /// ```ignore
 /// #[input]
-/// #[derive(Clone, Copy, Debug, PartialEq)]
 /// pub enum Tier { Retail, Accredited, Institutional }
 /// ```
 ///
@@ -444,31 +446,48 @@ fn to_pascal(s: &str) -> String {
 /// functions to every circuit that takes them.
 #[proc_macro_attribute]
 pub fn input(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as syn::Item);
-    let out = match &item {
+    let mut item = parse_macro_input!(item as syn::Item);
+    let args = match InputArgs::parse(attr.into()) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let out = match &mut item {
         syn::Item::Struct(_) | syn::Item::Enum(_) => {
             let derive: DeriveInput = match syn::parse2(quote! { #item }) {
                 Ok(d) => d,
                 Err(e) => return e.to_compile_error().into(),
             };
+            let attrs = match &mut item {
+                syn::Item::Struct(s) => &mut s.attrs,
+                syn::Item::Enum(e) => &mut e.attrs,
+                _ => unreachable!(),
+            };
+            let enum_ = matches!(derive.data, Data::Enum(_));
+            if !args.no_derive {
+                add_derives(attrs, enum_);
+            }
             match &derive.data {
-                Data::Struct(d) => {
-                    parse_encoding(attr.into()).and_then(|enc| struct_input(&derive, d, enc))
+                Data::Struct(d) => struct_input(&derive, d, args.encoding),
+                Data::Enum(d) if matches!(args.encoding, StructEncoding::Fields) => {
+                    enum_input(&derive, d)
                 }
-                Data::Enum(d) if attr.is_empty() => enum_input(&derive, d),
                 _ => Err(syn::Error::new_spanned(
-                    TokenStream2::from(attr),
-                    "an enum's `#[input]` takes no arguments",
+                    &derive.ident,
+                    "an enum's `#[input]` takes no encoding",
                 )),
             }
         }
-        syn::Item::Impl(block) if attr.is_empty() => export_impl(block),
-        syn::Item::Impl(_) => Err(syn::Error::new_spanned(
-            TokenStream2::from(attr),
+        syn::Item::Impl(block)
+            if !args.no_derive && matches!(args.encoding, StructEncoding::Fields) =>
+        {
+            export_impl(block)
+        }
+        syn::Item::Impl(block) => Err(syn::Error::new_spanned(
+            &block.self_ty,
             "an `impl` block's `#[input]` takes no arguments",
         )),
         other => Err(syn::Error::new_spanned(
-            other,
+            &*other,
             "#[input] goes on a struct, a fieldless enum or an `impl` block",
         )),
     };
@@ -481,35 +500,82 @@ pub fn input(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// `#[input(..)]`'s arguments: an encoding, and `no_derive`.
+struct InputArgs {
+    encoding: StructEncoding,
+    no_derive: bool,
+}
+
+impl InputArgs {
+    fn parse(args: TokenStream2) -> syn::Result<InputArgs> {
+        let mut out = InputArgs {
+            encoding: StructEncoding::Fields,
+            no_derive: false,
+        };
+        let parser = syn::meta::parser(|meta| {
+            if meta.path.is_ident("no_derive") {
+                out.no_derive = true;
+                Ok(())
+            } else if meta.path.is_ident("bytes") {
+                out.encoding = StructEncoding::Bytes;
+                Ok(())
+            } else if meta.path.is_ident("number") {
+                meta.parse_nested_meta(|m| {
+                    if m.path.is_ident("bits") {
+                        let lit: LitInt = m.value()?.parse()?;
+                        out.encoding = StructEncoding::Number(lit.base10_parse()?);
+                        Ok(())
+                    } else {
+                        Err(m.error("expected `bits = <n>`"))
+                    }
+                })
+            } else {
+                Err(meta.error("expected `number(bits = <n>)`, `bytes` or `no_derive`"))
+            }
+        });
+        syn::parse::Parser::parse2(parser, args)?;
+        Ok(out)
+    }
+}
+
+/// Derive what an input type needs and doesn't list yet: `Clone`, `Copy` and
+/// `Debug` (`<Fn>Inputs` debug-prints its fields), and for an enum `PartialEq` and
+/// `Eq` too. One already in a `#[derive(..)]` is left alone; `#[input(no_derive)]`
+/// skips this for a type with its own impls.
+fn add_derives(attrs: &mut Vec<Attribute>, enum_: bool) {
+    let mut have = Vec::new();
+    for a in attrs.iter().filter(|a| a.path().is_ident("derive")) {
+        let _ = a.parse_nested_meta(|m| {
+            if let Some(seg) = m.path.segments.last() {
+                have.push(seg.ident.to_string());
+            }
+            Ok(())
+        });
+    }
+    let mut want = vec![
+        ("Clone", quote! { ::core::clone::Clone }),
+        ("Copy", quote! { ::core::marker::Copy }),
+        ("Debug", quote! { ::core::fmt::Debug }),
+    ];
+    if enum_ {
+        want.push(("PartialEq", quote! { ::core::cmp::PartialEq }));
+        want.push(("Eq", quote! { ::core::cmp::Eq }));
+    }
+    let missing: Vec<_> = want
+        .into_iter()
+        .filter(|(n, _)| !have.iter().any(|h| h == n))
+        .map(|(_, p)| p)
+        .collect();
+    if !missing.is_empty() {
+        attrs.push(syn::parse_quote! { #[derive(#(#missing),*)] });
+    }
+}
+
 /// A struct's encoding, from `#[input(..)]`.
 enum StructEncoding {
     Fields,
     Number(u32),
     Bytes,
-}
-
-fn parse_encoding(args: TokenStream2) -> syn::Result<StructEncoding> {
-    let mut enc = StructEncoding::Fields;
-    let parser = syn::meta::parser(|meta| {
-        if meta.path.is_ident("bytes") {
-            enc = StructEncoding::Bytes;
-            Ok(())
-        } else if meta.path.is_ident("number") {
-            meta.parse_nested_meta(|m| {
-                if m.path.is_ident("bits") {
-                    let lit: LitInt = m.value()?.parse()?;
-                    enc = StructEncoding::Number(lit.base10_parse()?);
-                    Ok(())
-                } else {
-                    Err(m.error("expected `bits = <n>`"))
-                }
-            })
-        } else {
-            Err(meta.error("expected `number(bits = <n>)` or `bytes`"))
-        }
-    });
-    syn::parse::Parser::parse2(parser, args)?;
-    Ok(enc)
 }
 
 fn struct_input(

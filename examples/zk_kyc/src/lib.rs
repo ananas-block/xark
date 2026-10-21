@@ -8,7 +8,6 @@ use xark::prelude::*;
 
 /// What an issuer attests about a holder, committed to as a whole with Poseidon2.
 #[input]
-#[derive(Clone, Copy, Debug)]
 pub struct Identity {
     /// The ID document's number.
     pub document: Text,
@@ -38,7 +37,6 @@ impl Identity {
 /// Policy::on("2026-10-20").min_age(18).min_net_worth(500_000).nationalities([US, GB, FR, DE])
 /// ```
 #[input]
-#[derive(Clone, Copy, Debug)]
 pub struct Policy {
     /// The day of the check: the document mustn't have expired by then.
     pub today: Date,

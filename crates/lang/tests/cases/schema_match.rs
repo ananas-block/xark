@@ -3,15 +3,12 @@
 
 /// A holder's standing.
 #[input]
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Standing {
     Retail,
     Accredited,
 }
 
 #[input]
-
-#[derive(Clone, Copy, Debug)]
 pub struct Holder {
     pub doc: Text,
     pub born: Date,

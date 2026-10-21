@@ -49,14 +49,12 @@ fn input_leaves_are_values_in_input_order() {
 /// native (`u64`, `[u8; 2]`), and the nested struct's leaves appear inline under its
 /// field name.
 #[input]
-#[derive(Clone, Copy, Debug)]
 struct Inner {
     a: u64,
     b: Field,
 }
 
 #[input]
-#[derive(Clone, Copy, Debug)]
 struct Outer {
     inner: Inner,
     tag: [u8; 2],
@@ -133,7 +131,6 @@ use xark::{Private, Public};
 
 /// A holder's standing.
 #[input]
-#[derive(Clone, Copy, Debug, PartialEq)]
 enum Tier {
     Retail,
     Accredited,
@@ -269,7 +266,6 @@ mod exported {
     use xark::prelude::*;
 
     #[input]
-    #[derive(Clone, Copy, Debug)]
     pub struct Window {
         pub from: Date,
         pub to: Date,

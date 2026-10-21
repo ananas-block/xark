@@ -10,7 +10,8 @@
 ///
 /// The 249 codes assigned in 2026, alphabetically; a code assigned later is
 /// appended, so a stored value keeps its meaning.
-#[crate::input] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[crate::input]
+#[derive(Hash, PartialOrd, Ord)]
 #[rustfmt::skip]
 pub enum Country {
     AD, AE, AF, AG, AI, AL, AM, AO, AQ, AR, AS, AT,
