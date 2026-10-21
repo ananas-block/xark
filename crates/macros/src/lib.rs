@@ -434,9 +434,9 @@ fn to_pascal(s: &str) -> String {
 /// #[input]
 /// impl Policy {
 ///     /// A check on `today` that any holder passes.
-///     pub fn on(today: impl Into<Date>) -> Policy { … }
+///     pub fn on(today: impl Into<Date>) -> Policy { /* … */ }
 ///     /// At least `years` old on `today`.
-///     pub fn min_age(self, years: u16) -> Policy { … }
+///     pub fn min_age(self, years: u16) -> Policy { /* … */ }
 /// }
 /// ```
 ///

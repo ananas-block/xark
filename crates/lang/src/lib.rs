@@ -40,8 +40,6 @@ extern crate self as xark;
 /// `Field` methods and operator impls, and the recognized intrinsics.
 pub mod lang;
 
-/// Circuit inputs: the [`Input`] trait and the standard [`input::Type`]s clients map
-/// to their own types.
 pub mod input;
 pub use input::{Enum, Input};
 
@@ -52,7 +50,6 @@ pub mod types;
 pub use types::InvalidValue;
 pub use types::{Bitfield, Choice, Date, Text};
 
-/// Rust functions a generated client calls (`#[input]` on an `impl`). Host builds only.
 #[cfg(not(xark))]
 pub mod client;
 
@@ -92,10 +89,6 @@ macro_rules! __with_prover {
 pub mod country;
 pub use country::Country;
 
-/// The compiler intrinsics — `#[inline(never)]` functions that, in the circuit
-/// build, call the frontend's `xark.*` wasm imports (the `Field` operator/hint ABI). See the module doc
-/// for the constraint-vs-hint distinction. `lang.rs` calls these to back its
-/// `Field` impls; circuit authors use the `Field` methods, not these directly.
 pub mod intrinsics;
 
 /// The stable-frontend circuit build (`--cfg xark` on `wasm32`): the `xark.*` imports

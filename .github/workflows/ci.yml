@@ -46,6 +46,14 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: cargo doc
+        # Broken doc links and examples fail: what docs.rs would render broken.
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --no-deps --workspace --exclude xark-wasm
+          cargo doc --no-deps --manifest-path crates/lang/Cargo.toml
+
       - name: cargo test (release)
         # Release mode is mandatory here: end-to-end Groth16 setup+prove+verify
         # tests (Blake2s, AES128, SHA256, Keccak, ECDSA, ...) are 10–20× slower

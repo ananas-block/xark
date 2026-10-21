@@ -4,7 +4,7 @@
 //! An intrinsic is a plain `#[inline(never)]` function. In the circuit build (`xark`
 //! on `wasm32`) its body calls the matching `xark.*` wasm import, which the frontend
 //! (`xark-frontend`'s `host.rs`) turns into the real R1CS / witness-gen effect. In a
-//! host build it computes the value natively ([`native`]), exactly as the solver
+//! host build it computes the value natively (its `native` module), exactly as the solver
 //! would, so circuit code (a gadget, a helper such as a commitment, a whole
 //! `#[circuit]` body) also runs as plain Rust in tests and services, and a failed
 //! `require` panics there. `lang.rs` wrappers reach it via inlining.
@@ -26,7 +26,7 @@ use crate::lang::Field;
 /// An intrinsic's body: `circuit_op!(circuit, host)` is the `xark.*` import call
 /// in the circuit build (`xark` on `wasm32`) and the native computation in a host
 /// build. Each arm is dropped unexpanded where it doesn't apply, so `crate::wasm`
-/// only has to exist in the wasm build and [`native`] only on the host. (`xark`
+/// only has to exist in the wasm build and `native` only on the host. (`xark`
 /// off `wasm32`, an editor's check, gets the marker.)
 #[cfg(all(xark, target_arch = "wasm32"))]
 macro_rules! circuit_op {
