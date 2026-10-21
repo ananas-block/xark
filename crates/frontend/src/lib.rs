@@ -31,16 +31,8 @@ pub struct Lowered {
     pub sources: xark_ir::SourceMap,
 }
 
-/// Lower a circuit module (`wasm32`, built with `--cfg xark`) to a circuit.
-pub fn lower_wasm(
-    wasm: &[u8],
-    field: xark_ir::FieldSpec,
-    profile: bool,
-) -> CompileResult<LowerOutput> {
-    lower_module(wasm, field, profile, true).map(|l| l.output)
-}
-
-/// [`lower_wasm`], also returning the circuit's name. `notes`: build the
+/// Lower a circuit module (`wasm32`, built with `--cfg xark`) to a circuit, and the
+/// circuit's name. `notes`: build the
 /// constraints' debug notes and internal variable names (only the JSON views show
 /// them; `circuit.xbc` is identical either way).
 pub fn lower_module(
@@ -236,11 +228,7 @@ pub fn write_outputs_in(
             format!("{}\n", xark_ir::profile::to_json_pretty(&prof)),
         )?;
     }
-    let xbc = out
-        .function_xbc
-        .as_ref()
-        .expect("the DAG-function artifact is built for every circuit");
-    std::fs::write(out_dir.join("circuit.xbc"), xbc)
+    std::fs::write(out_dir.join("circuit.xbc"), &out.xbc)
 }
 
 /// Write `sources.json` to `out_dir`: `sources` with paths made relative to the

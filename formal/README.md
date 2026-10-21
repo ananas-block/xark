@@ -1,7 +1,7 @@
 # `formal/` — Lean 4 proofs of gadget soundness
 
 Machine-checked soundness proofs for the R1CS gadgets that xark compiles from
-its frontend gadget crates (`crates/lang-*`), written in **Lean 4** against
+its language and frontend (`crates/lang`, `crates/frontend`), written in **Lean 4** against
 **mathlib**. Covers the field-arithmetic gadgets where SMT / bit-blasting
 blows up and a proof assistant is the right tool.
 
@@ -18,8 +18,8 @@ Each theorem mirrors the exact constraints the Rust builder enforces.
 
 | Theorem | Mirrors | Statement |
 |---------|---------|-----------|
-| `boolean_sound` | `gadgets/boolean.rs::enforce_boolean` | `b * (b - 1) = 0 ↔ b ∈ {0,1}` in any field |
-| `range_unique` | `gadgets/range.rs::decompose_into_bits` | the bit-vector is **uniquely determined** by the recomposed value (no under-constraint slack), for widths `n ≤ 253 = MAX_BITS` |
+| `boolean_sound` | the booleanity row `b·b = b` (`frontend/src/builder.rs::decompose_bits`, `Field::require_bool`) | `b * (b - 1) = 0 ↔ b ∈ {0,1}` in any field |
+| `range_unique` | `frontend/src/builder.rs::decompose_bits` | the bit-vector is **uniquely determined** by the recomposed value (no under-constraint slack), for widths `n ≤ 253 = MAX_BITS` |
 | `bits_unique` | (lemma) | binary recomposition `Σᵢ 2ⁱ·bᵢ` is injective on bit-vectors over `ℕ` |
 
 [`Formal/Bitwise.lean`](Formal/Bitwise.lean) — bitwise primitives (each proves
@@ -27,9 +27,9 @@ the output bit is determined *and* equals the intended boolean op, staying in `{
 
 | Theorem | Mirrors | Statement |
 |---------|---------|-----------|
-| `and_sound` | `gadgets/bitwise.rs::and` (`aᵢ·bᵢ = outᵢ`) | `out ∈ {0,1}` and `out = 1 ↔ a = 1 ∧ b = 1` |
-| `xor_sound` | `gadgets/bitwise.rs::xor` (`(2a)·b = a + b − out`) | constraint pins `out = a + b − 2ab`; `out ∈ {0,1}` and `out = 0 ↔ a = b` |
-| `not_sound` | `gadgets/bitwise.rs::not` (`1 − a`) | `1 − a ∈ {0,1}` and `1 − a = 1 ↔ a = 0` |
+| `and_sound` | `&` on bits (`frontend/src/host.rs::int_bin`, `aᵢ·bᵢ = outᵢ`) | `out ∈ {0,1}` and `out = 1 ↔ a = 1 ∧ b = 1` |
+| `xor_sound` | `frontend/src/builder.rs::emit_xor` (`(2a)·b = a + b − out`) | constraint pins `out = a + b − 2ab`; `out ∈ {0,1}` and `out = 0 ↔ a = b` |
+| `not_sound` | `Field::not` (`lang/src/lang.rs`, `1 − a`) | `1 − a ∈ {0,1}` and `1 − a = 1 ↔ a = 0` |
 
 [`Formal/Arith.lean`](Formal/Arith.lean) — the carry-based gadgets (the new
 content is the carry arithmetic + no-wrap-below-`r` argument):

@@ -29,7 +29,6 @@ num-bigint = "0.4"
 num-bigint = "0.4"
 p256 = "0.13"
 sha2 = "0.10"
-xark-ir = { path = "../../crates/ir", version = "0.3.0" }
 xark-test-harness = { path = "../../crates/test-harness", version = "0.3.0" }
 
 [lints.rust]

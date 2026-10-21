@@ -13,8 +13,7 @@
 //!
 //! Decode half of `xark-frontend`'s `build_function_blob` (`output.rs`); lives in `xark-ir` so both the
 //! `xark` CLI and the compiler can reach it. Parses the container (function defs +
-//! top-level streams) and expands it to a full [`CircuitProgram`], the same shape a
-//! flat `circuit.xbc` yields. Wire format is defined jointly with the encoder; both
+//! top-level streams) and expands it to a full [`CircuitProgram`]. Wire format is defined jointly with the encoder; both
 //! must move together.
 
 use crate::circuit::{CircuitProgram, R1csRow};
@@ -1031,38 +1030,6 @@ pub fn count_templates(b: &[u8]) -> usize {
     decode_compact(b).2.len()
 }
 
-/// Stream the constraints and total the **distinct-variable references** across
-/// all rows — the volume a single-pass streaming analyzer (per-var univariate
-/// accumulation) would have to store (~3 field elements each). Returns
-/// `(rows, total_refs)`. Diagnostic: tells us whether streaming the analyzer can
-/// beat materializing the flat constraints, before building it.
-pub fn stream_ref_count(b: &[u8]) -> (usize, usize) {
-    use rayon::prelude::*;
-    let (_field, _vars, defs, top_c, _top_w, _keep, _num_inputs) = decode_compact(b);
-    top_c
-        .par_iter()
-        .map(|item| {
-            let (mut rows, mut refs) = (0usize, 0usize);
-            expand_c_visit(
-                &defs,
-                std::slice::from_ref(item),
-                &IDENTITY,
-                &mut |row: R1csRow| {
-                    rows += 1;
-                    let mut seen = std::collections::BTreeSet::new();
-                    for lc in [&row.a, &row.b, &row.c] {
-                        for t in &lc.terms {
-                            seen.insert(t.var);
-                        }
-                    }
-                    refs += seen.len();
-                },
-            );
-            (rows, refs)
-        })
-        .reduce(|| (0, 0), |a, b| (a.0 + b.0, a.1 + b.1))
-}
-
 // Per-variable classification flags accumulated by the streaming pass 1.
 const F_SEEN: u8 = 1; // some constraint references this var
 const F_RESTRICTED: u8 = 2; // some referencing row has a≠0 or b≠0 (var not free)
@@ -1486,8 +1453,7 @@ pub fn stream_digest(b: &[u8]) -> u128 {
 /// rows/ops are streamed out of the bytecode and compared in place against the
 /// already-held flat structures; only a dense referenced-var bitset (for the
 /// prune) is allocated. Returns `(constraints, witness_ops, vars)` on success, or
-/// a precise diff `Err`. Replaces the ~2 GB `from_lowered` + `expand_function_blob`
-/// pair the driver's `XARK_VERIFY` used to build.
+/// a precise diff `Err`, with no second ~2 GB copy of the circuit.
 pub fn verify_blob_matches(
     blob: &[u8],
     r1cs: &crate::r1cs::R1csProgram,

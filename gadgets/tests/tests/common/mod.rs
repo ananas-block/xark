@@ -184,7 +184,7 @@ pub fn xark_bin() -> PathBuf {
     xark_tests::xark_bin()
 }
 
-/// A purpose-built circuit crate under `gadgets/tests/examples/<name>`.
+/// An example circuit crate, `examples/<name>`.
 pub fn circuit_crate(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples")

@@ -164,16 +164,7 @@ pub struct PkHeader {
     pub domain: Option<usize>,
 }
 
-impl PkHeader {
-    pub fn g1_len(&self, q: G1Query) -> usize {
-        match q {
-            G1Query::A => self.a_len,
-            G1Query::BG1 => self.b_g1_len,
-            G1Query::H => self.h_len,
-            G1Query::L => self.l_len,
-        }
-    }
-}
+impl PkHeader {}
 
 /// Chunked, in-order access to a proving key's point vectors.
 pub trait PkSource {

@@ -13,7 +13,8 @@
 //! allocation: position 0 is the constant `1`; then every `Public` variable in id
 //! order; then every other variable in id order. Rows keep source order. Any
 //! deviation pairs a witness value with the wrong key point and yields a proof
-//! that fails verification — `tests/ordering.rs` pins this against arkworks.
+//! that fails verification — `tests/prover.rs` pins this against arkworks
+//! (`ordering_contract_matches_arkworks_allocation`, `reordering_variables_breaks_the_proof`).
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -22,7 +23,6 @@ use ark_bn254::Fr;
 use ark_ff::{PrimeField, Zero};
 use rayon::prelude::*;
 use xark_ir::function_decode::ReducedRowStream;
-use xark_ir::primitive::{Var, VarRole};
 use xark_ir::r1cs_stream::RowFile;
 use xark_ir::{FieldConst, LinearCombination, R1csProgram, VarId, Visibility};
 
@@ -71,14 +71,6 @@ impl VarLayout {
             prog.variables
                 .iter()
                 .map(|v| (v.id, v.visibility == Visibility::Public)),
-        )
-    }
-
-    /// The layout for a primitive var table (`PublicInput` ⇒ public).
-    pub fn from_vars(vars: &[Var]) -> Self {
-        Self::new(
-            vars.iter()
-                .map(|v| (v.id, matches!(v.role, VarRole::PublicInput))),
         )
     }
 
@@ -153,11 +145,6 @@ impl RowChunk {
     /// Total stored terms (a memory/volume probe).
     pub fn nnz(&self) -> usize {
         self.cols.len()
-    }
-
-    /// Heap bytes held by this chunk.
-    pub fn heap_bytes(&self) -> usize {
-        self.offsets.capacity() * 4 + self.cols.capacity() * 4 + self.coeffs.capacity() * 32
     }
 
     /// Terms of matrix `m` in local row `row`.

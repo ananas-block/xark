@@ -189,15 +189,6 @@ impl FieldConst {
         }
     }
 
-    /// Absolute value, as a decimal string (for rendering `- 5` vs `+ 5`).
-    pub fn abs_decimal(&self) -> String {
-        match &self.repr {
-            // `unsigned_abs` handles `i64::MIN` without overflow.
-            Repr::Small(i) => i.unsigned_abs().to_string(),
-            Repr::Big(b) => b.value.abs().to_string(),
-        }
-    }
-
     pub fn add(&self, other: &FieldConst) -> FieldConst {
         if let (Repr::Small(a), Repr::Small(b)) = (&self.repr, &other.repr)
             && let Some(s) = a.checked_add(*b)
@@ -244,7 +235,7 @@ impl FieldConst {
     }
 
     /// Single-parse rendering helper: returns `(is_negative, abs_is_one,
-    /// abs_decimal)`. Cheap for the common `Small` case (no BigInt at all).
+    /// |value| as a decimal)`. Cheap for the common `Small` case (no BigInt at all).
     pub fn render_parts(&self) -> (bool, bool, String) {
         match &self.repr {
             Repr::Small(i) => (*i < 0, i.unsigned_abs() == 1, i.unsigned_abs().to_string()),

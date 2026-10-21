@@ -2,7 +2,7 @@ use xark::{circuit, require_eq, Field, Private, Public};
 
 /// A small 3-round MiMC-structured permutation (exponent 3) with key addition,
 /// hand-unrolled. Compiler-feature demo, not the real hash — for cryptographic
-/// MiMC-p/p use the `xark-mimc` gadget crate (see `examples/mimc_gadget`).
+/// MiMC-p/p use the `xark-mimc` gadget crate.
 ///
 /// `state ← (state + k + c_i)^3` per round (`c_0 = 0`), finalized with a key
 /// addition, then constrained to equal the public digest `h`. Round constants are

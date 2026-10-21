@@ -40,7 +40,7 @@ fn main() {
             std::process::exit(1)
         });
     let t_lower = t.elapsed();
-    let xbc = out.function_xbc.as_ref().expect("xbc");
+    let xbc = &out.xbc;
     let out_dir = dir.join("target/xark-stable");
     std::fs::create_dir_all(&out_dir).unwrap();
     std::fs::write(out_dir.join("circuit.xbc"), xbc).unwrap();

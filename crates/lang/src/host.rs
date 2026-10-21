@@ -1,6 +1,7 @@
 //! Host-side helpers for building circuit input values: what the gadgets' `From`
-//! impls (an Ed25519 key's `[u8; 32]` → `PointL`, a scalar's bytes → `Fq`) and the
-//! derives use, so every limb split agrees with the circuit's leaves.
+//! impls (an Ed25519 key's `[u8; 32]` → `PointL`, a scalar's bytes → `Fq`) and
+//! `#[input]`'s `number`/`bytes` encodings use, so every limb split agrees with the
+//! circuit's leaves.
 
 use alloc::vec::Vec;
 

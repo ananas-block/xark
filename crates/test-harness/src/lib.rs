@@ -202,17 +202,6 @@ impl Compiled {
         }
         Ok(())
     }
-
-    /// **Streaming** satisfiability check — like [`check`](Self::check) but
-    /// verifies the witness by streaming each R1CS row out of the compact
-    /// `circuit.xbc` (never materializing the flat system), so peak memory is the
-    /// witness + one row and the walk is parallel. Skips the global
-    /// under-constraint analyzer (a separate soundness pass that must
-    /// materialize) — use [`check`](Self::check) when you want that too.
-    pub fn check_satisfies(&self, inputs: &[(&str, &dyn bignum::LeafInput)]) -> Result<(), String> {
-        let (bytes, id_inputs) = self.resolve_inputs(inputs)?;
-        xark_ir::function_decode::stream_check(&bytes, &id_inputs)
-    }
 }
 
 /// The workspace root, computed from *this* crate's manifest dir (stable no
@@ -400,9 +389,6 @@ fn compile_file_stable(src: &Path, out_name: &str, field: &str, emit_json: bool)
         Ok(l) => {
             xark_frontend::write_outputs(&out_dir, &l.output, emit_json, false)
                 .expect("write outputs");
-            if let Some(entry) = &l.entry {
-                let _ = std::fs::write(out_dir.join("entry"), entry);
-            }
             let _ = std::fs::write(
                 out_dir.join("schema.json"),
                 serde_json::to_string_pretty(&l.schema).unwrap_or_default() + "\n",
@@ -483,11 +469,4 @@ pub fn compile_source(name: &str, src: &str, field: &str) -> Compiled {
     let path = std::env::temp_dir().join(format!("xark_harness_{name}.rs"));
     std::fs::write(&path, src).expect("write temp source");
     compile_file(&path, name, field)
-}
-
-/// [`compile_source`] but with `--emit-json` (for tests reading `r1cs.json` etc.).
-pub fn compile_source_json(name: &str, src: &str, field: &str) -> Compiled {
-    let path = std::env::temp_dir().join(format!("xark_harness_{name}.rs"));
-    std::fs::write(&path, src).expect("write temp source");
-    compile_file_json(&path, name, field)
 }

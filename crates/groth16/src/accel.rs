@@ -173,15 +173,3 @@ pub fn fr_bytes_mut(v: &mut [Fr]) -> &mut [u8] {
     // produced by the same kernels from valid elements.
     unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut u8, std::mem::size_of_val(v)) }
 }
-
-/// Inverse of [`fr_bytes_mut`] (for the worker side).
-pub fn bytes_as_fr_mut(b: &mut [u8]) -> &mut [Fr] {
-    assert_eq!(b.len() % 32, 0);
-    assert_eq!(
-        b.as_ptr() as usize % std::mem::align_of::<Fr>(),
-        0,
-        "unaligned Fr buffer"
-    );
-    // SAFETY: length and alignment checked; contents are limbs written by a peer.
-    unsafe { std::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut Fr, b.len() / 32) }
-}

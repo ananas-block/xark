@@ -22,10 +22,9 @@ pub struct LowerOutput {
     /// `r1cs.constraints`. Empty unless profiling was requested (`--profile`).
     /// Emitted to a **separate** `profile.json`; never mixed into the R1CS.
     pub profile: Vec<ConstraintProfile>,
-    /// When `XARK_FUNCTION_ARTIFACT` is set and the circuit has function calls, the
-    /// complete DAG-compact `VERSION_FUNCTION` container (see `build_function_blob`).
-    /// The writer uses this as `circuit.xbc` verbatim instead of `roll_loops`.
-    pub function_xbc: Option<Vec<u8>>,
+    /// `circuit.xbc`: the DAG-compact `VERSION_FUNCTION` container (see
+    /// `build_function_blob`), written verbatim.
+    pub xbc: Vec<u8>,
     /// Vars allocated inside a `witness_only` region — exempt from `check_pinning`
     /// (pure witness-gen scratch feeding a downstream, separately-pinned result).
     pub witness_only_vars: BTreeSet<VarId>,
@@ -1477,11 +1476,7 @@ pub(crate) fn finish(mut env: Builder, field: FieldSpec, n_inputs: usize) -> Low
         );
     }
     let t = std::time::Instant::now();
-    let function_xbc = if true {
-        Some(build_function_blob(&env, &field, n_inputs))
-    } else {
-        None
-    };
+    let xbc = build_function_blob(&env, &field, n_inputs);
     if std::env::var_os("XARK_FRONTEND_TIME").is_some() {
         eprintln!("FRONTEND_TIME: encode xbc = {:?}", t.elapsed());
     }
@@ -1563,7 +1558,7 @@ pub(crate) fn finish(mut env: Builder, field: FieldSpec, n_inputs: usize) -> Low
         r1cs,
         primitive,
         profile,
-        function_xbc,
+        xbc,
         witness_only_vars: wo,
     }
 }

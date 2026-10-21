@@ -145,7 +145,7 @@ pub struct XarkCircuit {
 }
 
 /// Minimize the R1CS (linear-variable elimination to a fixpoint). **Default ON**;
-/// `XARK_NO_MINIMIZE` (the `--no-minimize` flag) disables it. Both setup and
+/// `XARK_NO_MINIMIZE` disables it. Both setup and
 /// proving route through here so they see the *identical* deterministic circuit.
 /// Elimination is Gaussian, so satisfiability is preserved exactly: the witness
 /// `assign` (keyed by original ids, retained by surviving vars) stays valid, and
@@ -359,7 +359,7 @@ fn prove_and_verify(
 }
 
 // In-crate testing API: lets a circuit author unit-test with plain `cargo test`
-// (via the `xark init` scaffold) — load the built artifacts, feed positional
+// (via the `xark init` scaffold) — load the built artifacts, feed typed
 // inputs, and get back whether a dev-mode Groth16 proof verifies.
 
 /// A built circuit loaded from `target/xark/<name>/`, ready to prove against.

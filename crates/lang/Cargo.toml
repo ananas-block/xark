@@ -22,8 +22,8 @@ path = "src/lib.rs"
 xark-macros = { path = "../macros", version = "0.3.0" }
 
 # Host-only: `From<Field> for ark_bn254::Fr` (so a constructed input `Field` converts to
-# the prover's scalar). Gated on `cfg(not(xark))` — a circuit build stays lean `no_std`
-# and never pulls arkworks.
+# the prover's scalar). Gated on `cfg(not(xark))`: a circuit build never pulls
+# arkworks.
 [target.'cfg(not(xark))'.dependencies]
 ark-bn254 = { version = "0.6", default-features = false, features = ["scalar_field"] }
 ark-ff = { version = "0.6", default-features = false }

@@ -811,7 +811,7 @@ fn nested_arrays() {
 // ---------------------------------------------------------------------------
 
 /// SHA-256 single-block compression: 2-word preimage → 8-word digest via
-/// `sha256_block` (the former `examples/sha256`).
+/// `sha256_block`.
 fn sha256_block_src() -> String {
     String::from(
         r#"#![no_std]
@@ -840,7 +840,7 @@ pub fn circuit(m: Private<[Field; 2]>, d: Public<[Field; 8]>) {
 }
 
 /// Keccak-256 single (already-padded) rate block: 17-lane block → 4-lane digest
-/// via `keccak256_block` (the former `examples/keccak`).
+/// via `keccak256_block`.
 fn keccak_block_src() -> String {
     String::from(
         r#"#![no_std]
@@ -871,7 +871,7 @@ pub fn circuit(words: Private<[Field; 17]>, d: Public<[Field; 4]>) {
 }
 
 /// Variable-length Keccak-256 sponge over a 200-byte message (2 rate blocks) →
-/// 4-lane digest (the former `examples/keccak256`).
+/// 4-lane digest.
 fn keccak256_varlen_src() -> String {
     String::from(
         r#"#![no_std]
@@ -894,7 +894,7 @@ pub fn circuit(msg: Private<[Field; 200]>, d: Public<[Field; 4]>) {
 }
 
 /// BLAKE3 single-block root over a 16-word message + length → 8-word digest via
-/// `blake3_hash_one_block` (the former `examples/blake3`), for the Lean bridge.
+/// `blake3_hash_one_block`, for the Lean bridge.
 fn blake3_block_src() -> String {
     String::from(
         r#"#![no_std]
@@ -924,7 +924,7 @@ pub fn circuit(m: Private<[Field; 16]>, len: Public<Field>, d: Public<[Field; 8]
 }
 
 /// Byte-oriented BLAKE3 over an `n`-byte message → 8-word digest via
-/// `blake3::<n>` (the former `examples/blake3_hash`), for the multi-block vector.
+/// `blake3::<n>`, for the multi-block vector.
 fn blake3_bytes_src(n: usize) -> String {
     format!(
         r#"#![no_std]
@@ -945,8 +945,7 @@ pub fn circuit(msg: Private<[Field; {n}]>, d: Public<[Field; 8]>) {{
     )
 }
 
-/// Unkeyed BLAKE2s single-block over a 16-word message → 8-word digest (the
-/// former `examples/blake2s`).
+/// Unkeyed BLAKE2s single-block over a 16-word message → 8-word digest.
 fn blake2s_block_src() -> String {
     String::from(
         r#"#![no_std]
@@ -997,8 +996,8 @@ pub fn circuit(msg: Private<[Field; {n}]>, d: Public<[Field; 8]>) {{
     )
 }
 
-/// Byte-oriented unkeyed BLAKE2s over an `n`-byte message → 8-word digest (the
-/// former `examples/blake2s_hash`), for the multi-block real-vector bridge.
+/// Byte-oriented unkeyed BLAKE2s over an `n`-byte message → 8-word digest, for the
+/// multi-block real-vector bridge.
 fn blake2s_bytes_src(n: usize) -> String {
     format!(
         r#"#![no_std]
@@ -1335,7 +1334,7 @@ fn keccak_matches_empty_vector() {
 /// Checks (1) correctness by solving the hint program, (2) soundness via the
 /// under-constrained analyzer, and (3) a negative control (a wrong digit is
 /// rejected). Large circuit (~2× keccak_f), so `#[ignore]` by default; run with
-/// `cargo test --features cli --test snapshot -- --ignored keccak256`.
+/// `cargo test --test snapshot -- --ignored keccak256`.
 #[test]
 #[ignore]
 fn keccak256_varlen_matches_real_vector() {

@@ -5,7 +5,7 @@
 //! Every fixture is xark-native end to end: gadget fixtures compile the corresponding
 //! `examples/<gadget>` crate (real SHA-256, AES-128, Keccak, BLAKE2s/3,
 //! Poseidon2, secp256k1 EC ops); ECDSA and the arithmetic/logic fixtures compile
-//! purpose-built crates under `gadgets/tests/examples/<name>`.
+//! the crates under `examples/<name>`.
 //!
 //! For each fixture we build a full, satisfying witness (the solver derives the
 //! internal witness; public *outputs* are recovered from their binding
@@ -167,7 +167,7 @@ fn example_dir(gadget: &str) -> PathBuf {
         .join(gadget)
 }
 
-/// An authored fixture crate under `gadgets/tests/examples/<name>`.
+/// An example circuit crate, `examples/<name>`.
 fn local_dir(name: &str) -> PathBuf {
     manifest_dir().join("../../examples").join(name)
 }

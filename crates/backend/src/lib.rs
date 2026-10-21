@@ -1,5 +1,6 @@
-//! Arkworks Groth16 (BN254) backend — frontend-agnostic (proves any
-//! `ConstraintSynthesizer`; the xark-IR `XarkCircuit` or otherwise).
+//! Groth16 (BN254) keys, the trusted-setup ceremony (`.ptau` + phase 2), key and
+//! proof serialization (including the Solana encoding) and verification for xark
+//! circuits. Setup and proving are `xark-groth16`.
 
 pub mod ceremony;
 pub mod keys;

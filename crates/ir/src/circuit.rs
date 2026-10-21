@@ -49,27 +49,6 @@ pub struct CircuitProgram {
 }
 
 impl CircuitProgram {
-    /// Assemble from the compiler's two lowered views: the R1CS carries the
-    /// factored constraints, the primitive program carries the vars + witness
-    /// program (both share the same `VarId`s and ordering).
-    pub fn from_lowered(r1cs: &R1csProgram, prim: &PrimitiveProgram) -> Self {
-        CircuitProgram {
-            field: prim.field.clone(),
-            vars: prim.vars.clone(),
-            constraints: r1cs
-                .constraints
-                .iter()
-                .map(|c| R1csRow {
-                    a: c.a.clone(),
-                    b: c.b.clone(),
-                    c: c.c.clone(),
-                    note: c.debug.as_ref().and_then(|d| d.note.clone()),
-                })
-                .collect(),
-            witness_gen: prim.witness_gen.clone(),
-        }
-    }
-
     /// The reference-solver view: each R1CS row flattened to an AssertZero
     /// `Expression` via [`expr_from_r1cs`]. Identical to the compiler's
     /// `circuit.json`, so the solver behaves the same from JSON or bytecode.

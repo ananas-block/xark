@@ -9,7 +9,7 @@ use clap::Args;
 use xark_ir::Visibility;
 use xark_ir::primitive::VarRole;
 
-use super::{load_backend_r1cs, load_circuit_auto};
+use super::{load_backend_r1cs, load_primitive};
 use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
@@ -27,7 +27,7 @@ pub struct InspectArgs {
 pub fn run(args: InspectArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
     let (prog, fingerprint) = load_backend_r1cs(&project.circuit_xbc())?;
-    let prim = load_circuit_auto(&project.circuit_xbc()).ok();
+    let prim = load_primitive(&project.circuit_xbc()).ok();
 
     let num_internal = prog
         .variables

@@ -1135,16 +1135,6 @@ pub fn check_cp(
     Ok(())
 }
 
-/// Solve the witness from inputs and check all rows hold.
-pub fn solve_and_check_cp(
-    program: &crate::circuit::CircuitProgram,
-    inputs: &BTreeMap<VarId, String>,
-) -> Result<BTreeMap<VarId, Fp>, SolveError> {
-    let assign = solve_cp(program, inputs)?;
-    check_cp(program, &assign)?;
-    Ok(assign)
-}
-
 /// Reduce an R1CS row `a·b − c` to the univariate `A·v² + B·v + C` obtained by
 /// fixing every variable except `v`. Splitting each of `a`, `b`, `c` into its
 /// `v`-coefficient and the rest gives, for `a = aᵥ·v + a₀` etc.:

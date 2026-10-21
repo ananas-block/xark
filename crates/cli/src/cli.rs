@@ -104,7 +104,7 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
 }
 
 /// Everything `xark build` writes (beside the keys and proofs of later commands).
-const BUILD_OUTPUTS: [&str; 10] = [
+const BUILD_OUTPUTS: [&str; 9] = [
     "circuit.xbc",
     "sources.json",
     "deps",
@@ -112,7 +112,6 @@ const BUILD_OUTPUTS: [&str; 10] = [
     "r1cs.json",
     "graph.dot",
     "profile.json",
-    "entry",
     "digest",
     "schema.json",
 ];
@@ -168,11 +167,10 @@ fn build_stable(
     };
     // The R1CS digest: what the proving/verifying keys depend on, and the same
     // under every supported rustc (docs/toolchain.md).
-    let digest = lowered
-        .output
-        .function_xbc
-        .as_deref()
-        .map(|x| format!("{:032x}", xark_ir::function_decode::stream_digest(x)));
+    let digest = format!(
+        "{:032x}",
+        xark_ir::function_decode::stream_digest(&lowered.output.xbc)
+    );
     if profile {
         xark_frontend::relativize_profile(&mut lowered.output, crate_abs);
     }
@@ -189,18 +187,13 @@ fn build_stable(
         );
         return 1;
     }
-    if let Some(entry) = &lowered.entry {
-        let _ = std::fs::write(out_abs.join("entry"), entry);
-    }
     // The source files the circuit came from, gadgets included: how a plain `cargo
     // test` notices the circuit is out of date (`xark_prover::circuit`).
     if let Ok(deps) = xark_frontend::circuit_sources(crate_abs, &target_dir) {
         let list: String = deps.iter().map(|p| format!("{}\n", p.display())).collect();
         let _ = std::fs::write(out_abs.join("deps"), list);
     }
-    if let Some(d) = &digest {
-        let _ = std::fs::write(out_abs.join("digest"), format!("{d}\n"));
-    }
+    let _ = std::fs::write(out_abs.join("digest"), format!("{digest}\n"));
     let _ = std::fs::write(
         out_abs.join("schema.json"),
         serde_json::to_string_pretty(&lowered.schema).unwrap_or_default() + "\n",
@@ -213,9 +206,7 @@ fn build_stable(
         lowered.output.r1cs.constraints.len(),
         p.witness_gen.len(),
     );
-    if let Some(d) = &digest {
-        eprintln!("{} circuit digest {d}", crate::style::tag());
-    }
+    eprintln!("{} circuit digest {digest}", crate::style::tag());
     eprintln!(
         "{} wrote {}",
         crate::style::tag(),

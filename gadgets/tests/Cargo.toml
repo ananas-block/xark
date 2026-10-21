@@ -33,7 +33,7 @@ ark-ec.workspace = true
 ark-ff.workspace = true
 ark-groth16.workspace = true
 xark-groth16 = { path = "../../crates/groth16" }
-ark-relations.workspace = true
+ark-relations.workspace = true # for `crates/groth16/tests/support/ark.rs`, included by path
 ark-serialize.workspace = true
 ark-snark.workspace = true
 ark-std.workspace = true
@@ -42,17 +42,10 @@ rand_chacha.workspace = true
 rayon = "1"
 sha2.workspace = true
 hex.workspace = true
-num-bigint.workspace = true
 serde_json.workspace = true
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 svm-unit-test = "0.1.8"
 proptest = "1"
-# Reference implementations used as the "expected output" oracle for the
-# NIST / RFC test-vector coverage in `tests/nist_rfc_vectors.rs`.
-sha3 = "0.11"
-blake2 = "0.10"
-blake3 = "1"
-aes = "0.9"
 
 [[bench]]
 name = "groth16"

@@ -19,7 +19,7 @@ fn check(name: &str, constraints: usize) -> xark_frontend::Lowered {
         constraints,
         "{name} constraint count"
     );
-    let xbc = out.function_xbc.as_ref().unwrap();
+    let xbc = &out.xbc;
     xark_ir::function_decode::verify_blob_matches(xbc, &out.r1cs, &out.primitive)
         .unwrap_or_else(|e| panic!("{name}: circuit.xbc != lowering: {e}"));
     l

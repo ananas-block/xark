@@ -170,11 +170,6 @@ fn encode_fq_le(value: &Fq) -> [u8; FIELD_BYTES] {
     bytes.try_into().expect("FIELD_BYTES bytes after resize")
 }
 
-/// Decode 32 little-endian bytes into an Fq element (reduced modulo `p`).
-fn decode_fq_le(bytes: &[u8]) -> Fq {
-    Fq::from_le_bytes_mod_order(bytes)
-}
-
 /// Encode a G1 affine point as 64 bytes: `x (32 LE) || y (32 LE)`.
 /// The point at infinity becomes 64 zero bytes.
 pub fn encode_g1_le(p: &G1Affine) -> [u8; G1_BYTES] {
@@ -186,17 +181,6 @@ pub fn encode_g1_le(p: &G1Affine) -> [u8; G1_BYTES] {
     out[..FIELD_BYTES].copy_from_slice(&encode_fq_le(&x));
     out[FIELD_BYTES..].copy_from_slice(&encode_fq_le(&y));
     out
-}
-
-/// Decode 64 bytes into a G1 affine point. An all-zero buffer decodes to
-/// the point at infinity.
-pub fn decode_g1_le(bytes: &[u8; G1_BYTES]) -> G1Affine {
-    if bytes.iter().all(|b| *b == 0) {
-        return G1Affine::zero();
-    }
-    let x = decode_fq_le(&bytes[..FIELD_BYTES]);
-    let y = decode_fq_le(&bytes[FIELD_BYTES..]);
-    G1Affine::new_unchecked(x, y)
 }
 
 /// Encode a G2 affine point as 128 bytes:
@@ -215,33 +199,12 @@ pub fn encode_g2_le(p: &G2Affine) -> [u8; G2_BYTES] {
     out
 }
 
-/// Decode 128 bytes into a G2 affine point. Wire order: `(c0, c1)` per
-/// Fq2 coordinate (no flip — that quirk was BE-only). An all-zero buffer
-/// decodes to the point at infinity.
-pub fn decode_g2_le(bytes: &[u8; G2_BYTES]) -> G2Affine {
-    if bytes.iter().all(|b| *b == 0) {
-        return G2Affine::zero();
-    }
-    let x_c0 = decode_fq_le(&bytes[0..32]);
-    let x_c1 = decode_fq_le(&bytes[32..64]);
-    let y_c0 = decode_fq_le(&bytes[64..96]);
-    let y_c1 = decode_fq_le(&bytes[96..128]);
-    let x = Fq2::new(x_c0, x_c1);
-    let y = Fq2::new(y_c0, y_c1);
-    G2Affine::new_unchecked(x, y)
-}
-
 /// Encode an Fr scalar as 32 little-endian bytes.
 pub fn encode_fr_le(f: &Fr) -> [u8; FR_BYTES] {
     let big: BigUint = (*f).into();
     let mut bytes = big.to_bytes_le();
     bytes.resize(FR_BYTES, 0);
     bytes.try_into().expect("FR_BYTES bytes after resize")
-}
-
-/// Decode 32 little-endian bytes into an Fr scalar (reduced modulo `r`).
-pub fn decode_fr_le(bytes: &[u8; FR_BYTES]) -> Fr {
-    Fr::from_le_bytes_mod_order(bytes)
 }
 
 /// Assemble the LE VK wire blob the on-chain verifier expects:

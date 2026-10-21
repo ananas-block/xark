@@ -20,7 +20,6 @@ use ark_bn254::{Fq, Fq2, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_ff::{BigInt, BigInteger, Field, One, PrimeField, Zero};
 use ark_serialize::{CanonicalDeserialize, Compress, SerializationError, Validate};
-use rayon::prelude::*;
 use std::sync::OnceLock;
 
 /// `a^e` with a 4-bit fixed window (`e` little-endian limbs).
@@ -196,30 +195,6 @@ pub fn point<A: Decode>(b: &[u8], c: Compress) -> Result<A, SerializationError> 
     match c {
         Compress::Yes => A::decode_compressed(b),
         Compress::No => A::deserialize_with_mode(b, Compress::No, Validate::No),
-    }
-}
-
-/// Decode a run of serialized G1 points (in parallel).
-pub fn g1_points(bytes: &[u8], compressed: bool) -> Result<Vec<G1Affine>, SerializationError> {
-    if compressed {
-        bytes.par_chunks(32).map(g1).collect()
-    } else {
-        bytes
-            .par_chunks(64)
-            .map(|b| G1Affine::deserialize_with_mode(b, Compress::No, Validate::No))
-            .collect()
-    }
-}
-
-/// Decode a run of serialized G2 points (in parallel).
-pub fn g2_points(bytes: &[u8], compressed: bool) -> Result<Vec<G2Affine>, SerializationError> {
-    if compressed {
-        bytes.par_chunks(64).map(g2).collect()
-    } else {
-        bytes
-            .par_chunks(128)
-            .map(|b| G2Affine::deserialize_with_mode(b, Compress::No, Validate::No))
-            .collect()
     }
 }
 

@@ -24,13 +24,13 @@ supplies only the BN254 arithmetic.
 
 ## Usage
 
-Driven via the `xark` CLI (`xark-cli`). The library API in `src/lib.rs` exposes
-`setup`, `prove`, `verify`, and the serialization helpers if you want to embed
-the backend directly.
+Driven via the `xark` CLI (`xark-cli`). The library exposes the key and proof
+types, the `.ptau`/ceremony support, the serialization helpers and `verify`;
+setup and proving are in `xark-groth16`.
 
 ## Determinism
 
-The `test-deterministic` feature seeds proving/setup RNG from a fixed value so
+The `test-deterministic` feature adds `test_rng()`, a fixed-seed RNG, so
 fixtures and differential tests reproduce byte-for-byte. **Do not** enable it in
 production — a real deployment needs a genuine trusted-setup ceremony (see
 `xark ceremony` and `docs/trusted-setup.md`).

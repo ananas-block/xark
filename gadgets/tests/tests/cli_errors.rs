@@ -264,7 +264,7 @@ fn failed_build_removes_the_old_circuit() {
     std::fs::write(&lib, format!("{source}\nfn broken() -> u8 {{ \"\" }}\n")).unwrap();
     let (ok, out) = run_in(&dir, &["build"]);
     assert!(!ok, "a broken source built:\n{out}");
-    for f in ["circuit.xbc", "schema.json", "digest", "entry"] {
+    for f in ["circuit.xbc", "schema.json", "digest"] {
         assert!(!built.join(f).exists(), "{f} survived a failed build");
     }
     let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);

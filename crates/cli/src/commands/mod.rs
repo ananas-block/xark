@@ -534,13 +534,6 @@ pub fn inputs_hint(names: &[&str]) -> String {
     format!("--inputs '{{{body}}}'")
 }
 
-/// Load and parse a `circuit.json` (primitive / witness-gen) file.
-pub fn load_circuit(path: &std::path::Path) -> Result<PrimitiveProgram> {
-    let s = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {} (run `xark build` first?)", path.display()))?;
-    xark_ir::primitive::from_json(&s).with_context(|| format!("parsing {}", path.display()))
-}
-
 /// True if `bytes` is a current `XBC` circuit container: version 2, what `xark
 /// build` writes. (Version 1 came from the removed MIR frontend: rebuild.) The
 /// magic + u16 version guard rejects stale/foreign files so every loader can
@@ -587,21 +580,8 @@ pub fn load_backend_r1cs(xbc_path: &std::path::Path) -> Result<(R1csProgram, Str
 }
 
 /// Load the solver-facing [`PrimitiveProgram`] from a `circuit.xbc`.
-pub fn load_circuit_xbc_parallel(path: &std::path::Path) -> Result<PrimitiveProgram> {
+pub fn load_primitive(path: &std::path::Path) -> Result<PrimitiveProgram> {
     load_circuit_program(path).map(|cp| cp.to_primitive())
-}
-
-/// Load a [`PrimitiveProgram`] from either the binary `circuit.xbc` (default,
-/// via the parallel bytecode expander) or a `circuit.json` — dispatched on the
-/// path's extension. `xark build` always writes `circuit.xbc` and only writes
-/// `circuit.json` under `--emit-json`, so the default backend path resolves to
-/// the `.xbc`; an explicit `--circuit foo.json` still works.
-pub fn load_circuit_auto(path: &std::path::Path) -> Result<PrimitiveProgram> {
-    if path.extension().is_some_and(|e| e == "xbc") {
-        load_circuit_xbc_parallel(path)
-    } else {
-        load_circuit(path)
-    }
 }
 
 /// Best-effort load of `sources.json` (each constraint's source statement) from a
