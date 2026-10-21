@@ -71,6 +71,17 @@ pub struct ExportArgs {
 
 pub fn run(args: ExportArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
+    // The export carries the keys as they are: a newer source means they may be for
+    // an older circuit.
+    if project.circuit_xbc().exists()
+        && let Some(why) = crate::cli::stale_build(&project.xark_dir, "circuit.xbc", None)
+    {
+        eprintln!(
+            "{} {why}: these keys may be for an older circuit (run `xark build` and \
+             `xark setup`, then export again)",
+            crate::style::warn("warning:")
+        );
+    }
     let vk_path = args
         .verifying_key
         .clone()

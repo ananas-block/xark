@@ -260,19 +260,11 @@ fn build(args: &ProfileArgs) -> Result<()> {
     Ok(())
 }
 
-/// The build directory's `profile.json`, when it's current: for `field`, written by
-/// this `xark` (not an older one), after every source the circuit came from (`deps`)
-/// last changed.
+/// The build directory's `profile.json`, when it's current (see
+/// [`stale_build`](crate::cli::stale_build)) and made for `field`.
 fn current_profile(base: &str, field: &str) -> Option<ProfileProgram> {
     let dir = XarkProject::resolve(Some(base.into())).ok()?.xark_dir;
-    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    let made = modified(&dir.join("profile.json"))?;
-    // Without `deps` there's no list of sources to compare with.
-    modified(&dir.join("deps"))?;
-    let exe = std::env::current_exe().ok().and_then(|e| modified(&e));
-    if exe.is_none_or(|t| t > made)
-        || xark_prover::newer_source_than(&dir, "profile.json").is_some()
-    {
+    if crate::cli::stale_build(&dir, "profile.json", Some(field)).is_some() {
         return None;
     }
     read_profile(&dir)

@@ -18,20 +18,24 @@ use super::{CheckArgs, load_circuit_program, load_sources, resolve_input_ids, so
 use crate::xark_project::XarkProject;
 
 pub fn run(args: CheckArgs) -> Result<()> {
-    // Build the circuit (reuses the `xark build` path).
+    // The circuit, through the `xark build` path.
     let mut build_argv = vec![args.crate_dir.clone()];
     if let Some(out) = &args.out {
         build_argv.push("--out".into());
         build_argv.push(out.clone());
     }
-    let code = crate::cli::cmd_build(&build_argv);
-    if code != 0 {
-        bail!("build failed (exit {code}); fix the circuit before `xark check --inputs`");
-    }
-
-    // Locate the freshly built `circuit.xbc` the same way the backend commands
-    // do: from `--out` when given, else the crate's default `target/xark/`.
+    // Locate `circuit.xbc` the same way the backend commands do: from `--out` when
+    // given, else the crate's default `target/xark/`. Build it unless it's current.
     let base = args.out.clone().unwrap_or_else(|| args.crate_dir.clone());
+    let current = XarkProject::resolve(Some(base.clone().into())).is_ok_and(|p| {
+        crate::cli::stale_build(&p.xark_dir, "circuit.xbc", Some("bn254")).is_none()
+    });
+    if !current {
+        let code = crate::cli::cmd_build(&build_argv);
+        if code != 0 {
+            bail!("build failed (exit {code}); fix the circuit before `xark check --inputs`");
+        }
+    }
     let project = XarkProject::resolve(Some(base.into()))?;
     // Expand the self-contained `circuit.xbc` once; the soundness gate solves +
     // checks directly on its R1CS rows (no `to_primitive` flattening).

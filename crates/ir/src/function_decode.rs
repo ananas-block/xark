@@ -800,6 +800,15 @@ struct CompactCore {
     keep_extra: std::collections::BTreeSet<u32>,
 }
 
+/// The field a circuit artifact was built for (its header's name and modulus), or
+/// `None` if `b` isn't one.
+pub fn stream_field(b: &[u8]) -> Option<FieldSpec> {
+    if b.len() < 6 || b[..4] != crate::bytecode::MAGIC {
+        return None;
+    }
+    std::panic::catch_unwind(|| decode_header(b).0).ok()
+}
+
 /// Parse the header through the signature inputs; returns the cursor after them.
 fn decode_header(b: &[u8]) -> (FieldSpec, usize, Vec<Var>, usize) {
     let mut p = 6usize;

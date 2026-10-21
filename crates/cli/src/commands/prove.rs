@@ -444,6 +444,11 @@ fn autobuild_and_setup(
         }
         is_built = project.circuit_xbc().exists();
     }
+    // A build older than its source: rebuild, so the proof is of the circuit as it
+    // is now (a key made for the old one then says to run `xark setup` again).
+    if is_built {
+        crate::cli::rebuild_if_stale(&project.xark_dir)?;
+    }
     // If no crate dir is found, fall through: `load_r1cs` emits the usual
     // clear "run `xark build` first" error.
     if args.proving_key.is_none() && is_built && !pk_path.exists() {

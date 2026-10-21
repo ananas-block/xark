@@ -325,6 +325,8 @@ fn plan_keyed(
 
 pub fn run(args: SetupArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
+    // Keys for a circuit older than its source would prove the wrong thing.
+    crate::cli::rebuild_if_stale(&project.xark_dir)?;
     let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
     let prof = super::dbg_flag("XARK_BUILD_TIME");
     let form = if args.streamable {

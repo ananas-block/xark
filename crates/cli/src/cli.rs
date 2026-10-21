@@ -103,6 +103,91 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
     build_stable(&crate_abs, &out_abs, &pkg_name, &field, profile, emit_json)
 }
 
+/// Why the build in `dir` isn't current, judged by `artifact` (`circuit.xbc`, or
+/// `profile.json` for a profiled build), or `None` when it is: the artifact and the
+/// list of sources it came from (`deps`) exist, no source is newer than it, this
+/// `xark` isn't newer than it (another compiler may build another circuit), and, if
+/// `field` is given, it was built for that field.
+pub fn stale_build(dir: &std::path::Path, artifact: &str, field: Option<&str>) -> Option<String> {
+    let modified = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let Some(made) = modified(&dir.join(artifact)) else {
+        return Some(format!("there is no {artifact}"));
+    };
+    if modified(&dir.join("deps")).is_none() {
+        return Some("there's no record of the sources it came from".into());
+    }
+    if let Some(src) = xark_prover::newer_source_than(dir, artifact) {
+        return Some(format!(
+            "{} changed since it was built",
+            shown(&src).display()
+        ));
+    }
+    let exe = std::env::current_exe().ok().and_then(|e| modified(&e));
+    if exe.is_none_or(|t| t > made) {
+        return Some("this xark is newer than the build".into());
+    }
+    if let Some(field) = field {
+        let want = xark_ir::FieldSpec::named(field);
+        let built = std::fs::read(dir.join("circuit.xbc"))
+            .ok()
+            .and_then(|b| xark_ir::function_decode::stream_field(&b));
+        let same = built.is_some_and(|b| match want.modulus_decimal.as_deref() {
+            Some(m) if want.name == "custom" => b.modulus_decimal == m,
+            _ => b.name == want.name,
+        });
+        if !same {
+            return Some(format!("it was built for another field than {field}"));
+        }
+    }
+    None
+}
+
+/// `path` relative to the current directory when it's under it (`src/lib.rs`), for
+/// messages; else as it is.
+fn shown(path: &std::path::Path) -> std::path::PathBuf {
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|c| c.canonicalize().ok());
+    let full = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    match cwd.as_deref().and_then(|c| full.strip_prefix(c).ok()) {
+        Some(rel) if rel.as_os_str().is_empty() => ".".into(),
+        Some(rel) => rel.to_path_buf(),
+        None => path.to_path_buf(),
+    }
+}
+
+/// Rebuild the circuit in the build directory `xark_dir` (`<crate>/target/xark/<name>/`)
+/// when it's stale, saying why: so a command never uses a circuit older than its
+/// source. A build directory elsewhere (`--out`) is left as it is.
+pub fn rebuild_if_stale(xark_dir: &std::path::Path) -> anyhow::Result<()> {
+    if !xark_dir.join("circuit.xbc").exists() {
+        return Ok(()); // a missing build is the command's own error
+    }
+    let Some(why) = stale_build(xark_dir, "circuit.xbc", None) else {
+        return Ok(());
+    };
+    let krate = xark_dir
+        .parent()
+        .filter(|x| x.file_name() == Some("xark".as_ref()));
+    let krate = krate
+        .and_then(|x| x.parent())
+        .filter(|t| t.file_name() == Some("target".as_ref()))
+        .and_then(|t| t.parent())
+        .filter(|c| c.join("Cargo.toml").is_file());
+    let Some(krate) = krate else {
+        return Ok(());
+    };
+    eprintln!(
+        "{} {why}: running `xark build {}` first…",
+        crate::style::tag(),
+        shown(krate).display()
+    );
+    if cmd_build(&[krate.display().to_string()]) != 0 {
+        anyhow::bail!("the build failed; fix the circuit, then run this again");
+    }
+    Ok(())
+}
+
 /// Everything `xark build` writes (beside the keys and proofs of later commands).
 const BUILD_OUTPUTS: [&str; 9] = [
     "circuit.xbc",
@@ -310,14 +395,18 @@ pub fn cmd_test(args: &[String]) -> i32 {
     let forwarded = args.get(1..).unwrap_or(&[]);
     let build_argv = vec![crate_dir.clone()];
 
-    // Build first so the tests' artifacts are present + current. Build with
-    // `--profile` (also writes `profile.json`, leaving the other artifacts
+    // Build first so the tests' artifacts are present + current, unless they are.
+    // Build with `--profile` (also writes `profile.json`, leaving the other artifacts
     // byte-identical): the test harness reads it to explain which source line /
     // function a failing constraint came from.
-    let code = cmd_build_profile(&build_argv);
-    if code != 0 {
-        eprintln!("xark: build failed; skipping tests");
-        return code;
+    let current = crate::xark_project::XarkProject::resolve(Some(crate_dir.clone().into()))
+        .is_ok_and(|p| stale_build(&p.xark_dir, "profile.json", Some("bn254")).is_none());
+    if !current {
+        let code = cmd_build_profile(&build_argv);
+        if code != 0 {
+            eprintln!("xark: build failed; skipping tests");
+            return code;
+        }
     }
 
     // Run in `--release`: circuit tests drive a full Groth16 setup+prove+verify,

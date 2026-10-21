@@ -197,10 +197,15 @@ verification starter, and the `xark-client` npm package is removed.
   and how to have fewer, and the costliest functions including what they call
   (`commitment → hash → perm`); `--json` carries both. `--html` writes
   `profile.html`: the same breakdown, the costliest lines opening onto their call
-  chains, and the circuit's source with each line shaded by what it costs. A second
-  `xark profile` reuses `profile.json` while no source has changed (and the field
-  and `xark` are the same) instead of building again.
+  chains, and the circuit's source with each line shaded by what it costs.
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
+- **Builds are reused while current, and never used stale.** `xark check
+  --inputs`, `xark test` and `xark profile` skip their build when no source of the
+  circuit has changed since (and the field and `xark` are the same). `xark prove` and
+  `xark setup` rebuild a circuit older than its source, saying which file changed
+  (so a proof or key is never of the old circuit; `prove` then asks for `xark setup`
+  if the circuit changed), and `xark export` warns that its keys may be for an older
+  circuit.
 
 ### Added
 
