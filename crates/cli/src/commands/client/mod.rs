@@ -61,9 +61,10 @@ impl Lang {
             Lang::Ts => "ts",
         }
     }
-    fn generate(self, m: &model::Model) -> Result<String> {
+    /// The client, importing the schema from `schema_file` (a sibling's name).
+    fn generate(self, m: &model::Model, schema_file: &str) -> Result<String> {
         match self {
-            Lang::Ts => ts::generate(m),
+            Lang::Ts => ts::generate(m, schema_file),
         }
     }
 }
@@ -149,7 +150,25 @@ pub fn run(args: ClientArgs) -> Result<()> {
             out.display()
         );
     }
-    std::fs::write(&out, args.lang.generate(&model)?)
+    // The schema beside the client (`zk_kyc.schema.json`), which the client imports:
+    // written together, so the two always agree.
+    let stem = out
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&model.circuit);
+    let schema_file = format!("{stem}.schema.json");
+    let schema_out = out.with_file_name(&schema_file);
+    if let Ok(old) = std::fs::read_to_string(&schema_out)
+        && serde_json::from_str::<Value>(&old).map_or(true, |v| v["circuit"].as_str().is_none())
+    {
+        anyhow::bail!(
+            "{} exists and isn't a circuit schema; refusing to overwrite it (pick another -o path)",
+            schema_out.display()
+        );
+    }
+    std::fs::write(&schema_out, serde_json::to_string_pretty(&schema)? + "\n")
+        .with_context(|| format!("writing {}", schema_out.display()))?;
+    std::fs::write(&out, args.lang.generate(&model, &schema_file)?)
         .with_context(|| format!("writing {}", out.display()))?;
     println!(
         "{}",

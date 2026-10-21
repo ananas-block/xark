@@ -96,7 +96,8 @@ gadgets now check more:
   `verifier.verify(bytes, required)` and `verifier.decode(bytes)` read. The shared
   code (`Field`, `Proof`, loading, the Rust-function bridge) is xark-wasm's
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
-  `cube.ts` went from 248 lines to 60.
+  `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
+  writes beside the client (`cube.schema.json`), which the client imports.
 - **Field elements are a `Field` class in TypeScript.** Generated clients return
   `Field` (replacing `bigint`), and a field input takes a `Field` or a plain integer
   (replacing `FieldLike`), checked the same way. `new Field(x)` takes a `bigint`, a

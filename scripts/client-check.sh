@@ -5,7 +5,8 @@
 #   scripts/client-check.sh --update   # rewrite the committed clients
 #
 # For each example in EXAMPLES: build it, make dev keys, and regenerate its client
-# with `xark client`; the committed `clients/check/<name>/<name>.ts` must
+# with `xark client`; the committed `clients/check/<name>/<name>.ts` (and its
+# `<name>.schema.json`) must
 # match (so a generator change shows up in review). Then typecheck every client and
 # its `<name>.test.ts`, and run them with vitest: prove with typed inputs through xark-wasm,
 # verify, and check that wrong public inputs and unsatisfiable inputs fail.
@@ -24,12 +25,14 @@ for n in $EXAMPLES; do
   "$xark" setup "$d" --insecure-dev-mode --deterministic-rng 1 >> "$tmp/$n.log" 2>&1 ||
     { cat "$tmp/$n.log"; exit 1; }
   (cd "$d" && "$xark" client --out "$tmp/$n.ts") >> "$tmp/$n.log" 2>&1 || { cat "$tmp/$n.log"; exit 1; }
-  if [ "${1:-}" = "--update" ]; then
-    cp "$tmp/$n.ts" "$root/clients/check/$n/$n.ts"
-  elif ! diff -u "$root/clients/check/$n/$n.ts" "$tmp/$n.ts"; then
-    echo "$n: the committed client is stale (run scripts/client-check.sh --update)"
-    stale=1
-  fi
+  for f in "$n.ts" "$n.schema.json"; do
+    if [ "${1:-}" = "--update" ]; then
+      cp "$tmp/$f" "$root/clients/check/$n/$f"
+    elif ! diff -u "$root/clients/check/$n/$f" "$tmp/$f"; then
+      echo "$n: the committed $f is stale (run scripts/client-check.sh --update)"
+      stale=1
+    fi
+  done
 done
 [ $stale -eq 0 ]
 cd "$root/clients/check"

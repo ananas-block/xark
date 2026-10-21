@@ -7,9 +7,11 @@
 // and `xark client` turns them into the types below. Don't edit this file: change
 // the circuit, then rebuild and rerun `xark client`. Values go in their natural
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
-// schema, exactly as `xark prove --inputs` does.
+// schema, `cube.schema.json` (written with this file), exactly as `xark prove --inputs`
+// does.
 
 import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import schema from "./cube.schema.json" with { type: "json" };
 export { Field };
 
 /** Every input of `cube`. */
@@ -42,7 +44,7 @@ export interface CubePublicValues {
  */
 export const Cube = new Circuit<CubeInputs, CubePublicInputs, CubePublicValues, {}>({
   name: "cube",
-  schema: "{\"circuit\":\"cube\",\"inputs\":[{\"name\":\"secret\",\"type\":\"field\",\"visibility\":\"private\"},{\"name\":\"result\",\"type\":\"field\",\"visibility\":\"public\"}],\"public_inputs\":[\"result\"],\"types\":{},\"version\":2}",
+  schema,
   decodePublic,
   client: false,
 });

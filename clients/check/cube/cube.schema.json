@@ -1,0 +1,20 @@
+{
+  "circuit": "cube",
+  "inputs": [
+    {
+      "name": "secret",
+      "type": "field",
+      "visibility": "private"
+    },
+    {
+      "name": "result",
+      "type": "field",
+      "visibility": "public"
+    }
+  ],
+  "public_inputs": [
+    "result"
+  ],
+  "types": {},
+  "version": 2
+}

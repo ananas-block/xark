@@ -141,8 +141,8 @@ export class Verifier<PublicInputs, PublicValues, Structs = {}> extends Session<
 export interface CircuitSpec<PublicValues> {
   /** The circuit's name (`zk_kyc`). */
   name: string;
-  /** Its `schema.json`. */
-  schema: string;
+  /** Its `schema.json`: the parsed object (as the generated client imports it), or its text. */
+  schema: object | string;
   /** Revives decoded public inputs (dates, fields, bytes) from xark-wasm's JSON. */
   decodePublic(json: Json<PublicValues>): PublicValues;
   /** Whether it has Rust functions (`client.wasm`). */
@@ -159,7 +159,7 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
   constructor(spec: CircuitSpec<PublicValues>);
   /** The circuit's name. */
   readonly name: string;
-  /** The circuit's `schema.json`. */
+  /** The circuit's `schema.json`, as text. */
   readonly schema: string;
   prover(
     from: string | URL | ProverArtifacts,

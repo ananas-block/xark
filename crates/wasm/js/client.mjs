@@ -185,10 +185,11 @@ function xarkWasm(options = {}) {
  * verifiers, and runs its Rust functions (`client.wasm`).
  */
 export class Circuit {
-  /** @param {{ name: string, schema: string, decodePublic: (json: any) => any, client: boolean }} spec */
+  /** @param {{ name: string, schema: object | string, decodePublic: (json: any) => any, client: boolean }} spec */
   constructor(spec) {
     this.name = spec.name;
-    this.schema = spec.schema;
+    // xark-wasm takes the schema as text: serialized once, here.
+    this.schema = typeof spec.schema === "string" ? spec.schema : JSON.stringify(spec.schema);
     this.decodePublic = spec.decodePublic;
     this.hasClient = spec.client;
     this.rust = undefined;

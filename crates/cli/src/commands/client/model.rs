@@ -66,8 +66,6 @@ pub struct Model {
     pub structs: BTreeMap<String, Vec<Field>>,
     /// Every enum a `Choice` or `Set` names, its variants in order.
     pub enums: BTreeMap<String, Vec<String>>,
-    /// The `schema.json` text, for xark-wasm.
-    pub schema: String,
     /// The client functions (`#[input]` on an `impl`), run from `client.wasm`.
     pub exports: Vec<Export>,
 }
@@ -104,7 +102,6 @@ impl Model {
             inputs: Vec::new(),
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
-            schema: serde_json::to_string(schema)?,
             exports: Vec::new(),
         };
         for i in schema["inputs"].as_array().into_iter().flatten() {
@@ -229,7 +226,6 @@ impl Model {
                 inputs: Vec::new(),
                 structs: self.structs.clone(),
                 enums: self.enums.clone(),
-                schema: String::new(),
                 exports: Vec::new(),
             };
             if names.iter().any(|n| probe.rust_ty(schema, n).is_err()) {
@@ -479,7 +475,7 @@ mod tests {
         let clash: Vec<_> = m.exports.iter().map(|e| m.shares_field_name(e)).collect();
         assert_eq!(clash, [true, false]);
         // In TypeScript, `day` is only `P.day(value, d)`; `next` is a method too.
-        let ts = super::super::ts::generate(&m).unwrap();
+        let ts = super::super::ts::generate(&m, "c.schema.json").unwrap();
         assert!(ts.contains("export class PValue {"), "{ts}");
         assert!(
             ts.contains("  next(): PValue {\n    return P.next(this);"),

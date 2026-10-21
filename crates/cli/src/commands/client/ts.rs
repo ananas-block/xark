@@ -251,7 +251,7 @@ fn paren(t: &str) -> String {
 }
 
 /// The generated TypeScript module for `m`.
-pub fn generate(m: &Model) -> Result<String> {
+pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
     let circuit = m.circuit.as_str();
     let name = pascal(circuit);
     let mut out = String::new();
@@ -276,7 +276,8 @@ pub fn generate(m: &Model) -> Result<String> {
          // and `xark client` turns them into the types below. Don't edit this file: change\n\
          // the circuit, then rebuild and rerun `xark client`. Values go in their natural\n\
          // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the\n\
-         // schema, exactly as `xark prove --inputs` does.\n",
+         // schema, `{schema_file}` (written with this file), exactly as `xark prove --inputs`\n\
+         // does.\n",
         sig.join(", ")
     );
 
@@ -454,14 +455,13 @@ pub fn generate(m: &Model) -> Result<String> {
          */\n\
          export const {name} = new Circuit<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>({{\n  \
          name: {circuit:?},\n  \
-         schema: {:?},\n  \
+         schema,\n  \
          decodePublic,\n  \
          client: {},\n\
          }});\n\n\
          export type {name}Prover = Prover<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>;\n\
          export type {name}Verifier = Verifier<{name}PublicInputs, {name}PublicValues, {structs}>;\n\
          export type {name}Proof = Proof<{name}PublicValues>;\n",
-        m.schema,
         !m.exports.is_empty(),
     );
     out.push_str(&exports);
@@ -485,6 +485,7 @@ pub fn generate(m: &Model) -> Result<String> {
     Ok(format!(
         "{head}\
          import {{ {} }} from \"{RUNTIME}\";\n\
+         import schema from \"./{schema_file}\" with {{ type: \"json\" }};\n\
          export {{ Field }};\n\n\
          {out}",
         imports.join(", ")
@@ -536,7 +537,7 @@ mod tests {
     #[test]
     fn generates_natural_types() {
         let m = Model::new(&serde_json::from_str(SCHEMA).unwrap()).unwrap();
-        let ts = generate(&m).unwrap();
+        let ts = generate(&m, "kyc_check.schema.json").unwrap();
         for want in [
             "fn kyc_check(id: Private<Identity>, born_before: Public<Date>, allowed: Public<Bitfield<Country>>, doc: Private<[u8; 4]>, commitment: Public<Field>)",
             "export const Country = {\n  AD: \"AD\", US: \"US\",\n} as const;\nexport type Country = (typeof Country)[keyof typeof Country];",
@@ -551,7 +552,8 @@ mod tests {
             "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "import { Circuit, Field, type Bytes, type Json, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nexport { Field };",
+            "import { Circuit, Field, type Bytes, type Json, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.json\" with { type: \"json\" };\nexport { Field };",
+            "  name: \"kyc_check\",\n  schema,\n",
             "export interface KycCheckStructs {\n  Identity: Identity;\n}",
             "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",
             "  client: false,\n});",

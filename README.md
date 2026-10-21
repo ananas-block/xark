@@ -165,7 +165,7 @@ xark test examples/cube
 # Like every command, it defaults to the current directory: inside the crate,
 # plain `xark client` is enough.
 xark client examples/cube
-# → examples/cube/target/xark/cube/cube.ts
+# → examples/cube/target/xark/cube/cube.ts, and the cube.schema.json it imports
 
 # Generate Groth16 keys. With no .ptau this produces an INSECURE dev key
 # (single-party OsRng); pass --ptau-file (or run `xark ceremony`) for production.
@@ -199,8 +199,11 @@ an interface per struct, the inputs, the public inputs as given and as decoded, 
 the circuit, which makes its provers and verifiers. What every client shares
 (`Field`, `Proof`, loading xark-wasm and the build output) is xark-wasm's
 `@blueshift-gg/xark-wasm/client`, so the file holds only the circuit, and an app
-imports only the file. Each type is
-the one you'd write by hand:
+imports only the file. Beside it, `xark client` writes the schema the file imports
+(`zk_kyc.schema.json`, `import schema from "./zk_kyc.schema.json" with { type: "json" }`):
+the two are written together, so they always agree, and a bundler packs the JSON
+in. TypeScript needs `"resolveJsonModule": true` and `module` `esnext`, `nodenext`
+or `preserve`. Each type is the one you'd write by hand:
 
 ```ts
 export const Country = { AD: "AD", AE: "AE", /* … */ US: "US", ZW: "ZW" } as const;
