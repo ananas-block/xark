@@ -195,7 +195,9 @@ verification starter, and the `xark-client` npm package is removed.
   constraints.
 - `xark profile` ends with a breakdown by kind of constraint, saying what each is
   and how to have fewer, and the costliest functions including what they call
-  (`commitment → hash → perm`); `--json` carries both.
+  (`commitment → hash → perm`); `--json` carries both. `--html` writes
+  `profile.html`: the same breakdown, the costliest lines opening onto their call
+  chains, and the circuit's source with each line shaded by what it costs.
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
 
 ### Added

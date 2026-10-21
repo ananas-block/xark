@@ -188,6 +188,10 @@ xark export examples/cube
 # Validate a circuit WITHOUT emitting artifacts — subset violations as rustc
 # diagnostics with source spans (great for editors / CI).
 xark check examples/cube
+
+# Where the constraints go: by source line, function and kind, each kind explained.
+# --html also writes target/xark/<name>/profile.html, the source shaded by cost.
+xark profile examples/zk_kyc --html
 ```
 
 ### Typed clients

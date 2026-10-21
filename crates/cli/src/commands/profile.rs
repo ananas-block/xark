@@ -31,6 +31,10 @@ pub struct ProfileArgs {
     /// Emit the aggregated drill-down as JSON instead of the human-readable tree.
     #[arg(long, default_value_t = false)]
     pub json: bool,
+    /// Also write `profile.html` beside the build: the breakdown, with the circuit's
+    /// source shaded by what each line costs.
+    #[arg(long, default_value_t = false)]
+    pub html: bool,
 }
 
 pub fn run(args: ProfileArgs) -> Result<()> {
@@ -67,7 +71,185 @@ pub fn run(args: ProfileArgs) -> Result<()> {
     } else {
         print_tree(&agg);
     }
+    if args.html {
+        let name = project
+            .xark_dir
+            .file_name()
+            .map_or("circuit".into(), |n| n.to_string_lossy().into_owned());
+        let path = project.xark_dir.join("profile.html");
+        std::fs::write(&path, html(&agg, &name, Path::new(&profile.source_root)))
+            .with_context(|| format!("writing {}", path.display()))?;
+        eprintln!(
+            "{} wrote {}",
+            crate::style::tag(),
+            crate::style::brand(&path.display().to_string())
+        );
+    }
     Ok(())
+}
+
+/// The breakdown as one self-contained HTML page: what kinds of constraints the
+/// circuit has, the costliest functions and lines (each opening onto its call
+/// chains), and the circuit's source with each line shaded by what it costs.
+fn html(agg: &Aggregate, name: &str, source_root: &Path) -> String {
+    use std::fmt::Write as _;
+    let total = agg.total.max(1);
+    let share = |n: u64| 100.0 * n as f64 / total as f64;
+    let bar = |n: u64| {
+        format!(
+            "<div class=bar><i style=\"width:{:.1}%\"></i></div>",
+            share(n)
+        )
+    };
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        "<!doctype html>\n<html lang=en><head><meta charset=utf-8>\
+         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
+         <title>{name} constraints</title><style>{}</style></head><body><main>\
+         <header><p class=eyebrow>xark profile</p><h1>{name}</h1>\
+         <p class=total><b>{}</b> constraints from <b>{}</b> source lines</p></header>",
+        include_str!("profile.css"),
+        thousands(agg.total),
+        agg.lines.len(),
+        name = esc(name),
+    );
+
+    out.push_str("<section><h2>By kind</h2><div class=rows>");
+    for &(kind, n) in &agg.kinds {
+        let _ = write!(
+            out,
+            "<div class=row><span class=pct>{}</span>{}<span class=n>{}</span>\
+             <span class=label>{}</span><p class=why>{}</p></div>",
+            pct(n, total),
+            bar(n),
+            thousands(n),
+            kind_name(kind),
+            esc(explain(kind)),
+        );
+    }
+    out.push_str("</div></section>");
+
+    if !agg.functions.is_empty() {
+        out.push_str(
+            "<section><h2>Costliest functions</h2><p class=total>Each with everything it \
+             calls; a function only ever called by the one before it shares its row.</p>\
+             <div class=rows>",
+        );
+        for (path, n) in agg.functions.iter().take(10) {
+            let _ = write!(
+                out,
+                "<div class=row><span class=pct>{}</span>{}<span class=n>{}</span>\
+                 <code class=label>{}</code></div>",
+                pct(*n, total),
+                bar(*n),
+                thousands(*n),
+                esc(&path.join(" → ")),
+            );
+        }
+        out.push_str("</div></section>");
+    }
+
+    // The source files the lines are in, numbered for anchors (`#f0-L96`).
+    let files: Vec<&str> = {
+        let mut f: Vec<&str> = agg.lines.iter().map(|l| l.file.as_str()).collect();
+        f.sort();
+        f.dedup();
+        f
+    };
+    let anchor = |file: &str, line: u32| {
+        let i = files.iter().position(|f| *f == file).unwrap_or(0);
+        format!("f{i}-L{line}")
+    };
+
+    out.push_str("<section><h2>Costliest lines</h2>");
+    for l in agg.lines.iter().take(25) {
+        let _ = write!(
+            out,
+            "<details><summary><span class=pct>{}</span>{}<span class=n>{}</span>\
+             <a href=\"#{}\">{}</a><code>{}</code></summary><table class=chains>",
+            pct(l.total, total),
+            bar(l.total),
+            thousands(l.total),
+            anchor(&l.file, l.line),
+            esc(&locator(&l.file, l.line)),
+            esc(&l.src),
+        );
+        for c in &l.chains {
+            let chain = if c.chain.is_empty() {
+                "(the statement itself)".to_string()
+            } else {
+                c.chain.join(" → ")
+            };
+            let _ = write!(
+                out,
+                "<tr><td class=n>{}</td><td><code>{}</code></td><td>{}</td></tr>",
+                thousands(c.total),
+                esc(&chain),
+                esc(&kinds_str(&c.kinds)),
+            );
+        }
+        out.push_str("</table></details>");
+    }
+    out.push_str("</section>");
+
+    // Each file, every line shaded by its cost relative to the costliest line.
+    let max = agg.lines.iter().map(|l| l.total).max().unwrap_or(1).max(1);
+    out.push_str("<section><h2>Source</h2>");
+    for file in &files {
+        let path = if Path::new(file).is_absolute() {
+            PathBuf::from(file)
+        } else {
+            source_root.join(file)
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let costs: BTreeMap<u32, u64> = agg
+            .lines
+            .iter()
+            .filter(|l| l.file == *file)
+            .map(|l| (l.line, l.total))
+            .collect();
+        let _ = write!(out, "<h3>{}</h3><div class=src><table>", esc(file));
+        for (i, src) in text.lines().enumerate() {
+            let line = i as u32 + 1;
+            let cost = costs.get(&line).copied();
+            let heat = cost.map_or(0.0, |n| (n as f64 / max as f64).sqrt());
+            let _ = write!(
+                out,
+                "<tr id=\"{}\" style=\"--h:{heat:.3}\"><td class=ln>{line}</td>\
+                 <td class=cost>{}</td><td>{}</td></tr>",
+                anchor(file, line),
+                cost.map(thousands).unwrap_or_default(),
+                esc(src),
+            );
+        }
+        out.push_str("</table></div>");
+    }
+    out.push_str("</section></main></body></html>\n");
+    out
+}
+
+/// `1234567` → `1,234,567`.
+fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `s` safe in HTML text and attribute values.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// The aggregated drill-down: per user line, per function chain, per kind.
@@ -511,6 +693,45 @@ mod tests {
                 ("le".to_string(), 5),
                 ("require".to_string(), 1),
             ]
+        );
+    }
+
+    #[test]
+    fn html_shades_the_source_and_escapes_it() {
+        let dir = std::env::temp_dir().join(format!("xark-profile-html-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "fn a() {}\nlet x = a < b && c;\n").unwrap();
+        let c = |id, kind| xark_ir::profile::ConstraintProfile {
+            id,
+            file: "src/lib.rs".into(),
+            line: 2,
+            col: 1,
+            chain: chain(&["le"]),
+            kind,
+        };
+        let profile = ProfileProgram {
+            source_root: dir.display().to_string(),
+            constraints: vec![
+                c(0, ConstraintKind::Comparison),
+                c(1, ConstraintKind::RangeCheck),
+            ],
+        };
+        let page = html(&aggregate(&profile), "a<b", &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            page.starts_with("<!doctype html>")
+                && page.contains("<title>a&lt;b constraints</title>")
+        );
+        // The costly line links to its row in the source, which is shaded and escaped.
+        assert!(page.contains("<a href=\"#f0-L2\">lib.rs:2</a>"), "{page}");
+        assert!(page.contains("<tr id=\"f0-L2\" style=\"--h:1.000\"><td class=ln>2</td><td class=cost>2</td><td>let x = a &lt; b &amp;&amp; c;</td></tr>"), "{page}");
+        assert!(
+            page.contains("<tr id=\"f0-L1\" style=\"--h:0.000\">"),
+            "{page}"
+        );
+        assert_eq!(
+            (thousands(1_234_567), thousands(999), thousands(0)),
+            ("1,234,567".into(), "999".into(), "0".into())
         );
     }
 
