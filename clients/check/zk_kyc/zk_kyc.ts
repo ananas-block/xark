@@ -61,7 +61,7 @@ export interface Identity {
   netWorth: bigint | number;
   /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
   expires: Date;
-  salt: Field;
+  salt: Field | bigint | number | string;
 }
 
 /** A `Policy` (an input struct). */
@@ -79,22 +79,55 @@ export interface Policy {
 /** Every input of `zk_kyc`. */
 export interface ZkKycInputs {
   id: Identity;
-  commitment: Field;
+  commitment: Field | bigint | number | string;
   policy: Policy;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface ZkKycPublicInputs {
-  commitment: Field;
+  commitment: Field | bigint | number | string;
   policy: Policy;
 }
 
-/** A `Policy`, decoded. */
-export interface PolicyValue {
+/** A `Policy`, decoded, with its Rust methods. */
+export class PolicyValue {
   today: Date;
   bornBy: Date;
   minNetWorth: bigint;
   allowed: Country[];
+
+  constructor(v: {
+    today: Date;
+    bornBy: Date;
+    minNetWorth: bigint;
+    allowed: Country[];
+  }) {
+    this.today = v.today;
+    this.bornBy = v.bornBy;
+    this.minNetWorth = v.minNetWorth;
+    this.allowed = v.allowed;
+  }
+
+  /**
+   * At least `years` old on `today`.
+   */
+  minAge(years: number): PolicyValue {
+    return Policy.minAge(this, years);
+  }
+
+  /**
+   * A national of one of `allowed` (a country, or a list of them).
+   */
+  nationalities(allowed: Country | readonly Country[]): PolicyValue {
+    return Policy.nationalities(this, allowed);
+  }
+
+  /**
+   * Worth at least `amount`, in the attestor's unit.
+   */
+  worthAtLeast(amount: bigint | number): PolicyValue {
+    return Policy.worthAtLeast(this, amount);
+  }
 }
 
 /** The public inputs, decoded from a proof. */
@@ -138,50 +171,28 @@ export const Policy = {
    * A check on `today` that any holder with a valid document passes: tighten it
    * with the other constructors.
    */
-  on(today: Date): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [today])));
+  on(today: Date): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [today]));
   },
   /**
    * At least `years` old on `today`.
    */
-  minAge(policy: Policy, years: number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_age", [policy, years])));
+  minAge(policy: Policy, years: number): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_age", [policy, years]));
+  },
+  /**
+   * A national of one of `allowed` (a country, or a list of them).
+   */
+  nationalities(policy: Policy, allowed: Country | readonly Country[]): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.nationalities", [policy, allowed]));
   },
   /**
    * Worth at least `amount`, in the attestor's unit.
    */
-  minNetWorth(policy: Policy, amount: bigint | number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_net_worth", [policy, amount])));
-  },
-  /**
-   * A national of one of `allowed` (a country, or a list of them).
-   */
-  nationalities(policy: Policy, allowed: Country | readonly Country[]): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.nationalities", [policy, allowed])));
+  worthAtLeast(policy: Policy, amount: bigint | number): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.worth_at_least", [policy, amount]));
   },
 };
-
-/**
- * `Policy`'s Rust methods, on a value its functions return: `Policy.…(…).method(…)`.
- * A method named like a field is only `Policy.method(value, …)`.
- */
-export interface PolicyMethods {
-  /**
-   * At least `years` old on `today`.
-   */
-  minAge(years: number): PolicyValue & PolicyMethods;
-  /**
-   * A national of one of `allowed` (a country, or a list of them).
-   */
-  nationalities(allowed: Country | readonly Country[]): PolicyValue & PolicyMethods;
-}
-
-function withPolicyMethods<T extends object>(value: T): T & PolicyMethods {
-  return Object.defineProperties(value, {
-    minAge: { value(this: Policy, years: number) { return Policy.minAge(this, years); } },
-    nationalities: { value(this: Policy, allowed: Country | readonly Country[]) { return Policy.nationalities(this, allowed); } },
-  }) as T & PolicyMethods;
-}
 
 /** `Identity`'s Rust functions (`#[input] impl Identity`), run from `client.wasm`. */
 export const Identity = {
@@ -201,10 +212,10 @@ function decodePublic(v: Json<ZkKycPublicValues>): ZkKycPublicValues {
 }
 
 function decodePolicy(v: Json<PolicyValue>): PolicyValue {
-  return {
+  return new PolicyValue({
     today: new Date(v.today),
     bornBy: new Date(v.bornBy),
     minNetWorth: BigInt(v.minNetWorth),
     allowed: v.allowed,
-  };
+  });
 }

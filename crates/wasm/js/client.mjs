@@ -117,6 +117,10 @@ export function toJson(value) {
       return raw.toISOString().slice(0, 10);
     }
     if (typeof raw === "bigint") return raw.toString();
+    // A number past 2^53 has already lost digits: refuse it rather than prove another.
+    if (typeof raw === "number" && !Number.isSafeInteger(raw)) {
+      throw new RangeError(`${key || "value"}: ${raw} is not a safe integer (pass a bigint)`);
+    }
     if (raw instanceof Uint8Array) return "0x" + Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
     return v;
   });
@@ -198,7 +202,7 @@ export class Circuit {
     if (!parts.circuit || !parts.provingKey) {
       throw new Error(`a ${this.name} prover needs \`circuit\` (circuit.xbc) and \`provingKey\` (pk.bin)`);
     }
-    if (parts.client) await this.initClient(parts.client);
+    if (parts.client) await this.ready(parts.client);
     return new Prover(this, wasm, parts);
   }
 
@@ -210,12 +214,17 @@ export class Circuit {
         ? { verifyingKey: from }
         : from;
     if (!parts.verifyingKey) throw new Error(`a ${this.name} verifier needs \`verifyingKey\` (vk.bin)`);
-    if (parts.client) await this.initClient(parts.client);
+    if (parts.client) await this.ready(parts.client);
     return new Verifier(this, wasm, parts);
   }
 
-  /** Load `client.wasm` (a prover or verifier made from a URL already has). */
-  async initClient(wasm) {
+  /** Load `client.wasm`, from a URL serving the build output or its bytes. */
+  async ready(from, options) {
+    let wasm = from;
+    if (isLocation(from)) {
+      wasm = (await fetchParts(from, ["client"], options)).client;
+      if (!wasm) throw new Error(`no client.wasm at ${from}: run \`xark client\` and serve its output`);
+    }
     const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
     this.rust = { module, instance: await WebAssembly.instantiate(module, {}) };
   }
@@ -225,7 +234,7 @@ export class Circuit {
     const rust = this.rust;
     if (!rust) {
       throw new Error(
-        `${name} runs from client.wasm: make a prover or verifier from a URL serving it, or call initClient first`,
+        `${name} runs from client.wasm: \`await ${this.name}.ready(url)\` first (making a prover or verifier from a URL does it)`,
       );
     }
     const x = rust.instance.exports;

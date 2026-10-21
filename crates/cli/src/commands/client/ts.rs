@@ -10,7 +10,7 @@
 //!
 //! | standard type          | as given                      | decoded       |
 //! |------------------------|-------------------------------|---------------|
-//! | field                  | `Field` (checked when made)   | `Field`       |
+//! | field                  | `Field`, or an integer        | `Field`       |
 //! | `uN`                   | `number` (`bigint` past 32)   | `number`/`bigint` |
 //! | bool                   | `boolean`                     | `boolean`     |
 //! | bytes                  | `Uint8Array`, numbers, `0x…`  | `Uint8Array`  |
@@ -21,7 +21,7 @@
 //! | set of `E`             | `E \| readonly E[]`           | `E[]`         |
 //! | array, tuple, struct   | arrays, an interface          | the same      |
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use anyhow::Result;
@@ -65,7 +65,7 @@ fn prop(name: &str) -> String {
 /// The TS type a caller passes for `ty`.
 fn input(ty: &Ty) -> String {
     match ty {
-        Ty::Field => "Field".into(),
+        Ty::Field => "Field | bigint | number | string".into(),
         Ty::Uint(w) if *w <= 32 => "number".into(),
         Ty::Uint(_) => "bigint | number".into(),
         Ty::Bool => "boolean".into(),
@@ -160,44 +160,23 @@ fn note(ty: &Ty) -> Option<String> {
     })
 }
 
-/// The client functions (`#[input]` on an `impl`): per type, an object of typed functions running
-/// the Rust code in `client.wasm` (`Policy.on(day)`), and on values they return, the
-/// type's `self` methods (`Policy.on(day).minAge(18)`). Plus the loader they share.
-fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
-    if m.exports.is_empty() {
-        return String::new();
-    }
-    let circuit = pascal(&m.circuit);
+/// The client functions (`#[input]` on an `impl`): per type, an object of typed functions
+/// running the Rust code in `client.wasm` (`Policy.on(day)`). Also returned: per type,
+/// its `self` methods as class members of its decoded value, so they chain on
+/// whatever a function returns (`Policy.on(day).minAge(18)`).
+fn exports_ts(
+    m: &Model,
+    value_structs: &mut BTreeSet<String>,
+) -> (String, BTreeMap<String, String>) {
     let mut out = String::new();
+    let mut methods: BTreeMap<String, String> = BTreeMap::new();
+    let circuit = pascal(&m.circuit);
     let mut types: Vec<&str> = Vec::new();
     for e in &m.exports {
         if !types.contains(&e.ty.as_str()) {
             types.push(&e.ty);
         }
     }
-    let field_named = |t: &str, name: &str| {
-        m.structs
-            .get(t)
-            .is_some_and(|fs| fs.iter().any(|f| ts_key(&f.name) == camel(name)))
-    };
-    // Methods ride on values a function returns, so only a type something returns
-    // gets them.
-    let with_methods = |t: &str| {
-        m.exports
-            .iter()
-            .any(|e| e.returns == Ty::Struct(t.to_string()))
-            && m.exports
-                .iter()
-                .any(|e| e.ty == t && e.receiver.is_some() && !field_named(t, &e.name))
-    };
-    // A result, typed and revived (with its type's methods when it has some).
-    let result = |ty: &Ty, call: String, value_structs: &mut BTreeSet<String>| match ty {
-        Ty::Struct(r) if with_methods(r) => (
-            format!("{} & {r}Methods", value(ty, value_structs)),
-            format!("with{r}Methods({})", revive(ty, &call)),
-        ),
-        _ => (value(ty, value_structs), revive(ty, &call)),
-    };
     let jsdoc = |doc: &str, indent: &str| {
         if doc.is_empty() {
             return String::new();
@@ -210,15 +189,12 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
         d
     };
     for t in types {
-        let fns: Vec<_> = m.exports.iter().filter(|e| e.ty == t).collect();
         let this = camel(&t.to_lowercase());
         let _ = writeln!(
             out,
             "/** `{t}`'s Rust functions (`#[input] impl {t}`), run from `client.wasm`. */\nexport const {t} = {{"
         );
-        let mut methods = String::new();
-        let mut binds = String::new();
-        for e in &fns {
+        for e in m.exports.iter().filter(|e| e.ty == t) {
             let params: Vec<String> = e
                 .params
                 .iter()
@@ -231,34 +207,29 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
                 all_params.insert(0, format!("{this}: {t}"));
                 all_names.insert(0, this.clone());
             }
-            // Typed as the JSON of what it returns (its value type, without methods).
-            let wire = value(&e.returns, value_structs);
+            let ret = value(&e.returns, value_structs);
             let call = format!(
-                "{circuit}.call<Json<{wire}>>({:?}, [{}])",
+                "{circuit}.call<Json<{ret}>>({:?}, [{}])",
                 e.export,
                 all_names.join(", ")
             );
-            let (ret, body) = result(&e.returns, call, value_structs);
             out.push_str(&jsdoc(&e.doc, "  "));
             let _ = writeln!(
                 out,
-                "  {}({}): {ret} {{\n    return {body};\n  }},",
+                "  {}({}): {ret} {{\n    return {};\n  }},",
                 camel(&e.name),
-                all_params.join(", ")
+                all_params.join(", "),
+                revive(&e.returns, &call)
             );
             // A method named like one of the type's fields can't sit on a value beside
-            // it (in Rust they don't clash): it stays `Type.method(value, …)` only.
-            if e.receiver.is_some() && !field_named(t, &e.name) {
-                methods.push_str(&jsdoc(&e.doc, "  "));
+            // it (in Rust they don't clash): it stays `Type.method(value, …)` only,
+            // and `xark client` says so.
+            if e.receiver.is_some() && !m.shares_field_name(e) {
+                let body = methods.entry(t.to_string()).or_default();
+                body.push_str(&jsdoc(&e.doc, "  "));
                 let _ = writeln!(
-                    methods,
-                    "  {}({}): {ret};",
-                    camel(&e.name),
-                    params.join(", ")
-                );
-                let _ = writeln!(
-                    binds,
-                    "    {n}: {{ value(this: {t}, {p}) {{ return {t}.{n}(this{a}); }} }},",
+                    body,
+                    "  {n}({p}): {ret} {{\n    return {t}.{n}(this{a});\n  }}\n",
                     n = camel(&e.name),
                     p = params.join(", "),
                     a = names.iter().map(|n| format!(", {n}")).collect::<String>(),
@@ -266,18 +237,8 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
             }
         }
         out.push_str("};\n\n");
-        if with_methods(t) {
-            let _ = writeln!(
-                out,
-                "/**\n * `{t}`'s Rust methods, on a value its functions return: `{t}.…(…).method(…)`.\n * \
-                 A method named like a field is only `{t}.method(value, …)`.\n */\n\
-                 export interface {t}Methods {{\n{methods}}}\n\n\
-                 function with{t}Methods<T extends object>(value: T): T & {t}Methods {{\n  \
-                 return Object.defineProperties(value, {{\n{binds}  }}) as T & {t}Methods;\n}}\n"
-            );
-        }
     }
-    out
+    (out, methods)
 }
 
 /// `a | b` → `(a | b)` where it needs the parentheses (an array element).
@@ -405,26 +366,58 @@ pub fn generate(m: &Model) -> Result<String> {
     body.push_str("}\n\n");
     decode.push_str("  };\n}\n\n");
     // The client functions (their decoders join the ones below).
-    let exports = exports_ts(m, &mut value_structs);
+    let (exports, methods) = exports_ts(m, &mut value_structs);
 
-    // Decoded structs (closed over what the public inputs and exports reach).
+    // Decoded structs (closed over what the public inputs and exports reach): a
+    // class when the type has Rust methods, so they chain on its values.
     let mut done = BTreeSet::new();
     let mut structs = String::new();
     while let Some(r) = value_structs.iter().find(|r| !done.contains(*r)).cloned() {
         done.insert(r.clone());
-        let _ = writeln!(
-            structs,
-            "/** A `{r}`, decoded. */\nexport interface {r}Value {{"
-        );
-        let mut dec = format!("function decode{r}(v: Json<{r}Value>): {r}Value {{\n  return {{\n");
+        let mut fields = String::new();
+        let mut revived = String::new();
         for f in &m.structs[&r] {
             let k = ts_key(&f.name);
-            let _ = writeln!(structs, "  {k}: {};", value(&f.ty, &mut value_structs));
-            let _ = writeln!(dec, "    {k}: {},", revive(&f.ty, &format!("v.{k}")));
+            let _ = writeln!(fields, "  {k}: {};", value(&f.ty, &mut value_structs));
+            let _ = writeln!(revived, "    {k}: {},", revive(&f.ty, &format!("v.{k}")));
         }
-        structs.push_str("}\n\n");
-        dec.push_str("  };\n}\n\n");
-        decode.push_str(&dec);
+        let (doc, open, close) = match methods.get(&r) {
+            Some(_) => (
+                format!("A `{r}`, decoded, with its Rust methods"),
+                format!("new {r}Value({{"),
+                "})",
+            ),
+            None => (format!("A `{r}`, decoded"), "{".to_string(), "}"),
+        };
+        let _ = writeln!(
+            decode,
+            "function decode{r}(v: Json<{r}Value>): {r}Value {{\n  return {open}\n{revived}  }}{};\n}}\n",
+            &close[1..],
+        );
+        match methods.get(&r) {
+            Some(body) => {
+                let assign: String = m.structs[&r]
+                    .iter()
+                    .map(|f| format!("    this.{k} = v.{k};\n", k = ts_key(&f.name)))
+                    .collect();
+                let _ = writeln!(
+                    structs,
+                    "/** {doc}. */\nexport class {r}Value {{\n{fields}\n  \
+                     constructor(v: {{\n{inner}  }}) {{\n{assign}  }}\n\n{body}}}\n",
+                    inner = fields
+                        .lines()
+                        .map(|l| format!("  {l}\n"))
+                        .collect::<String>(),
+                    body = body.trim_end_matches('\n').to_string() + "\n",
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    structs,
+                    "/** {doc}. */\nexport interface {r}Value {{\n{fields}}}\n"
+                );
+            }
+        }
     }
     out.push_str(&structs);
     out.push_str(&body);
@@ -550,7 +543,7 @@ mod tests {
             "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
             "  /** One `Country`. */\n  home: Country;",
             "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
-            "  pair: readonly [Field, number];",
+            "  pair: readonly [Field | bigint | number | string, number];",
             "  active: boolean;",
             "  bornBefore: Date;",
             "  allowed: Country | readonly Country[];",

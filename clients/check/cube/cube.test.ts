@@ -6,7 +6,8 @@ import { Field as KycField } from "../zk_kyc/zk_kyc";
 
 // The BN254 scalar field modulus: p + 3 would prove as 3 if it wrapped.
 const p = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const inputs = { secret: new Field(3), result: new Field(27) };
+// A field input takes a `Field` or a plain integer; decoded values are `Field`s.
+const inputs = { secret: 3, result: 27 };
 
 let prover: CubeProver;
 let verifier: CubeVerifier;
@@ -22,7 +23,7 @@ test("proves and verifies", () => {
   expect(verifier.verify(proof)).toBe(true);
   // Against the public inputs a verifier requires.
   expect(verifier.verify(proof, { result: new Field(27) })).toBe(true);
-  expect(verifier.verify(proof, { result: new Field(28) })).toBe(false);
+  expect(verifier.verify(proof, { result: 28 })).toBe(false);
 });
 
 test("a proof travels as one blob", () => {
@@ -40,7 +41,13 @@ test("a proof travels as one blob", () => {
 });
 
 test("refuses bad inputs", () => {
-  expect(() => prover.prove({ ...inputs, result: new Field(28) })).toThrow();
+  expect(() => prover.prove({ ...inputs, result: 28 })).toThrow();
+  // Checked as a `Field` would be, naming the input: never wrapped or rounded.
+  expect(() => prover.prove({ ...inputs, secret: p + 3n })).toThrow(/secret/);
+  expect(() => prover.prove({ ...inputs, secret: -1 })).toThrow(/secret/);
+  expect(() => prover.prove({ ...inputs, secret: 2 ** 53 + 2 })).toThrow(/secret: .* is not a safe integer/);
+  expect(() => prover.prove({ ...inputs, secret: "three" })).toThrow(/secret/);
+  expect(prover.prove({ secret: new Field(3), result: 27n }).publicInputs.result.equals(27)).toBe(true);
 });
 
 test("a Field is checked when it's made", () => {

@@ -118,7 +118,7 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Polic
 }
 
 // In a test:
-// let policy = Policy::on("2026-10-20").min_age(18).min_net_worth(500_000).nationalities([US, GB, FR, DE]);
+// let policy = Policy::on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE]);
 // zk_kyc(id, id.commitment(), policy)
 ```
 
@@ -212,15 +212,16 @@ export interface Identity {
   nationality: Country;        // Country.US, or "US"; "XX" won't compile
   netWorth: bigint | number;   // u64, in the attestor's unit
   expires: Date;
-  salt: Field;                 // a field element, checked when made
+  salt: Field | bigint | number | string; // a field element
 }
 ```
 
-A field element is a `Field`: `new Field(x)` takes a `bigint`, a safe integer, a
-decimal or `0x`-hex string, or little-endian bytes (as proofs and Rust's
-`Field::from_le_bytes` have them; `Field.fromBeBytes` for the other order), and
-throws unless it's below the field's modulus, so a value that would wrap never
-reaches the prover. Decoded public inputs and Rust functions return `Field`s too.
+A field input takes a plain integer (a `bigint`, a safe integer, a decimal or
+`0x`-hex string) or a `Field`; either way it must be below the field's modulus, so a
+value that would wrap or round never reaches the prover, and a mistake names the
+input. `new Field(x)` checks it where you make it, and also takes little-endian
+bytes (as proofs and Rust's `Field::from_le_bytes` have them; `Field.fromBeBytes`
+for the other order). Decoded public inputs and Rust functions return `Field`s.
 
 A prover and a verifier are separate, each made from a URL serving a copy of
 `target/xark/<circuit>/` or from the bytes, so each has only the methods it can
@@ -261,15 +262,17 @@ impl Policy {
 ```
 
 `xark client` builds the crate's host code once more as `client.wasm` (beside
-`circuit.xbc`; a prover or verifier made from a URL fetches it, or pass it as
-`client`), with no JS glue, and
+`circuit.xbc`; a prover or verifier made from a URL fetches it, or
+`await ZkKyc.ready(url)` loads it alone), with no JS glue, and
 each call runs it: values cross in their natural forms, a Rust panic arrives as an
 exception with its message. Parameters and results are any `Input` type. It
 works from any crate: a gadget that puts `#[input]` on its types and their `impl`s
 brings those functions to the client of every circuit that takes them, with
-nothing added to xark. A method
-that takes `self` also chains on the values these functions return, unless it shares
-a field's name (`Policy.minNetWorth(policy, 500_000)` then).
+nothing added to xark. A method that takes `self` is also a method on the values
+these functions return and on decoded public inputs, so a chain reads as in Rust:
+`Policy.on(today).minAge(18).worthAtLeast(500_000)`. A method named like a field
+can't be both in TypeScript: it stays `Policy.method(value, …)`, and `xark client`
+warns, so you can rename it.
 
 The client holds no encoding logic of its own: xark-wasm encodes values against
 the embedded schema with the same Rust code as `xark prove --inputs`, so the two

@@ -311,6 +311,16 @@ impl Model {
     pub fn public(&self) -> impl Iterator<Item = &Field> {
         self.inputs.iter().filter(|(_, p)| *p).map(|(f, _)| f)
     }
+
+    /// Whether `e` is a method named like one of its type's fields: in Rust they
+    /// don't clash, but a value in most client languages can't have both.
+    pub fn shares_field_name(&self, e: &Export) -> bool {
+        e.receiver.is_some()
+            && self
+                .structs
+                .get(&e.ty)
+                .is_some_and(|fs| fs.iter().any(|f| f.name == e.name))
+    }
 }
 
 /// `A,B<C,D>,[E;2]` split at its top-level commas.
@@ -448,5 +458,34 @@ mod tests {
         let other = r#"{"export":"Q.g","type":"Q","name":"g","self":null,"params":[{"name":"x","type":"Nope"}],"returns":"P","doc":""}"#;
         assert_eq!(m.add_exports(&schema, other).unwrap(), ["Q::g"]);
         assert_eq!(m.exports.len(), 2);
+    }
+
+    #[test]
+    fn a_method_named_like_a_field_stays_a_function() {
+        let schema: Value = serde_json::from_str(
+            r#"{"version": 2, "circuit": "c",
+              "inputs": [{"name": "p", "visibility": "public", "type": {"ref": "P"}}],
+              "types": {"P": {"struct": [{"name": "day", "type": {"uint": 8}}]}},
+              "public_inputs": ["p.day"]}"#,
+        )
+        .unwrap();
+        let mut m = Model::new(&schema).unwrap();
+        m.add_exports(
+            &schema,
+            r#"{"export":"P.day","type":"P","name":"day","self":"value","params":[{"name":"d","type":"u8"}],"returns":"P","doc":""}
+{"export":"P.next","type":"P","name":"next","self":"value","params":[],"returns":"P","doc":""}"#,
+        )
+        .unwrap();
+        let clash: Vec<_> = m.exports.iter().map(|e| m.shares_field_name(e)).collect();
+        assert_eq!(clash, [true, false]);
+        // In TypeScript, `day` is only `P.day(value, d)`; `next` is a method too.
+        let ts = super::super::ts::generate(&m).unwrap();
+        assert!(ts.contains("export class PValue {"), "{ts}");
+        assert!(
+            ts.contains("  next(): PValue {\n    return P.next(this);"),
+            "{ts}"
+        );
+        assert!(ts.contains("  day(p: P, d: number): PValue {"), "{ts}");
+        assert!(!ts.contains("  day(d: number)"), "{ts}");
     }
 }

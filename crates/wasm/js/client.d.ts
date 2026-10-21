@@ -27,9 +27,11 @@ export class Field {
  */
 export type Json<T> = T extends Field | bigint | Date | Uint8Array
   ? string
-  : T extends object
+  : T extends readonly unknown[]
     ? { [K in keyof T]: Json<T[K]> }
-    : T;
+    : T extends object
+      ? { [K in keyof T as T[K] extends (...args: never[]) => unknown ? never : K]: Json<T[K]> }
+      : T;
 
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
@@ -168,8 +170,12 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
     from: string | URL | Uint8Array | VerifierArtifacts,
     options?: LoadOptions,
   ): Promise<Verifier<PublicInputs, PublicValues, Structs>>;
-  /** Load `client.wasm` yourself (a prover or verifier made from a URL does). */
-  initClient(wasm: ClientWasm): Promise<void>;
+  /**
+   * Load `client.wasm`, the circuit's Rust functions, from a URL serving the build
+   * output or from its bytes. Making a prover or verifier from a URL does it; call
+   * this to use the functions before, or without, either.
+   */
+  ready(from: string | URL | ClientWasm, options?: LoadOptions): Promise<void>;
   /**
    * Run one of the circuit's Rust functions (the generated client calls it): its
    * result as JSON, `R` being the `Json<…>` of the function's return type.

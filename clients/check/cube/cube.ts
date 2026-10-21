@@ -14,13 +14,13 @@ export { Field };
 
 /** Every input of `cube`. */
 export interface CubeInputs {
-  secret: Field;
-  result: Field;
+  secret: Field | bigint | number | string;
+  result: Field | bigint | number | string;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface CubePublicInputs {
-  result: Field;
+  result: Field | bigint | number | string;
 }
 
 /** The public inputs, decoded from a proof. */

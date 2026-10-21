@@ -97,11 +97,18 @@ gadgets now check more:
   code (`Field`, `Proof`, loading, the Rust-function bridge) is xark-wasm's
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
   `cube.ts` went from 248 lines to 60.
-- **Field elements are a `Field` class in TypeScript.** Generated clients take and
-  return `Field` (replacing `FieldLike` and `bigint`): `new Field(x)` takes a
-  `bigint`, a safe integer, a decimal or `0x`-hex string, little-endian bytes
-  (`Field.fromBeBytes` for big-endian) or another `Field`, and throws unless it's an integer below the modulus, instead of
-  failing later in the prover. A `Field` from one generated client passes to another.
+- **Field elements are a `Field` class in TypeScript.** Generated clients return
+  `Field` (replacing `bigint`), and a field input takes a `Field` or a plain integer
+  (replacing `FieldLike`), checked the same way. `new Field(x)` takes a `bigint`, a
+  safe integer, a decimal or `0x`-hex string, little-endian bytes
+  (`Field.fromBeBytes` for big-endian) or another `Field`, and throws unless it's an
+  integer below the modulus. A number past 2^53 is refused, not rounded.
+- **Rust methods chain as in Rust.** A type's `self` methods are methods on the
+  values its functions return and on decoded public inputs (a generated
+  `PolicyValue` class): `Policy.on(today).minAge(18).worthAtLeast(500_000)`. A
+  method named like a field stays `Policy.method(value, …)`, and `xark client`
+  warns. zk_kyc's `Policy::min_net_worth` is now `worth_at_least`.
+  `await ZkKyc.ready(url)` loads `client.wasm` without a prover or verifier.
 - **Builds show where the constraints go.** `xark build` lists the three source
   lines that cost the most constraints. `xark profile` ends with a breakdown by
   kind, saying what each kind is and how to have fewer of them, and the

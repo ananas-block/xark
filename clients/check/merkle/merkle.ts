@@ -14,17 +14,17 @@ export { Field };
 
 /** Every input of `merkle`. */
 export interface MerkleInputs {
-  leaf: Field;
+  leaf: Field | bigint | number | string;
   /** Exactly 4 elements. */
-  siblings: readonly Field[];
+  siblings: readonly (Field | bigint | number | string)[];
   /** Exactly 4 elements. */
-  indexBits: readonly Field[];
-  root: Field;
+  indexBits: readonly (Field | bigint | number | string)[];
+  root: Field | bigint | number | string;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface MerklePublicInputs {
-  root: Field;
+  root: Field | bigint | number | string;
 }
 
 /** The public inputs, decoded from a proof. */

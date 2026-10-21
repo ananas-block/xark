@@ -32,7 +32,7 @@ impl Identity {
 /// picks its own rules with no new circuit.
 ///
 /// ```ignore
-/// Policy::on("2026-10-20").min_age(18).min_net_worth(500_000).nationalities([US, GB, FR, DE])
+/// Policy::on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE])
 /// ```
 #[input]
 pub struct Policy {
@@ -69,7 +69,7 @@ impl Policy {
     }
 
     /// Worth at least `amount`, in the attestor's unit.
-    pub fn min_net_worth(self, amount: u64) -> Policy {
+    pub fn worth_at_least(self, amount: u64) -> Policy {
         Policy {
             min_net_worth: amount,
             ..self
@@ -116,7 +116,7 @@ mod tests {
     fn policy() -> Policy {
         Policy::on("2026-10-20")
             .min_age(18)
-            .min_net_worth(500_000)
+            .worth_at_least(500_000)
             .nationalities([US, GB, FR, DE])
     }
 

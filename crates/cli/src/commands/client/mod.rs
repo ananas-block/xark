@@ -105,6 +105,15 @@ pub fn run(args: ClientArgs) -> Result<()> {
                         crate::style::tag()
                     );
                 }
+                for e in model.exports.iter().filter(|e| model.shares_field_name(e)) {
+                    eprintln!(
+                        "{} `{t}::{n}` has a field's name, so it can't be a method on a `{t}` \
+                         in the client (only `{t}.{n}(value, …)`): rename it to chain it",
+                        crate::style::warn("warning:"),
+                        t = e.ty,
+                        n = e.name,
+                    );
+                }
                 if model.exports.is_empty() {
                     let _ = std::fs::remove_file(&path);
                 } else {

@@ -1,7 +1,7 @@
 // The generated `zk_kyc` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
 import { artifacts } from "../artifacts";
-import { Country, Field, Identity, Policy, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
+import { Country, Field, Identity, Policy, PolicyValue, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
 
 // Made from the build output, the prover also loads `client.wasm`: the Rust
 // functions (`Policy.on`, `Identity.commitment`) work from then on.
@@ -35,11 +35,11 @@ const policy: Policy = {
 };
 
 test("builds the policy and the commitment with the circuit's Rust code", () => {
-  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[input] impl`.
-  // (`minNetWorth` is also a field, so it isn't a method on the value: `Policy.minNetWorth(…)`.)
-  const adult = Policy.on(new Date("2026-10-20")).minAge(18);
-  const built = Policy.minNetWorth(adult, 500_000).nationalities(["US", "GB", "FR", "DE"]);
-  expect(built).toEqual({ ...policy, minNetWorth: 500_000n, allowed: ["DE", "FR", "GB", "US"] });
+  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[input] impl`: the
+  // same chain as in Rust.
+  const built = Policy.on(new Date("2026-10-20")).minAge(18).worthAtLeast(500_000).nationalities(["US", "GB", "FR", "DE"]);
+  expect(built).toBeInstanceOf(PolicyValue);
+  expect({ ...built }).toEqual({ ...policy, minNetWorth: 500_000n, allowed: ["DE", "FR", "GB", "US"] });
   expect(Policy.minAge(policy, 21).bornBy).toEqual(new Date("2005-10-20"));
   expect(Identity.commitment(id)).toEqual(commitment);
   const proof = prover.prove({ id, commitment: Identity.commitment(id), policy: built });
@@ -62,6 +62,8 @@ test("countries are typed", () => {
 
 test("proves a compliant holder", () => {
   const proof = prover.prove({ id, commitment, policy });
+  // Decoded, the policy has its Rust methods too.
+  expect(proof.publicInputs.policy.minAge(21).bornBy).toEqual(new Date("2005-10-20"));
   expect(proof.publicInputs).toEqual({
     commitment,
     policy: {
@@ -112,4 +114,10 @@ test("names the input at fault", () => {
 test("a verifier needs only the verifying key", async () => {
   const bare = await ZkKyc.verifier(artifacts("zk_kyc").verifyingKey);
   expect(bare.verify(prover.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
+});
+
+test("ready() loads the Rust functions on their own", async () => {
+  await expect(ZkKyc.ready("http://127.0.0.1:1/")).rejects.toThrow();
+  await ZkKyc.ready(artifacts("zk_kyc").client!);
+  expect(Identity.commitment(id)).toEqual(commitment);
 });
