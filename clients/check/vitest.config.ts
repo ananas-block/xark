@@ -1,10 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-// `npm test`: builds what the clients need (setup.ts), checks the committed clients
-// are current (clients.test.ts), typechecks everything, runs each example's
-// `<name>/<name>.test.ts` through xark-wasm's node build, and `browser/` in
-// headless Chromium through its web build. `npm run update` rewrites stale clients.
+// `npm test` (the `node` project): builds what the clients need (setup.ts), checks
+// the committed clients are current (clients.test.ts), typechecks everything, and runs
+// each example's `<name>/<name>.test.ts` through xark-wasm's node build. `npm run
+// update` rewrites stale clients. `npm run test:browser` (the `browser` project, in
+// CI's own job) runs `browser/` in headless Chromium through xark-wasm's web build.
 const repo = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({

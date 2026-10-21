@@ -1,11 +1,12 @@
 // Vitest global setup: everything the client tests need, built fresh.
 //
-// Builds the `xark` CLI and xark-wasm's node and web packages (when missing, when the
-// web one is older than the node one, or with XARK_REBUILD_WASM set); then, for each
-// example with a folder here (`cube/`, `zk_kyc/`, …): `xark build`, dev keys from
+// Builds the `xark` CLI and xark-wasm's node package (when missing, or with
+// XARK_REBUILD_WASM set), and for the browser tests (XARK_BROWSER, set by `npm run
+// test:browser`) its web package too, also when older than the node one. Then, for
+// each example with a folder here (`cube/`, `zk_kyc/`, …): `xark build`, dev keys from
 // `xark setup`, and its client from `xark client`, into a temporary directory.
 // `clients.test.ts` checks those against the committed clients; the examples' own
-// tests prove and verify through them, in Node and in a browser.
+// tests prove and verify through them.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,7 +38,8 @@ export default function setup(project: TestProject) {
   const dist = (target: string) => join(root, "crates/wasm/dist", target, "xark_wasm_bg.wasm");
   const built = (target: string) => (existsSync(dist(target)) ? statSync(dist(target)).mtimeMs : 0);
   const rebuild = !!process.env.XARK_REBUILD_WASM;
-  for (const [target, out] of [["nodejs", "node"], ["web", "web"]]) {
+  const targets = process.env.XARK_BROWSER ? [["nodejs", "node"], ["web", "web"]] : [["nodejs", "node"]];
+  for (const [target, out] of targets) {
     const stale = out === "web" && built("web") < built("node");
     if (rebuild || !built(out) || stale) {
       run(`building xark-wasm (${out})`, "wasm-pack", ["build", "crates/wasm", "--target", target, "--release", "--out-dir", `dist/${out}`]);

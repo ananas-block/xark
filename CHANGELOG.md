@@ -98,8 +98,8 @@ gadgets now check more:
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
   `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
   writes beside the client (`cube.schema.json`), which the client imports.
-- **Clients are tested in a browser.** `clients/check` runs generated clients in
-  headless Chromium too, through xark-wasm's web build: loading it and its `init()`,
+- **Clients are tested in a browser.** A CI job runs generated clients in headless
+  Chromium (`npm run test:browser` in `clients/check`), through xark-wasm's web build: loading it and its `init()`,
   fetching the build output from URLs, proving, verifying, and the Rust functions.
 - **Generated types read like the Rust.** xark's standard types have named
   aliases, each documented once in the runtime: `Day` (a `Date`), `Text`, `U8` …
