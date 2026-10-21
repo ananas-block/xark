@@ -8,11 +8,11 @@
 //!
 //! | standard type          | as given                      | decoded       |
 //! |------------------------|-------------------------------|---------------|
-//! | field                  | `bigint \| number \| string`  | `bigint`      |
+//! | field                  | `Field` (checked when made)   | `Field`       |
 //! | `uN`                   | `number` (`bigint` past 32)   | `number`/`bigint` |
 //! | bool                   | `boolean`                     | `boolean`     |
 //! | bytes                  | `Uint8Array`, numbers, `0x…`  | `Uint8Array`  |
-//! | number (limbed)        | a field-like value, or bytes  | `bigint`      |
+//! | number (limbed)        | an integer, or bytes          | `bigint`      |
 //! | date                   | `Date` (its UTC day)          | `Date`        |
 //! | text                   | `string`                      | `string`      |
 //! | choice of `E`          | `E` (a variant name)          | `E`           |
@@ -63,12 +63,12 @@ fn prop(name: &str) -> String {
 /// The TS type a caller passes for `ty`.
 fn input(ty: &Ty) -> String {
     match ty {
-        Ty::Field => "FieldLike".into(),
+        Ty::Field => "Field".into(),
         Ty::Uint(w) if *w <= 32 => "number".into(),
         Ty::Uint(_) => "bigint | number".into(),
         Ty::Bool => "boolean".into(),
         Ty::Bytes { .. } => "Bytes".into(),
-        Ty::Number { .. } => "FieldLike | Uint8Array".into(),
+        Ty::Number { .. } => "bigint | number | string | Uint8Array".into(),
         Ty::Date => "Date".into(),
         Ty::Text { .. } => "string".into(),
         Ty::Choice(e) => e.clone(),
@@ -85,7 +85,8 @@ fn input(ty: &Ty) -> String {
 /// The TS type of `ty` decoded from a proof; notes the structs it needs decoders for.
 fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
     match ty {
-        Ty::Field | Ty::Number { .. } => "bigint".into(),
+        Ty::Field => "Field".into(),
+        Ty::Number { .. } => "bigint".into(),
         Ty::Uint(w) if *w <= 53 => "number".into(),
         Ty::Uint(_) => "bigint".into(),
         Ty::Bool => "boolean".into(),
@@ -109,7 +110,8 @@ fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
 /// An expression converting `e` (the decoded JSON for `ty`) to its TS value.
 fn revive(ty: &Ty, e: &str) -> String {
     match ty {
-        Ty::Field | Ty::Number { .. } => format!("BigInt({e})"),
+        Ty::Field => format!("new Field({e})"),
+        Ty::Number { .. } => format!("BigInt({e})"),
         Ty::Uint(w) if *w > 53 => format!("BigInt({e})"),
         Ty::Uint(_) | Ty::Bool | Ty::Text { .. } | Ty::Choice(_) | Ty::Set(_) => e.into(),
         Ty::Bytes { .. } => format!("fromHex({e})"),
@@ -309,10 +311,9 @@ pub fn generate(m: &Model) -> Result<String> {
     );
 
     // Shared value types.
+    out.push_str(FIELD);
     out.push_str(
-        "/** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */\n\
-         export type FieldLike = bigint | number | string;\n\
-         /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */\n\
+        "/** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */\n\
          export type Bytes = Uint8Array | readonly number[] | string;\n\n",
     );
 
@@ -432,11 +433,11 @@ pub fn generate(m: &Model) -> Result<String> {
              */\n",
         );
         for r in m.structs.keys() {
-            let _ = writeln!(fields, "  fields(type: {r:?}, value: {r}): bigint[];");
+            let _ = writeln!(fields, "  fields(type: {r:?}, value: {r}): Field[];");
         }
         fields.push_str(
-            "  fields(type: string, value: unknown): bigint[] {\n    \
-             return this.wasm.valueFields(__NAME__.schema, type, toJson(value)).map(BigInt);\n  }\n",
+            "  fields(type: string, value: unknown): Field[] {\n    \
+             return this.wasm.valueFields(__NAME__.schema, type, toJson(value)).map((f) => new Field(f));\n  }\n",
         );
     }
 
@@ -632,7 +633,73 @@ function take(x: any, packed: bigint): string {
 
 "#;
 
-const HELPERS: &str = r#"/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
+/// The field element type every client shares. Structural, so a `Field` from one
+/// generated client passes to another.
+const FIELD: &str = r#"/**
+ * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
+ * a safe integer, a decimal or `0x`-hex string, big-endian bytes (a `Uint8Array`
+ * of at most 32), or another `Field`, and throws unless it's an integer in [0, p).
+ */
+export class Field {
+  /** The field's modulus, p (BN254's scalar field). */
+  static readonly MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+  /** The element, in [0, p). */
+  readonly value: bigint;
+
+  constructor(x: Field | bigint | number | string | Uint8Array) {
+    const v = fieldValue(x);
+    if (v < 0n) throw new RangeError(`Field: ${v} is negative`);
+    if (v >= Field.MODULUS) throw new RangeError(`Field: ${v} is not below the field's modulus`);
+    this.value = v;
+  }
+
+  /** Whether `other` is the same element. */
+  equals(other: Field | bigint | number | string | Uint8Array): boolean {
+    return this.value === new Field(other).value;
+  }
+
+  /** The element as 32 big-endian bytes. */
+  toBytes(): Uint8Array {
+    const out = new Uint8Array(32);
+    for (let i = 31, v = this.value; i >= 0; i--, v >>= 8n) out[i] = Number(v & 0xffn);
+    return out;
+  }
+
+  /** Decimal. */
+  toString(): string {
+    return this.value.toString();
+  }
+
+  toJSON(): string {
+    return this.value.toString();
+  }
+}
+
+function fieldValue(x: unknown): bigint {
+  if (typeof x === "bigint") return x;
+  if (typeof x === "number") {
+    if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
+    return BigInt(x);
+  }
+  if (typeof x === "string") {
+    const s = x.trim();
+    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
+    return BigInt(s);
+  }
+  if (x instanceof Uint8Array) {
+    if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
+    return x.reduce((v, b) => (v << 8n) | BigInt(b), 0n);
+  }
+  // A `Field`, from this client or another.
+  if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
+    return (x as { value: bigint }).value;
+  }
+  throw new TypeError(`Field: can't make a field element from ${typeof x}`);
+}
+
+"#;
+
+const HELPERS: &str = r#"/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
 function toJson(value: unknown): string {
   return JSON.stringify(value, function (this: any, key: string, v: unknown) {
     const raw = this[key];
@@ -702,16 +769,16 @@ mod tests {
             "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
             "  /** One `Country`. */\n  home: Country;",
             "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
-            "  pair: readonly [FieldLike, number];",
+            "  pair: readonly [Field, number];",
             "  active: boolean;",
             "  bornBefore: Date;",
             "  allowed: Country | readonly Country[];",
             "  doc: Bytes;",
-            "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: bigint;\n}",
+            "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
-            "    commitment: BigInt(v.commitment),",
+            "    commitment: new Field(v.commitment),",
             "export class KycCheck {",
-            "  fields(type: \"Identity\", value: Identity): bigint[];",
+            "  fields(type: \"Identity\", value: Identity): Field[];",
             "static async load(",
         ] {
             assert!(ts.contains(want), "missing {want:?} in:\n{ts}");

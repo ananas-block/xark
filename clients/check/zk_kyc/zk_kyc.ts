@@ -9,8 +9,68 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-/** A field element: a `bigint`, a safe integer, or a decimal / `0x`-hex string. */
-export type FieldLike = bigint | number | string;
+/**
+ * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
+ * a safe integer, a decimal or `0x`-hex string, big-endian bytes (a `Uint8Array`
+ * of at most 32), or another `Field`, and throws unless it's an integer in [0, p).
+ */
+export class Field {
+  /** The field's modulus, p (BN254's scalar field). */
+  static readonly MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+  /** The element, in [0, p). */
+  readonly value: bigint;
+
+  constructor(x: Field | bigint | number | string | Uint8Array) {
+    const v = fieldValue(x);
+    if (v < 0n) throw new RangeError(`Field: ${v} is negative`);
+    if (v >= Field.MODULUS) throw new RangeError(`Field: ${v} is not below the field's modulus`);
+    this.value = v;
+  }
+
+  /** Whether `other` is the same element. */
+  equals(other: Field | bigint | number | string | Uint8Array): boolean {
+    return this.value === new Field(other).value;
+  }
+
+  /** The element as 32 big-endian bytes. */
+  toBytes(): Uint8Array {
+    const out = new Uint8Array(32);
+    for (let i = 31, v = this.value; i >= 0; i--, v >>= 8n) out[i] = Number(v & 0xffn);
+    return out;
+  }
+
+  /** Decimal. */
+  toString(): string {
+    return this.value.toString();
+  }
+
+  toJSON(): string {
+    return this.value.toString();
+  }
+}
+
+function fieldValue(x: unknown): bigint {
+  if (typeof x === "bigint") return x;
+  if (typeof x === "number") {
+    if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
+    return BigInt(x);
+  }
+  if (typeof x === "string") {
+    const s = x.trim();
+    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
+    return BigInt(s);
+  }
+  if (x instanceof Uint8Array) {
+    if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
+    return x.reduce((v, b) => (v << 8n) | BigInt(b), 0n);
+  }
+  // A `Field`, from this client or another.
+  if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
+    return (x as { value: bigint }).value;
+  }
+  throw new TypeError(`Field: can't make a field element from ${typeof x}`);
+}
+
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
 
@@ -63,7 +123,7 @@ export interface Identity {
   netWorth: bigint | number;
   /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
   expires: Date;
-  salt: FieldLike;
+  salt: Field;
 }
 
 /** A `Policy` (an input struct). */
@@ -81,13 +141,13 @@ export interface Policy {
 /** Every input of `zk_kyc`. */
 export interface ZkKycInputs {
   id: Identity;
-  commitment: FieldLike;
+  commitment: Field;
   policy: Policy;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface ZkKycPublicInputs {
-  commitment: FieldLike;
+  commitment: Field;
   policy: Policy;
 }
 
@@ -101,7 +161,7 @@ export interface PolicyValue {
 
 /** The public inputs, decoded from a proof. */
 export interface ZkKycPublicValues {
-  commitment: bigint;
+  commitment: Field;
   policy: PolicyValue;
 }
 
@@ -238,10 +298,10 @@ export class ZkKyc {
    * A value's field elements in input order, as `to_fields()` gives them in
    * Rust: hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).
    */
-  fields(type: "Identity", value: Identity): bigint[];
-  fields(type: "Policy", value: Policy): bigint[];
-  fields(type: string, value: unknown): bigint[] {
-    return this.wasm.valueFields(ZkKyc.schema, type, toJson(value)).map(BigInt);
+  fields(type: "Identity", value: Identity): Field[];
+  fields(type: "Policy", value: Policy): Field[];
+  fields(type: string, value: unknown): Field[] {
+    return this.wasm.valueFields(ZkKyc.schema, type, toJson(value)).map((f) => new Field(f));
   }
 }
 
@@ -303,10 +363,10 @@ export const Policy = {
     return withPolicyMethods(decodePolicy(callRust("Policy.min_age", [policy, years])));
   },
   /**
-   * Worth at least `usd`.
+   * Worth at least `amount`, in the attestor's unit.
    */
-  minNetWorth(policy: Policy, usd: bigint | number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(callRust("Policy.min_net_worth", [policy, usd])));
+  minNetWorth(policy: Policy, amount: bigint | number): PolicyValue & PolicyMethods {
+    return withPolicyMethods(decodePolicy(callRust("Policy.min_net_worth", [policy, amount])));
   },
   /**
    * A national of one of `allowed` (a country, or a list of them).
@@ -344,14 +404,14 @@ export const Identity = {
   /**
    * The issuer's commitment: Poseidon2 over every field, so adding one extends it.
    */
-  commitment(identity: Identity): bigint {
-    return BigInt(callRust("Identity.commitment", [identity]));
+  commitment(identity: Identity): Field {
+    return new Field(callRust("Identity.commitment", [identity]));
   },
 };
 
 function decodePublic(v: any): ZkKycPublicValues {
   return {
-    commitment: BigInt(v.commitment),
+    commitment: new Field(v.commitment),
     policy: decodePolicy(v.policy),
   };
 }
@@ -365,7 +425,7 @@ function decodePolicy(v: any): PolicyValue {
   };
 }
 
-/** JSON for xark-wasm: `bigint`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
+/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day (`YYYY-MM-DD`), bytes as hex. */
 function toJson(value: unknown): string {
   return JSON.stringify(value, function (this: any, key: string, v: unknown) {
     const raw = this[key];

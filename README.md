@@ -207,19 +207,25 @@ export interface Identity {
   document: string;            // Text
   born: Date;                  // its UTC day
   nationality: Country;        // Country.US, or "US"; "XX" won't compile
-  netWorth: bigint | number;   // u64
+  netWorth: bigint | number;   // u64, in the attestor's unit
   expires: Date;
-  salt: FieldLike;
+  salt: Field;                 // a field element, checked when made
 }
 ```
 
+A field element is a `Field`: `new Field(x)` takes a `bigint`, a safe integer, a
+decimal or `0x`-hex string, or big-endian bytes, and throws unless it's below the
+field's modulus, so a value that would wrap never reaches the prover. Decoded
+public inputs and Rust functions return `Field`s too.
+
+
 ```ts
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
-import { Country, Identity, Policy, ZkKyc } from "./zk_kyc";
+import { Country, Field, Identity, Policy, ZkKyc } from "./zk_kyc";
 
 const kyc = await ZkKyc.load(wasm, "/circuits/zk_kyc/"); // a copy of target/xark/zk_kyc/
 // (or `new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources })` with bytes you have)
-const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt };
+const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt: new Field(saltBytes) };
 const commitment = Identity.commitment(id); // the circuit's own Rust (below)
 const policy = Policy.on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
 const { proof, publicInputs } = kyc.prove({ id, commitment, policy });

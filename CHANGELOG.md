@@ -88,6 +88,11 @@ gadgets now check more:
   `encodeInputs(schema, …)` first, as generated clients already do. The old
   resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
   limbs) are gone.
+- **Field elements are a `Field` class in TypeScript.** Generated clients take and
+  return `Field` (replacing `FieldLike` and `bigint`): `new Field(x)` takes a
+  `bigint`, a safe integer, a decimal or `0x`-hex string, big-endian bytes or
+  another `Field`, and throws unless it's an integer below the modulus, instead of
+  failing later in the prover. A `Field` from one generated client passes to another.
 - **Builds show where the constraints go.** `xark build` lists the three source
   lines that cost the most constraints. `xark profile` ends with a breakdown by
   kind, saying what each kind is and how to have fewer of them, and the
