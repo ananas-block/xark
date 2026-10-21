@@ -4612,11 +4612,11 @@ version = "0.3.0"
 dependencies = [
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
- "getrandom 0.2.17",
  "num-bigint 0.4.8",
  "serde_json",
  "xark-macros",
  "xark-prover",
+ "xark-schema",
 ]
 
 [[package]]
@@ -4707,6 +4707,7 @@ dependencies = [
  "xark-groth16",
  "xark-ir",
  "xark-prover",
+ "xark-schema",
 ]
 
 [[package]]
@@ -4872,6 +4873,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xark-schema"
+version = "0.3.0"
+dependencies = [
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
+ "num-bigint 0.4.8",
+ "serde_json",
+]
+
+[[package]]
 name = "xark-secp256k1"
 version = "0.3.0"
 dependencies = [
@@ -4973,6 +4984,7 @@ dependencies = [
  "xark-ir",
  "xark-poseidon2",
  "xark-prover",
+ "xark-schema",
 ]
 
 [[package]]

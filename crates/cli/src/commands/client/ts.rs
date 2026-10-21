@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use anyhow::Result;
-use xark_prover::schema::camel;
+use xark_schema::camel;
 
 use super::MARKER;
 use super::model::{Model, Ty};

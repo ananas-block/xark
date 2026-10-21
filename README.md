@@ -353,6 +353,10 @@ generates over it (above). `xark prove` writes the same bytes `verify` takes:
 * **Backend** — `xark-backend` (Groth16 setup/prove/verify, trusted setup,
   serialization) and `xark-verifier` (the `no_std` on-chain Solana verifier).
   Both are frontend-agnostic.
+* **`xark-schema`** — `schema.json` and the one codec for input values (natural
+  JSON forms to field elements and back), shared by the CLI, xark-wasm (so every
+  generated client) and `client.wasm`. It needs only the BN254 scalar field and
+  JSON, not the prover, so a client for another language binds just this.
 
 Gadgets are **separate crates you add only when you need them**, all under
 **`gadgets/`** — kept apart from the core toolchain so they're easy to fork or

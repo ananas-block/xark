@@ -1067,12 +1067,12 @@ version = "0.3.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
- "getrandom",
  "num-bigint",
  "serde_json",
  "xark-ir",
  "xark-macros",
  "xark-prover",
+ "xark-schema",
  "xark-test-harness",
 ]
 
@@ -1140,6 +1140,16 @@ dependencies = [
  "sha2",
  "xark-groth16",
  "xark-ir",
+]
+
+[[package]]
+name = "xark-schema"
+version = "0.3.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "num-bigint",
+ "serde_json",
 ]
 
 [[package]]

@@ -308,13 +308,13 @@ pub fn path_arg(path: &Option<std::path::PathBuf>) -> String {
 
 /// The circuit's `schema.json`, if the build wrote a current one (for summaries
 /// and hints).
-pub fn load_schema(xark_dir: &std::path::Path) -> Option<xark_prover::schema::Schema> {
+pub fn load_schema(xark_dir: &std::path::Path) -> Option<xark_schema::Schema> {
     require_schema(xark_dir).ok()
 }
 
 /// The circuit's `schema.json`: how `--inputs` values are read. Missing, or written
 /// by an older xark: rebuild.
-pub fn require_schema(xark_dir: &std::path::Path) -> Result<xark_prover::schema::Schema> {
+pub fn require_schema(xark_dir: &std::path::Path) -> Result<xark_schema::Schema> {
     let path = xark_dir.join("schema.json");
     let text = std::fs::read_to_string(&path).map_err(|_| {
         anyhow::anyhow!(
@@ -322,8 +322,7 @@ pub fn require_schema(xark_dir: &std::path::Path) -> Result<xark_prover::schema:
             path.display()
         )
     })?;
-    xark_prover::schema::Schema::parse(&text)
-        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
+    xark_schema::Schema::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
 }
 
 /// `--inputs` as a JSON object: inline JSON (a leading `{`), or a file of JSON or

@@ -24,8 +24,8 @@ use crate::input::{Input, Type, from_fields, leaf_names, schema_json, write_fiel
 use crate::lang::Field;
 
 /// The one-input schema describing a `ty` value named `v`.
-fn schema(ty: Type) -> Result<xark_prover::schema::Schema, String> {
-    xark_prover::schema::Schema::parse(&schema_json("value", &[("v", true, ty)]))
+fn schema(ty: Type) -> Result<xark_schema::Schema, String> {
+    xark_schema::Schema::parse(&schema_json("value", &[("v", true, ty)]))
 }
 
 /// A `T` from its natural JSON form, as a client gives it (and as `--inputs` takes
@@ -137,13 +137,6 @@ mod abi {
         };
         hand_over(serde_json::to_vec(&out).unwrap_or_default())
     }
-
-    // `rand` (through the prover) links `getrandom`, which needs a source here; a
-    // client never proves, so any use is refused.
-    fn refuse(_: &mut [u8]) -> Result<(), getrandom::Error> {
-        Err(getrandom::Error::UNSUPPORTED)
-    }
-    getrandom::register_custom_getrandom!(refuse);
 }
 
 #[cfg(all(test, not(xark)))]

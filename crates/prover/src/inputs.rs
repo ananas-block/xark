@@ -1,7 +1,7 @@
 //! Input leaves (`id.dob`, `msg[3]`) to the solver's `VarId → decimal` map.
 //!
 //! Values in their natural forms (a date, a hash's bytes, a point) are encoded into
-//! leaves by the schema codec ([`crate::schema`]: `xark prove --inputs`, xark-wasm's
+//! leaves by the schema codec (`xark-schema`: `xark prove --inputs`, xark-wasm's
 //! `encodeInputs`, generated clients); this takes the leaves. A value may also be
 //! nested ([`InputValue::Map`] / [`InputValue::List`]) mirroring the input's shape,
 //! which [`flatten_inputs`] turns into the leaf names.

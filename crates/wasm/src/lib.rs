@@ -294,8 +294,8 @@ pub fn decode_public_inputs(public_inputs_bytes: &Bytes) -> Result<Vec<String>, 
 // typed inputs (`schema.json`)
 // ---------------------------------------------------------------------------
 
-fn schema(text: &str) -> Result<xark_prover::schema::Schema, js_sys::Error> {
-    xark_prover::schema::Schema::parse(text).map_err(|e| js_error(&e))
+fn schema(text: &str) -> Result<xark_schema::Schema, js_sys::Error> {
+    xark_schema::Schema::parse(text).map_err(|e| js_error(&e))
 }
 
 fn json(text: &str, what: &str) -> Result<serde_json::Value, js_sys::Error> {

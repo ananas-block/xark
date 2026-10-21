@@ -110,6 +110,10 @@ gadgets now check more:
   method named like a field stays `Policy.method(value, …)`, and `xark client`
   warns. zk_kyc's `Policy::min_net_worth` is now `worth_at_least`.
   `await ZkKyc.ready(url)` loads `client.wasm` without a prover or verifier.
+- **`xark-schema`: the input codec as its own crate.** `schema.json` and the
+  encoding of values (`xark_prover::schema` until now) need only the BN254 scalar
+  field and JSON. The CLI, xark-wasm and `client.wasm` use it directly, and the
+  client build no longer links the prover (nor needs a refusing `getrandom`).
 - **Builds show where the constraints go.** `xark build` lists the three source
   lines that cost the most constraints. `xark profile` ends with a breakdown by
   kind, saying what each kind is and how to have fewer of them, and the

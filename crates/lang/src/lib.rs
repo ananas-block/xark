@@ -72,6 +72,22 @@ macro_rules! __client_export {
     ($($item:item)*) => {};
 }
 
+/// The items that use the prover (`#[circuit]`'s validator), in every host build
+/// but the client build, which has no prover. Used by `#[circuit]`.
+#[cfg(not(xark_client))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __with_prover {
+    ($($item:item)*) => { $($item)* };
+}
+
+#[cfg(xark_client)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __with_prover {
+    ($($item:item)*) => {};
+}
+
 /// ISO 3166-1 [`Country`] codes.
 pub mod country;
 pub use country::Country;
@@ -125,8 +141,9 @@ pub const fn natural_bytes(limbs: usize, bits: usize) -> usize {
     }
 }
 /// The host-side prover: load a built circuit and `check` / `prove` inputs
-/// against it (`xark::prover::circuit("name").prove(inputs)`). Host builds only.
-#[cfg(not(xark))]
+/// against it (`xark::prover::circuit("name").prove(inputs)`). Host builds only,
+/// and not the client build (`client.wasm`), which never proves.
+#[cfg(all(not(xark), not(xark_client)))]
 pub use xark_prover as prover;
 // Host-side helpers for building input values (gadgets' `From` impls, derives).
 #[cfg(not(xark))]

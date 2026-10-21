@@ -5,7 +5,7 @@
 //! the structs and enums the inputs reach are collected in order. A language target
 //! (`ts.rs`) then only says how each [`Ty`] looks in that language: its own types,
 //! and the JSON form xark-wasm takes and gives back. Encoding values into field
-//! elements stays in the one Rust codec (`xark_prover::schema`), which every target
+//! elements stays in the one Rust codec (`xark_schema`), which every target
 //! calls into, so no target reimplements it.
 
 use std::collections::BTreeMap;

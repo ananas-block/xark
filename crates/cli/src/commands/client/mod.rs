@@ -17,7 +17,7 @@
 //!
 //! No target encodes field elements itself: values go to xark-wasm (or, for another
 //! language, the same Rust codec through its bindings), which encodes them against
-//! the schema exactly as `xark prove --inputs` does (`xark_prover::schema`).
+//! the schema exactly as `xark prove --inputs` does (`xark_schema`).
 
 pub mod model;
 pub mod ts;

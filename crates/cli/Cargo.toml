@@ -23,6 +23,7 @@ debug = ["xark-ir/debug", "xark-prover/debug"]
 num-bigint = "0.4"
 xark-ir = { path = "../ir", version = "0.3.0" }
 xark-prover = { path = "../prover", version = "0.3.0" }
+xark-schema = { path = "../schema", version = "0.3.0" }
 xark-backend = { path = "../backend", version = "0.3.0" }
 xark-groth16 = { path = "../groth16", version = "0.3.0" }
 xark-frontend = { path = "../frontend", version = "0.3.0" }

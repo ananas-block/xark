@@ -19,6 +19,7 @@ members = [
     "crates/macros",
     "crates/cli",
     "crates/prover",
+    "crates/schema",
     "gadgets/xark-merkle",
     "gadgets/xark-mimc",
     "gadgets/xark-pedersen",

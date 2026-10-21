@@ -21,9 +21,6 @@ use xark_ir::{FieldConst, LinearCombination as IrLc, R1csProgram, VarId, Visibil
 pub mod inputs;
 pub use inputs::{InputValue, flatten_inputs, resolve_input_ids};
 
-/// A circuit's inputs as `schema.json` describes them, and their encoding.
-pub mod schema;
-
 /// Developer-diagnostics env-flag probe. Only reads the environment under the
 /// `debug` feature; a normal release build compiles this to `false` so the
 /// diagnostic branches (and their `XARK_*` knobs) vanish entirely.
