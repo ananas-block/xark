@@ -10,19 +10,19 @@
 // schema (in `cube.schema.ts`, written with this file), exactly as `xark prove
 // --inputs` does.
 
-import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type FieldInput, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./cube.schema.js";
-export { CheckFailed, Field, InputError };
+export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** Every input of `cube`. */
 export interface CubeInputs {
-  secret: Field | bigint | number | string;
-  result: Field | bigint | number | string;
+  secret: FieldInput;
+  result: FieldInput;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface CubePublicInputs {
-  result: Field | bigint | number | string;
+  result: FieldInput;
 }
 
 /** The public inputs, decoded from a proof. */

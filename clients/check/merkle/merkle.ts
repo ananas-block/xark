@@ -10,21 +10,21 @@
 // schema (in `merkle.schema.ts`, written with this file), exactly as `xark prove
 // --inputs` does.
 
-import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type FieldInput, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./merkle.schema.js";
-export { CheckFailed, Field, InputError };
+export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** Every input of `merkle`. */
 export interface MerkleInputs {
-  leaf: Field | bigint | number | string;
-  siblings: readonly [Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string];
-  indexBits: readonly [Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string];
-  root: Field | bigint | number | string;
+  leaf: FieldInput;
+  siblings: readonly [FieldInput, FieldInput, FieldInput, FieldInput];
+  indexBits: readonly [FieldInput, FieldInput, FieldInput, FieldInput];
+  root: FieldInput;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface MerklePublicInputs {
-  root: Field | bigint | number | string;
+  root: FieldInput;
 }
 
 /** The public inputs, decoded from a proof. */

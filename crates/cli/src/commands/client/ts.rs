@@ -10,10 +10,10 @@
 //!
 //! | standard type          | as given                      | decoded       |
 //! |------------------------|-------------------------------|---------------|
-//! | field                  | `Field`, or an integer        | `Field`       |
+//! | field                  | `FieldInput` (`Field`, an integer) | `Field`  |
 //! | `uN`                   | `number` (`bigint` past 32)   | `number`/`bigint` |
 //! | bool                   | `boolean`                     | `boolean`     |
-//! | bytes                  | `Uint8Array`, numbers, `0x…`  | `Uint8Array`  |
+//! | bytes                  | `Uint8Array`                  | `Uint8Array`  |
 //! | number (limbed)        | an integer, or bytes          | `bigint`      |
 //! | date                   | `Date` (its UTC day)          | `Date`        |
 //! | text                   | `string`                      | `string`      |
@@ -65,12 +65,12 @@ fn prop(name: &str) -> String {
 /// The TS type a caller passes for `ty`.
 fn input(ty: &Ty) -> String {
     match ty {
-        Ty::Field => "Field | bigint | number | string".into(),
+        Ty::Field => "FieldInput".into(),
         Ty::Uint(w @ (8 | 16 | 32 | 64 | 128)) => format!("U{w}"),
         Ty::Uint(w) if *w <= 32 => "number".into(),
         Ty::Uint(_) => "bigint | number".into(),
         Ty::Bool => "boolean".into(),
-        Ty::Bytes { .. } => "Bytes".into(),
+        Ty::Bytes { .. } => "Uint8Array".into(),
         Ty::Number { .. } => "bigint | number | string | Uint8Array".into(),
         Ty::Date => "Day".into(),
         Ty::Text { max: TEXT } => "Text".into(),
@@ -496,10 +496,14 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let out = out.trim_end().to_string() + "\n";
 
     // Import what the body uses from the runtime, and re-export `Field`.
-    let mut values = vec!["CheckFailed", "Circuit", "Field", "InputError"];
-    if out.contains("fromHex(") {
-        values.push("fromHex");
-    }
+    let values = [
+        "CheckFailed",
+        "Circuit",
+        "Field",
+        "InputError",
+        "fromHex",
+        "toHex",
+    ];
     // The runtime's types the body names (outside comments).
     let code: String = out
         .lines()
@@ -513,7 +517,17 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
         })
     };
     let mut types: Vec<&str> = [
-        "Bytes", "Day", "Json", "Proof", "Prover", "Text", "U128", "U16", "U32", "U64", "U8",
+        "Day",
+        "FieldInput",
+        "Json",
+        "Proof",
+        "Prover",
+        "Text",
+        "U128",
+        "U16",
+        "U32",
+        "U64",
+        "U8",
         "Verifier",
     ]
     .into_iter()
@@ -529,7 +543,7 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
         "{head}\
          import {{ {} }} from \"{RUNTIME}\";\n\
          import schema from \"./{schema_import}\";\n\
-         export {{ CheckFailed, Field, InputError }};\n\n\
+         export {{ CheckFailed, Field, InputError, fromHex, toHex }};\n\n\
          {out}",
         imports.join(", ")
     ))
@@ -601,15 +615,15 @@ mod tests {
             "/** An `Identity` (an input struct). */\nexport interface Identity {\n  netWorth: U64;",
             "  home: Country;",
             "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
-            "  pair: readonly [Field | bigint | number | string, U16];",
+            "  pair: readonly [FieldInput, U16];",
             "  active: boolean;",
             "  bornBefore: Day;",
             "  allowed: Country | readonly Country[];",
-            "  doc: Bytes;",
+            "  doc: Uint8Array;",
             "export interface KycCheckPublicValues {\n  bornBefore: Day;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "import { CheckFailed, Circuit, Field, InputError, type Bytes, type Day, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.js\";\nexport { CheckFailed, Field, InputError };",
+            "import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.js\";\nexport { CheckFailed, Field, InputError, fromHex, toHex };",
             "  name: \"kyc_check\",\n  schema,\n",
             "export interface KycCheckStructs {\n  Identity: Identity;\n}",
             "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",

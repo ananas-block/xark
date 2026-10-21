@@ -10,22 +10,22 @@
 // schema (in `sha256.schema.ts`, written with this file), exactly as `xark prove
 // --inputs` does.
 
-import { CheckFailed, Circuit, Field, InputError, fromHex, type Bytes, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./sha256.schema.js";
-export { CheckFailed, Field, InputError };
+export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** Every input of `sha256`. */
 export interface Sha256Inputs {
   /** `[u8; 3]`: exactly 3 bytes. */
-  msg: Bytes;
+  msg: Uint8Array;
   /** `Hash`: its 32 bytes. */
-  digest: Bytes;
+  digest: Uint8Array;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface Sha256PublicInputs {
   /** `Hash`: its 32 bytes. */
-  digest: Bytes;
+  digest: Uint8Array;
 }
 
 /** The public inputs, decoded from a proof. */

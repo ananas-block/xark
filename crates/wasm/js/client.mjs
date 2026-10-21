@@ -182,10 +182,18 @@ function plain(v, path) {
   return v;
 }
 
-/** `0x`-hex (as xark-wasm writes bytes) to bytes. */
+/** Hex (`0x` optional, as xark-wasm writes bytes) to bytes. Throws on anything else. */
 export function fromHex(s) {
-  const h = s.slice(2);
+  const h = s.startsWith("0x") || s.startsWith("0X") ? s.slice(2) : s;
+  if (h.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(h)) {
+    throw new SyntaxError(`fromHex: ${JSON.stringify(s)} is not hex bytes`);
+  }
   return Uint8Array.from({ length: h.length / 2 }, (_, i) => parseInt(h.slice(2 * i, 2 * i + 2), 16));
+}
+
+/** Bytes as `0x`-hex. */
+export function toHex(bytes) {
+  return "0x" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** Each part of the build output as `xark build`, `xark setup` and `xark client` name its file. */

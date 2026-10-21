@@ -148,11 +148,13 @@ verification starter, and the `xark-client` npm package is removed.
   crate's Rust, chaining as in Rust. A method named like a field stays
   `Policy.method(value, …)`, and `xark client` warns. A Rust panic is an exception
   with its message. `await ZkKyc.ready(url)` loads `client.wasm` on its own.
+- **Bytes are a `Uint8Array`**, given and decoded; `fromHex` and `toHex` (exported
+  by every client) convert hex.
 - **Field elements** are a `Field` class: `new Field(x)` takes a `bigint`, a safe
   integer, a decimal or `0x`-hex string, little-endian bytes (`Field.fromBeBytes`
   for big-endian) or another `Field`, and throws unless it's below the modulus. A
-  field input also takes a plain integer, checked the same way, and a number past
-  2^53 is refused rather than rounded.
+  field input (`FieldInput`) also takes a plain integer, checked the same way, and a
+  number past 2^53 is refused rather than rounded.
 - **Typed errors:** a refused input throws an `InputError` with its `path` in the
   caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
   fail a check a `CheckFailed` with the statement's `site` (file, line, column,

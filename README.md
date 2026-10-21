@@ -219,7 +219,7 @@ export interface Identity {
   nationality: Country;        // Country.US, or "US"; "XX" won't compile
   netWorth: U64;               // bigint | number, in the attestor's unit
   expires: Day;
-  salt: Field | bigint | number | string; // a field element
+  salt: FieldInput;            // a Field, or an integer
 }
 ```
 

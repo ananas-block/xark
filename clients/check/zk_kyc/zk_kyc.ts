@@ -10,9 +10,9 @@
 // schema (in `zk_kyc.schema.ts`, written with this file), exactly as `xark prove
 // --inputs` does.
 
-import { CheckFailed, Circuit, Field, InputError, type Day, type Json, type Proof, type Prover, type Text, type U16, type U64, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type Text, type U16, type U64, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./zk_kyc.schema.js";
-export { CheckFailed, Field, InputError };
+export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */
 export const Country = {
@@ -58,7 +58,7 @@ export interface Identity {
   nationality: Country;
   netWorth: U64;
   expires: Day;
-  salt: Field | bigint | number | string;
+  salt: FieldInput;
 }
 
 /** A `Policy` (an input struct). */
@@ -73,13 +73,13 @@ export interface Policy {
 /** Every input of `zk_kyc`. */
 export interface ZkKycInputs {
   id: Identity;
-  commitment: Field | bigint | number | string;
+  commitment: FieldInput;
   policy: Policy;
 }
 
 /** The public inputs: what a verifier supplies, and what a proof reveals. */
 export interface ZkKycPublicInputs {
-  commitment: Field | bigint | number | string;
+  commitment: FieldInput;
   policy: Policy;
 }
 

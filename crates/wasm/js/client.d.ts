@@ -79,8 +79,11 @@ export type U64 = bigint | number;
 /** An integer in [0, 2^128): Rust's `u128`. A `number` must be a safe integer. */
 export type U128 = bigint | number;
 
-/** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
-export type Bytes = Uint8Array | readonly number[] | string;
+/**
+ * A field input: a `Field`, or a plain integer (a `bigint`, a safe integer, a
+ * decimal or `0x`-hex string), checked as `new Field(x)` checks it.
+ */
+export type FieldInput = Field | bigint | number | string;
 
 /** A proof and the public inputs it proves. */
 export class Proof<PublicValues> {
@@ -241,5 +244,7 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
 
 /** JSON for xark-wasm (the generated client calls it). */
 export function toJson(value: unknown): string;
-/** `0x`-hex to bytes (the generated client calls it). */
+/** Hex (`0x` optional) to bytes, for a byte input given as hex. Throws on anything else. */
 export function fromHex(s: string): Uint8Array;
+/** Bytes as `0x`-hex. */
+export function toHex(bytes: Uint8Array): string;
