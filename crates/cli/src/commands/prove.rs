@@ -132,7 +132,6 @@ pub fn run(args: ProveArgs) -> Result<()> {
         Some(arg) => super::read_inputs(&project.xark_dir, arg)?,
         None => Default::default(),
     };
-    super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let sources = crate::commands::load_sources(&project.xark_dir);
 
     // The streaming prover: neither the R1CS nor the key is ever fully in memory.

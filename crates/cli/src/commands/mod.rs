@@ -306,16 +306,28 @@ pub fn path_arg(path: &Option<std::path::PathBuf>) -> String {
     }
 }
 
-/// Parse the `--inputs` argument: a leading `{` selects inline JSON, anything
-/// else is a file path (JSON object, or `name = value` lines). Array elements
-/// use the flat names `xark inspect` prints, e.g. `path[0]`.
-/// The circuit's `schema.json`, if the build wrote one.
+/// The circuit's `schema.json`, if the build wrote a current one (for summaries
+/// and hints).
 pub fn load_schema(xark_dir: &std::path::Path) -> Option<xark_prover::schema::Schema> {
-    let text = std::fs::read_to_string(xark_dir.join("schema.json")).ok()?;
-    xark_prover::schema::Schema::parse(&text).ok()
+    require_schema(xark_dir).ok()
 }
 
-/// `--inputs` (inline JSON, or a JSON / `name = value` file) as a JSON object.
+/// The circuit's `schema.json`: how `--inputs` values are read. Missing, or written
+/// by an older xark: rebuild.
+pub fn require_schema(xark_dir: &std::path::Path) -> Result<xark_prover::schema::Schema> {
+    let path = xark_dir.join("schema.json");
+    let text = std::fs::read_to_string(&path).map_err(|_| {
+        anyhow::anyhow!(
+            "no {} (it describes the circuit's inputs): run `xark build`",
+            path.display()
+        )
+    })?;
+    xark_prover::schema::Schema::parse(&text)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
+}
+
+/// `--inputs` as a JSON object: inline JSON (a leading `{`), or a file of JSON or
+/// `name = value` lines.
 fn inputs_json(arg: &str) -> Result<serde_json::Value> {
     let (text, source) = if arg.trim_start().starts_with('{') {
         (arg.to_string(), "<--inputs>".to_string())
@@ -335,15 +347,11 @@ fn inputs_json(arg: &str) -> Result<serde_json::Value> {
     Ok(serde_json::Value::Object(map))
 }
 
-/// `--inputs` as the circuit's input leaves (`name → decimal`). With a
-/// `schema.json` every value is taken in its type's natural form (a date as
-/// `"YYYY-MM-DD"`, a key as its bytes) and checked against it; without one the
-/// values go to input resolution as given.
+/// `--inputs` as the circuit's input leaves (`name → decimal`), every value taken in
+/// its type's natural form (a date as `"YYYY-MM-DD"`, a key as its bytes) and checked
+/// against `schema.json` (a `uN` against its range, a field element against `p`).
 pub fn read_inputs(xark_dir: &std::path::Path, arg: &str) -> Result<BTreeMap<String, String>> {
-    let Some(schema) = load_schema(xark_dir) else {
-        return parse_inputs_arg(arg);
-    };
-    let leaves = schema
+    let leaves = require_schema(xark_dir)?
         .leaves(&inputs_json(arg)?)
         .map_err(|e| anyhow::anyhow!(e))?;
     Ok(leaves
@@ -352,122 +360,19 @@ pub fn read_inputs(xark_dir: &std::path::Path, arg: &str) -> Result<BTreeMap<Str
         .collect())
 }
 
-/// `--inputs` as the public inputs, in proof order, when the build wrote a
-/// `schema.json` (only the public inputs need be given then).
-pub fn read_public_inputs(
-    xark_dir: &std::path::Path,
-    arg: &str,
-) -> Result<Option<Vec<ark_bn254::Fr>>> {
-    let Some(schema) = load_schema(xark_dir) else {
-        return Ok(None);
-    };
-    let json = inputs_json(arg)?;
-    schema
-        .public_inputs(&json)
-        .map(Some)
+/// `--inputs` as the public inputs, in proof order (only the public ones need be
+/// given).
+pub fn read_public_inputs(xark_dir: &std::path::Path, arg: &str) -> Result<Vec<Fr>> {
+    require_schema(xark_dir)?
+        .public_inputs(&inputs_json(arg)?)
         .map_err(|e| anyhow::anyhow!(e))
 }
 
-pub fn parse_inputs_arg(arg: &str) -> Result<BTreeMap<String, String>> {
-    if arg.trim_start().starts_with('{') {
-        parse_input_text(arg, std::path::Path::new("<--inputs>"))
-    } else {
-        let text = std::fs::read_to_string(arg)
-            .with_context(|| format!("reading --inputs file `{arg}`"))?;
-        parse_input_text(&text, std::path::Path::new(arg))
-    }
-}
-
-/// Reject a value that doesn't fit its `uN` input before solving, naming the input
-/// and the range, rather than leaving it to the circuit's range check (which
-/// rejects it too, but as an opaque failing constraint). Types come from the
-/// build's `schema.json`; without one this is a no-op. Only exact leaves are
-/// checked (`b`, `bs[0]`, `user.dob`); a hex byte string is checked for length
-/// by input resolution.
-pub fn check_uint_ranges(
-    xark_dir: &std::path::Path,
-    inputs: &BTreeMap<String, String>,
-) -> Result<()> {
-    let Ok(text) = std::fs::read_to_string(xark_dir.join("schema.json")) else {
-        return Ok(());
-    };
-    let schema: serde_json::Value = serde_json::from_str(&text).context("parsing schema.json")?;
-    let mut widths = BTreeMap::new();
-    for input in schema["inputs"].as_array().into_iter().flatten() {
-        if let Some(name) = input["name"].as_str() {
-            uint_leaves(&schema, &input["type"], name.to_string(), &mut widths);
-        }
-    }
-    for (leaf, value) in inputs {
-        let Some(&w) = widths.get(leaf) else { continue };
-        let v = value.trim();
-        let parsed = match v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
-            Some(h) => num_bigint::BigInt::parse_bytes(h.as_bytes(), 16),
-            None => num_bigint::BigInt::parse_bytes(v.as_bytes(), 10),
-        };
-        // Unparseable values get input resolution's error.
-        let Some(x) = parsed else { continue };
-        if x.sign() == num_bigint::Sign::Minus || x.bits() > w {
-            let max = (num_bigint::BigUint::from(1u8) << w) - 1u8;
-            anyhow::bail!("input `{leaf}` is a u{w}: {v} is out of range (0..={max})");
-        }
-    }
-    Ok(())
-}
-
-/// The `uN` leaves of a `schema.json` type, under the compiler's leaf names.
-fn uint_leaves(
-    schema: &serde_json::Value,
-    ty: &serde_json::Value,
-    leaf: String,
-    out: &mut BTreeMap<String, u64>,
-) {
-    if let Some(w) = ty["uint"].as_u64() {
-        out.insert(leaf, w);
-    } else if let Some(a) = ty.get("array") {
-        for i in 0..a["len"].as_u64().unwrap_or(0) {
-            uint_leaves(schema, &a["of"], format!("{leaf}[{i}]"), out);
-        }
-    } else if let Some(ts) = ty["tuple"].as_array() {
-        for (i, t) in ts.iter().enumerate() {
-            uint_leaves(schema, t, format!("{leaf}.{i}"), out);
-        }
-    } else if let Some(r) = ty["ref"].as_str() {
-        for f in schema["types"][r]["struct"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            if let Some(name) = f["name"].as_str() {
-                uint_leaves(schema, &f["type"], format!("{leaf}.{name}"), out);
-            }
-        }
-    }
-}
-
-/// Parse input text: either a `{ "name": value, … }` JSON object, or lines of
-/// `name = value` (`#` comments and blank lines ignored). Values are kept as
-/// decimal strings; array elements use the flat names `xark inspect` prints.
+/// Parse an inputs file of `name = value` lines (`#` comments and blank lines
+/// ignored). A name may be a nested path (`id.born`, `msg[0]`), as `--inputs` JSON
+/// keys may.
 pub fn parse_input_text(text: &str, source: &std::path::Path) -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
-
-    if text.trim_start().starts_with('{') {
-        let obj: serde_json::Value = serde_json::from_str(text)
-            .with_context(|| format!("parsing {} as JSON", source.display()))?;
-        let map = obj.as_object().ok_or_else(|| {
-            anyhow::anyhow!("{}: expected a JSON object of name→value", source.display())
-        })?;
-        let entries = map
-            .iter()
-            .map(|(name, value)| {
-                json_to_input(value)
-                    .map(|v| (name.clone(), v))
-                    .map_err(|e| anyhow::anyhow!("{}: input `{name}`: {e}", source.display()))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(xark_prover::flatten_inputs(entries));
-    }
-
     for (lineno, raw) in text.lines().enumerate() {
         let line = raw.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -484,43 +389,6 @@ pub fn parse_input_text(text: &str, source: &std::path::Path) -> Result<BTreeMap
         out.insert(name.trim().to_string(), value.to_string());
     }
     Ok(out)
-}
-
-/// A JSON input value → [`xark_prover::InputValue`]: strings and integers are scalars,
-/// `true`/`false` are `1`/`0`, arrays and objects nest (flattened to `name[i]` /
-/// `name.field`). A float that is a whole number (`1e3`) is accepted while it's
-/// exact (up to 2^53); anything else is rejected rather than rounded: pass big
-/// values as decimal or `0x`-hex strings.
-fn json_to_input(v: &serde_json::Value) -> Result<xark_prover::InputValue> {
-    use xark_prover::InputValue;
-    Ok(match v {
-        serde_json::Value::String(s) => InputValue::Scalar(s.clone()),
-        serde_json::Value::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
-            (Some(u), _, _) => InputValue::Scalar(u.to_string()),
-            (None, Some(i), _) => InputValue::Scalar(i.to_string()),
-            // `1e3` is a whole number written as a float: fine while it's exact.
-            (None, None, Some(f)) if f.fract() == 0.0 && f.abs() <= 9_007_199_254_740_992.0 => {
-                InputValue::Scalar(format!("{}", f as i64))
-            }
-            (None, None, Some(f)) if f.fract() != 0.0 => {
-                anyhow::bail!("number {n} is not a whole number")
-            }
-            _ => anyhow::bail!(
-                "number {n} is too large for a JSON number to hold exactly; pass it as a \
-                 decimal string"
-            ),
-        },
-        serde_json::Value::Bool(b) => InputValue::Scalar(if *b { "1" } else { "0" }.into()),
-        serde_json::Value::Array(xs) => {
-            InputValue::List(xs.iter().map(json_to_input).collect::<Result<_>>()?)
-        }
-        serde_json::Value::Object(m) => InputValue::Map(
-            m.iter()
-                .map(|(k, x)| Ok((k.clone(), json_to_input(x)?)))
-                .collect::<Result<_>>()?,
-        ),
-        serde_json::Value::Null => anyhow::bail!("null is not an input value"),
-    })
 }
 
 /// Render a copy-pasteable `--inputs` JSON template naming every declared input,
@@ -748,37 +616,9 @@ pub fn circuit_hash(r1cs_json: &str) -> String {
     sha256_hex(r1cs_json.as_bytes())
 }
 
-/// Public inputs in variable-id (allocation) order, taken from `--inputs`
-/// values. This matches how the prover derives them from the solved witness:
-/// the public portion of the assignment, in var-id order.
-pub fn public_inputs_from_inputs(
-    prog: &R1csProgram,
-    inputs: &BTreeMap<String, String>,
-) -> Result<Vec<Fr>> {
-    let mut vars: Vec<_> = prog
-        .variables
-        .iter()
-        .filter(|v| v.visibility == Visibility::Public)
-        .collect();
-    vars.sort_by_key(|v| v.id);
-    let mut out = Vec::with_capacity(vars.len());
-    for v in vars {
-        let value = inputs.get(&v.name).with_context(|| {
-            format!(
-                "missing public input `{0}` (add it to --inputs, e.g. --inputs '{{\"{0}\": <value>}}')",
-                v.name
-            )
-        })?;
-        let fr = xark_prover::try_fr_from_decimal(value)
-            .map_err(|e| anyhow::anyhow!("public input `{}`: {e}", v.name))?;
-        out.push(fr);
-    }
-    Ok(out)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{check_uint_ranges, inputs_hint, parse_input_text, parse_inputs_arg};
+    use super::{inputs_hint, parse_input_text, read_inputs};
     use std::path::Path;
 
     #[test]
@@ -793,128 +633,38 @@ mod tests {
         assert_eq!(inputs.get("amount").map(String::as_str), Some("34"));
     }
 
+    /// `--inputs` is read against `schema.json`: values in natural forms, ranges
+    /// checked, and a missing or old schema asks for a rebuild.
     #[test]
-    fn parses_nested_json_to_flatten_names() {
-        // Objects nest as `name.field`, arrays as `name[i]`; bools are 0/1.
-        let inputs = parse_input_text(
-            r#"{"id": {"dob": 19940312, "tags": [1, "0x02"], "ok": true}, "x": "7"}"#,
-            Path::new("witness.json"),
-        )
-        .unwrap();
-        let got: Vec<(&str, &str)> = inputs
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                ("id.dob", "19940312"),
-                ("id.ok", "1"),
-                ("id.tags[0]", "1"),
-                ("id.tags[1]", "0x02"),
-                ("x", "7"),
-            ]
-        );
-    }
-
-    #[test]
-    fn rejects_inexact_json_numbers() {
-        // A float, or an integer past u64, would be silently rounded; ask for a string.
-        assert!(parse_input_text(r#"{"a": 1.5}"#, Path::new("w.json")).is_err());
-        assert!(parse_input_text(r#"{"a": 18446744073709551616}"#, Path::new("w.json")).is_err());
-    }
-
-    #[test]
-    fn parses_json_without_losing_large_values() {
-        let inputs = parse_input_text(
-            r#"{"amount": 34, "field": "21888242871839275222246405745257275088548364400416034343698204186575808495616"}"#,
-            Path::new("witness.json"),
-        )
-        .unwrap();
-
-        assert_eq!(inputs.get("amount").map(String::as_str), Some("34"));
-        assert_eq!(
-            inputs.get("field").map(String::as_str),
-            Some("21888242871839275222246405745257275088548364400416034343698204186575808495616")
-        );
-    }
-
-    #[test]
-    fn rejects_null_json_values() {
-        // Arrays and objects now nest (see `parses_nested_json_to_flatten_names`); a
-        // null still has no meaning as an input.
-        let err =
-            parse_input_text(r#"{"path": [1, null]}"#, Path::new("witness.json")).unwrap_err();
-        assert!(err.to_string().contains("input `path`"), "{err}");
-        assert!(err.to_string().contains("null"), "{err}");
-    }
-
-    #[test]
-    fn inputs_arg_accepts_inline_json() {
-        // A leading `{` is read as inline JSON — no file on disk.
-        let inputs = parse_inputs_arg(r#"{"secret": 3, "result": 27}"#).unwrap();
-        assert_eq!(inputs.get("secret").map(String::as_str), Some("3"));
-        assert_eq!(inputs.get("result").map(String::as_str), Some("27"));
-    }
-
-    #[test]
-    fn inputs_arg_reads_a_file_path() {
-        let dir = std::env::temp_dir().join("xark-inputs-arg-test");
+    fn inputs_follow_the_schema() {
+        let dir = std::env::temp_dir().join(format!("xark-inputs-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("w.inputs");
-        std::fs::write(&path, "secret = 3\nresult = 27\n").unwrap();
-
-        let inputs = parse_inputs_arg(path.to_str().unwrap()).unwrap();
-        assert_eq!(inputs.get("secret").map(String::as_str), Some("3"));
-        assert_eq!(inputs.get("result").map(String::as_str), Some("27"));
-    }
-
-    #[test]
-    fn whole_floats_are_integers() {
-        let inputs = parse_inputs_arg(r#"{"a": 1e3, "b": -2.0}"#).unwrap();
-        assert_eq!(inputs["a"], "1000");
-        assert_eq!(inputs["b"], "-2");
-        let err = parse_inputs_arg(r#"{"a": 1.5}"#).unwrap_err();
-        assert!(format!("{err:#}").contains("not a whole number"), "{err:#}");
-        let err = parse_inputs_arg(r#"{"a": 1e30}"#).unwrap_err();
-        assert!(format!("{err:#}").contains("decimal string"), "{err:#}");
-    }
-
-    #[test]
-    fn uint_inputs_are_range_checked() {
-        let dir = std::env::temp_dir().join(format!("xark-uint-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let missing = read_inputs(&dir, r#"{"b": 1}"#).unwrap_err().to_string();
+        assert!(missing.contains("run `xark build`"), "{missing}");
+        std::fs::write(dir.join("schema.json"), r#"{"version": 1, "inputs": []}"#).unwrap();
+        let old = read_inputs(&dir, r#"{"b": 1}"#).unwrap_err().to_string();
+        assert!(old.contains("rebuild"), "{old}");
         std::fs::write(
             dir.join("schema.json"),
-            r#"{"inputs": [
-                {"name": "b", "type": {"uint": 8}},
-                {"name": "id", "type": {"ref": "Id"}},
-                {"name": "f", "type": "field"}
-            ], "types": {"Id": {"struct": [
-                {"name": "tags", "type": {"array": {"len": 2, "of": {"uint": 16}}}}
-            ]}}}"#,
+            r#"{"version": 2, "circuit": "c",
+              "inputs": [{"name": "b", "visibility": "private", "type": {"uint": 8}},
+                         {"name": "msg", "visibility": "public", "type": {"array": {"of": {"uint": 8}, "len": 2}}}],
+              "types": {}, "public_inputs": ["msg[0]", "msg[1]"]}"#,
         )
         .unwrap();
-        let check = |json: &str| check_uint_ranges(&dir, &parse_inputs_arg(json).unwrap());
-        check(r#"{"b": 255, "id": {"tags": [65535, 0]}, "f": 99999}"#).unwrap();
-        for (json, want) in [
-            (
-                r#"{"b": 256}"#,
-                "input `b` is a u8: 256 is out of range (0..=255)",
-            ),
-            (r#"{"b": -1}"#, "input `b` is a u8: -1"),
-            (r#"{"b": "0x100"}"#, "input `b` is a u8: 0x100"),
-            (
-                r#"{"id": {"tags": [0, 65536]}}"#,
-                "input `id.tags[1]` is a u16",
-            ),
-        ] {
-            let err = check(json).unwrap_err().to_string();
-            assert!(err.contains(want), "{json}: {err}");
-        }
+        let leaves = read_inputs(&dir, r#"{"b": 255, "msg": "0x6162"}"#).unwrap();
+        assert_eq!(
+            (leaves["b"].as_str(), leaves["msg[1]"].as_str()),
+            ("255", "98")
+        );
+        let err = read_inputs(&dir, r#"{"b": 256, "msg": "0x6162"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("out of range for a u8"), "{err}");
+        let file = dir.join("w.inputs");
+        std::fs::write(&file, "b = 7\nmsg[0] = 1\nmsg[1] = 2\n").unwrap();
+        assert_eq!(read_inputs(&dir, file.to_str().unwrap()).unwrap()["b"], "7");
         std::fs::remove_dir_all(&dir).unwrap();
-        // No schema: nothing to check.
-        check_uint_ranges(&dir, &parse_inputs_arg(r#"{"b": 256}"#).unwrap()).unwrap();
     }
 
     #[test]

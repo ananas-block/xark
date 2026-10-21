@@ -89,11 +89,11 @@ thread_local! {
     static ARTIFACTS: RefCell<Option<streaming::Prepared>> = const { RefCell::new(None) };
 }
 
-/// Resolve a JS inputs object to `VarId → decimal` for the solver, with the same
-/// resolver as `xark prove --inputs` ([`xark_prover::resolve_input_ids`]): per-leaf
-/// names, logical inputs (`0x`-hex bytes, hashes, scalars), and nested objects/arrays
-/// mirroring the input's Rust type. Values may be strings (decimal or `0x`-hex),
-/// integer numbers, bigints, or booleans.
+/// Resolve a JS inputs object to `VarId → decimal` for the solver
+/// ([`xark_prover::resolve_input_ids`]): leaf names, or nested objects/arrays
+/// mirroring the input's shape. Values may be strings (decimal or `0x`-hex), integer
+/// numbers, bigints, or booleans; natural forms (dates, bytes, points) go through
+/// [`encode_inputs`] first.
 fn resolve_inputs(
     vars: &[xark_ir::primitive::Var],
     inputs: JsValue,

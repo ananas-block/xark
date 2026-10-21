@@ -217,18 +217,21 @@ sources?)` and the streaming API's `options.sources` take it the same way.
 
 #### Inputs
 
-`inputs` is resolved exactly like `xark prove --inputs` (one shared resolver), so the
-same values work in the CLI and here. Keys are the circuit's input names; values may be
-nested to mirror the input's Rust type:
+`inputs` gives every input leaf a field element: keys are the circuit's input names,
+and values nest to mirror the input's shape:
 
 ```js
 prove(xbc, pk, {
   id: { dob: 19940312, net_worth: 2400000n, tag: new Uint8Array([1, 2]) }, // field names as in Rust
   path: ["12", "0x0d"],                // an array: element i → path[i]
-  msg: "0x616263",                     // a [u8; 3] as one hex string
   ok: true,                            // booleans are 1 / 0
 });
 ```
+
+For values in their natural forms (a date, a country, a hash's 32 bytes, a key),
+encode them first with the circuit's `schema.json`, exactly as `xark prove --inputs`
+reads them: `prove(xbc, pk, encodeInputs(schema, JSON.stringify(inputs)))`. A
+generated client (`xark client`) does this for you.
 
 Scalars may be decimal strings, `0x`-hex strings, safe-integer numbers, or bigints.
 A field value must already be a field element (`0 <= x < p`): a negative or larger

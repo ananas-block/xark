@@ -46,7 +46,6 @@ pub fn run(args: CheckArgs) -> Result<()> {
         .as_deref()
         .expect("check::run is only reached with --inputs");
     let inputs = super::read_inputs(&project.xark_dir, arg)?;
-    super::check_uint_ranges(&project.xark_dir, &inputs)?;
     let id_inputs = resolve_input_ids(&cp.vars, &inputs)?;
     let _assign = soundness_check(&cp, sources.as_ref(), &id_inputs)?;
 

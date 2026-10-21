@@ -80,6 +80,14 @@ gadgets now check more:
   crate's Rust. Values cross as JSON in their natural forms (`xark::client`), a
   panic is an exception with its message. `Date::MIN`/`Date::MAX` give "any date"
   limits a client can read back (a raw `99999999` isn't a day).
+- **One way to read input values.** `xark prove/check/verify --inputs` read
+  every value against `schema.json` (natural forms, ranges checked), and a
+  missing or older `schema.json` asks for `xark build` instead of falling back to
+  guessing how a value splits into leaves. xark-wasm's low-level `prove()` takes
+  leaf values (nested to mirror the input's shape); natural forms go through
+  `encodeInputs(schema, …)` first, as generated clients already do. The old
+  resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
+  limbs) are gone.
 - **Circuit crates can use `std`.** The circuit build links `std` (which
   `wasm32-unknown-unknown` ships), and panics reach the compiler through a panic
   hook the `#[circuit]` entry installs, rather than a `#[panic_handler]` that

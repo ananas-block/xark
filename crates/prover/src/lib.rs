@@ -414,28 +414,6 @@ pub trait ProveInputs {
     fn into_inputs(self) -> Vec<(String, Fr)>;
 }
 
-/// Split a big-endian byte string into `n_limbs` little-endian `bits`-bit limbs,
-/// named `<prefix>.limbs[0..n_limbs]`. The single place the host-side limb split
-/// lives, so every host-side split agrees with the circuit's leaves.
-pub fn limb_leaves(
-    be_bytes: &[u8],
-    prefix: &str,
-    n_limbs: usize,
-    bits: u32,
-) -> Vec<(String, String)> {
-    use num_bigint::BigUint;
-    let v = BigUint::from_bytes_be(be_bytes);
-    let mask = (BigUint::from(1u8) << bits) - 1u8;
-    (0..n_limbs)
-        .map(|i| {
-            (
-                format!("{prefix}.limbs[{i}]"),
-                ((&v >> (i as u32 * bits)) & &mask).to_string(),
-            )
-        })
-        .collect()
-}
-
 /// The "circuit not built" failure: an actionable message with the fix command
 /// on its own line. Colorized (brand green for the command, red for the header)
 /// when stderr is a terminal, matching the `xark` CLI palette; plain text when

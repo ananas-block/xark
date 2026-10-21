@@ -1,11 +1,10 @@
-//! Turning user-supplied input values into the solver's `VarId → decimal` map.
+//! Input leaves (`id.dob`, `msg[3]`) to the solver's `VarId → decimal` map.
 //!
-//! One resolver shared by `xark prove` / `xark check --inputs` and the wasm prover, so
-//! the same inputs work everywhere. Values may be given per leaf (`id.dob`, `msg[3]`),
-//! as a **logical input** that fans out to its leaves (a `0x`-hex byte string for
-//! `[u8; N]`, a 32-byte hash, a 256-bit non-native scalar, …), or as a **nested value**
-//! ([`InputValue::Map`] / [`InputValue::List`]) mirroring the input's Rust type, which
-//! [`flatten_inputs`] turns into the compiler's structural-flatten leaf names.
+//! Values in their natural forms (a date, a hash's bytes, a point) are encoded into
+//! leaves by the schema codec ([`crate::schema`]: `xark prove --inputs`, xark-wasm's
+//! `encodeInputs`, generated clients); this takes the leaves. A value may also be
+//! nested ([`InputValue::Map`] / [`InputValue::List`]) mirroring the input's shape,
+//! which [`flatten_inputs`] turns into the leaf names.
 
 use std::collections::BTreeMap;
 
@@ -53,115 +52,14 @@ pub fn flatten_inputs(
     out
 }
 
-fn decode_hex(h: &str) -> Option<Vec<u8>> {
-    if !h.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok())
-        .collect()
-}
-
-/// A `0x`-prefixed hex string → raw bytes (rejects a missing prefix / odd length).
-fn parse_hex_bytes(s: &str) -> Result<Vec<u8>, String> {
-    let h = s
-        .strip_prefix("0x")
-        .or_else(|| s.strip_prefix("0X"))
-        .ok_or_else(|| format!("expected a 0x-prefixed hex string, got `{s}`"))?;
-    decode_hex(h).ok_or_else(|| format!("invalid hex `{s}`"))
-}
-
-/// A 256-bit input value → big-endian bytes: a `0x`-hex string (the natural form
-/// of a crypto scalar/coordinate) or a plain decimal.
-fn value_to_be_bytes(v: &str) -> Result<Vec<u8>, String> {
-    if v.starts_with("0x") || v.starts_with("0X") {
-        parse_hex_bytes(v)
-    } else {
-        num_bigint::BigUint::parse_bytes(v.trim().as_bytes(), 10)
-            .map(|n| n.to_bytes_be())
-            .ok_or_else(|| format!("expected a decimal or `0x`-hex value, got `{v}`"))
-    }
-}
-
-/// The limb bit-width for an `N`-limb non-native value: 2×128 (the packed secp
-/// half form) or 3×86 (the default field-element layout).
-fn limb_bits(n_limbs: usize) -> Result<u32, String> {
-    match n_limbs {
-        2 => Ok(128),
-        3 => Ok(86),
-        n => Err(format!(
-            "unsupported {n}-limb layout (expected 2×128 or 3×86)"
-        )),
-    }
-}
-
-/// Count the `prefix.limbs[i]` leaves present in `vars` (`0` if none).
-fn count_limbs(vars: &[xark_ir::primitive::Var], prefix: &str) -> usize {
-    let key = format!("{prefix}.limbs");
-    vars.iter()
-        .filter(|v| array_index(&v.name, &key).is_some())
-        .count()
-}
-
-/// The distinct `<field>` names of a compound input `prefix.<field>.limbs[i]`
-/// (e.g. `["x", "y"]` for a point, `["r", "s"]` for a signature), name-sorted.
-fn sub_fields(vars: &[xark_ir::primitive::Var], prefix: &str) -> Vec<String> {
-    let pre = format!("{prefix}.");
-    let mut fs: Vec<String> = vars
-        .iter()
-        .filter_map(|v| {
-            let (f, tail) = v.name.strip_prefix(&pre)?.split_once('.')?;
-            tail.starts_with("limbs[").then(|| f.to_string())
-        })
-        .collect();
-    fs.sort_unstable();
-    fs.dedup();
-    fs
-}
-
-/// A byte-array leaf `name[i]` → its index `i` (only a flat 1-D index; nested /
-/// multi-dim names like `x.bits[0][1]` return `None`).
-fn array_index(leaf: &str, name: &str) -> Option<usize> {
-    let inner = leaf
-        .strip_prefix(name)?
-        .strip_prefix('[')?
-        .strip_suffix(']')?;
-    if inner.contains('[') {
-        return None;
-    }
-    inner.parse().ok()
-}
-
-/// A SHA-256 digest leaf `name.bits[w][j]` → `(word, bit)`.
-fn digest_index(leaf: &str, name: &str) -> Option<(usize, usize)> {
-    let rest = leaf.strip_prefix(name)?.strip_prefix(".bits[")?;
-    let (w, rest) = rest.split_once("][")?;
-    let j = rest.strip_suffix(']')?;
-    Some((w.parse().ok()?, j.parse().ok()?))
-}
-
-/// The logical input a leaf belongs to (`input[3]` → `input`, `d.bits[0][1]` → `d`).
 fn logical_root(leaf: &str) -> &str {
     let cut = leaf.find(['[', '.']).unwrap_or(leaf.len());
     &leaf[..cut]
 }
 
-/// Resolve `name → value` inputs to `VarId → decimal` for the solver.
-///
-/// Shared by `xark prove` and `xark check --inputs`. A name may be a single leaf
-/// or a **logical input** that fans out to its leaves:
-///   * scalar `Field` → decimal or `0x`-hex, a field element (`0 <= x < p`;
-///     anything else is an error, not reduced);
-///   * byte array `[u8; N]` (leaves `name[i]`) → a `0x`-hex string of exactly `N`
-///     bytes, one byte per leaf;
-///   * hash (leaves `name.hi` / `name.lo`) → a `0x`-hex string of 32 bytes packed
-///     into two 128-bit field halves (top 16 bytes → `hi`, low 16 → `lo`);
-///   * SHA-256 digest (leaves `name.bits[w][j]`) → a `0x`-hex string of 32 bytes,
-///     decomposed into the 256 bit leaves in the gadget's word/byte/bit layout.
-///
-/// A wrong value can only yield an unsatisfiable witness (a clear failure), never
-/// a false proof, so this stays a convenience over the always-safe flat form.
+/// Resolve `leaf → value` inputs to `VarId → decimal` for the solver. Each value is
+/// a field element, decimal or `0x`-hex (`0 <= x < p`; anything else is an error,
+/// not reduced). Every input leaf must be given, and only input leaves.
 pub fn resolve_input_ids(
     vars: &[xark_ir::primitive::Var],
     inputs: &BTreeMap<String, String>,
@@ -177,127 +75,10 @@ pub fn resolve_input_ids(
     let mut id_inputs: BTreeMap<VarId, String> = BTreeMap::new();
 
     for (k, v) in inputs {
-        // 1. Exact leaf — a field element (decimal or `0x`-hex, `0 <= x < p`).
         if let Some(&id) = by_name.get(k.as_str()) {
             let dec = crate::field_input_decimal(v)
                 .map_err(|e| format!("invalid value for input `{k}`: {e}"))?;
             id_inputs.insert(id, dec);
-            continue;
-        }
-
-        // 2. Byte array `name[i]` — a `0x`-hex string, one byte per leaf.
-        let mut arr: Vec<(usize, VarId)> = vars
-            .iter()
-            .filter_map(|var| array_index(&var.name, k).map(|i| (i, var.id)))
-            .collect();
-        if !arr.is_empty() {
-            arr.sort_unstable_by_key(|(i, _)| *i);
-            let bytes = parse_hex_bytes(v).map_err(|e| format!("input `{k}`: {e}"))?;
-            if bytes.len() != arr.len() {
-                return Err(format!(
-                    "input `{k}` is a {}-byte array, but the hex value has {} bytes",
-                    arr.len(),
-                    bytes.len()
-                ));
-            }
-            for ((_, id), byte) in arr.iter().zip(bytes) {
-                id_inputs.insert(*id, byte.to_string());
-            }
-            continue;
-        }
-
-        // 3. Packed hash `name.hi` / `name.lo` — a 32-byte `0x`-hex value split into
-        //    two 128-bit field halves (top 16 bytes → hi, low 16 → lo, big-endian).
-        if let (Some(&hi_id), Some(&lo_id)) = (
-            by_name.get(format!("{k}.hi").as_str()),
-            by_name.get(format!("{k}.lo").as_str()),
-        ) {
-            let bytes = parse_hex_bytes(v).map_err(|e| format!("input `{k}`: {e}"))?;
-            if bytes.len() != 32 {
-                return Err(format!(
-                    "hash input `{k}` needs a 32-byte hex value, but got {} bytes",
-                    bytes.len()
-                ));
-            }
-            let pack = |chunk: &[u8]| chunk.iter().fold(0u128, |acc, &b| (acc << 8) | b as u128);
-            id_inputs.insert(hi_id, pack(&bytes[..16]).to_string());
-            id_inputs.insert(lo_id, pack(&bytes[16..]).to_string());
-            continue;
-        }
-
-        // 4. SHA-256 digest `name.bits[w][j]` — a 32-byte `0x`-hex hash. Byte `idx`
-        //    occupies word `idx/4`, big-endian slot within the word; leaf bit `j`
-        //    of word `w` is bit `j%8` of hash byte `4w + (3 - j/8)`.
-        let dig: Vec<((usize, usize), VarId)> = vars
-            .iter()
-            .filter_map(|var| digest_index(&var.name, k).map(|wj| (wj, var.id)))
-            .collect();
-        if !dig.is_empty() {
-            let bytes = parse_hex_bytes(v).map_err(|e| format!("input `{k}`: {e}"))?;
-            if bytes.len() != 32 {
-                return Err(format!(
-                    "digest input `{k}` needs a 32-byte hex value, but got {} bytes",
-                    bytes.len()
-                ));
-            }
-            for ((w, j), id) in dig {
-                let byte = bytes[4 * w + (3 - j / 8)];
-                id_inputs.insert(id, ((byte >> (j % 8)) & 1).to_string());
-            }
-            continue;
-        }
-
-        // 5. Non-native scalar `name.limbs[i]` — a 256-bit value (a `0x`-hex crypto
-        //    scalar or a decimal) fanned out to its `N` little-endian limbs via the
-        //    same `limb_leaves` split the gadgets' `Input` impls use. `N` picks the
-        //    layout: 2 → 128-bit halves (packed secp), 3 → 86-bit limbs.
-        let n_scalar = count_limbs(vars, k);
-        if n_scalar > 0 {
-            let be = value_to_be_bytes(v).map_err(|e| format!("input `{k}`: {e}"))?;
-            let bits = limb_bits(n_scalar)?;
-            for (name, dec) in crate::limb_leaves(&be, k, n_scalar, bits) {
-                if let Some(&id) = by_name.get(name.as_str()) {
-                    id_inputs.insert(id, dec);
-                }
-            }
-            continue;
-        }
-
-        // 6. Non-native compound `name.<field>.limbs[i]` (an affine point `x ‖ y`,
-        //    an ECDSA signature `r ‖ s`, …) — a big-endian concatenation of its
-        //    32-byte fields (with an optional SEC1 `0x04` tag), each field fanned
-        //    out like case 5. Fields are taken in name order (`r`<`s`, `x`<`y`),
-        //    matching the wire concatenation.
-        let fields = sub_fields(vars, k);
-        if !fields.is_empty() {
-            let mut bytes = parse_hex_bytes(v).map_err(|e| format!("input `{k}`: {e}"))?;
-            let want = fields.len() * 32;
-            if bytes.len() == want + 1 && bytes[0] == 0x04 {
-                bytes.remove(0); // strip the SEC1 uncompressed-point tag
-            }
-            if bytes.len() != want {
-                return Err(format!(
-                    "compound input `{k}` ({} fields: {fields:?}) needs a {want}-byte \
-                     big-endian value{}, but got {} bytes",
-                    fields.len(),
-                    if fields.len() == 2 {
-                        " (or 65 with the 0x04 SEC1 tag)"
-                    } else {
-                        ""
-                    },
-                    bytes.len()
-                ));
-            }
-            for (i, f) in fields.iter().enumerate() {
-                let chunk = &bytes[i * 32..(i + 1) * 32];
-                let n = count_limbs(vars, &format!("{k}.{f}"));
-                for (name, dec) in crate::limb_leaves(chunk, &format!("{k}.{f}"), n, limb_bits(n)?)
-                {
-                    if let Some(&id) = by_name.get(name.as_str()) {
-                        id_inputs.insert(id, dec);
-                    }
-                }
-            }
             continue;
         }
 
@@ -380,17 +161,12 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    /// Natural forms are the schema codec's: a byte array given as hex isn't split
+    /// here (that's `encodeInputs` / `--inputs`), it's an unknown leaf.
     #[test]
-    fn logical_byte_array_still_resolves() {
-        let got = resolve(vec![
-            ("id.dob", Scalar("1".into())),
-            ("id.salt", Scalar("2".into())),
-            ("msg", Scalar("0x0102".into())),
-            ("out", Scalar("3".into())),
-        ])
-        .unwrap();
-        assert_eq!(got.get(&2).map(String::as_str), Some("1"));
-        assert_eq!(got.get(&3).map(String::as_str), Some("2"));
+    fn values_are_leaves() {
+        let err = resolve(vec![("msg", Scalar("0x0102".into()))]).unwrap_err();
+        assert!(err.contains("unknown input `msg`"), "{err}");
     }
 
     #[test]
@@ -412,7 +188,7 @@ mod tests {
             resolve(vec![
                 ("id.dob", Scalar("0".into())),
                 ("id.salt", Scalar("0".into())),
-                ("msg", Scalar("0x0000".into())),
+                ("msg", List(vec![Scalar("0".into()), Scalar("0".into())])),
                 ("out", Scalar(out.into())),
             ])
         };

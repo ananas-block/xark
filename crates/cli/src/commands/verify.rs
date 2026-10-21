@@ -13,7 +13,6 @@ use clap::Args;
 use xark_backend::serialization::read_public_inputs;
 use xark_backend::{keys::Groth16Keys, proof::ProofBundle, verify};
 
-use super::{load_backend_r1cs, parse_inputs_arg, public_inputs_from_inputs};
 use crate::xark_project::XarkProject;
 
 #[derive(Args, Debug)]
@@ -75,15 +74,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             read_public_inputs(&path)
                 .with_context(|| format!("reading {}{hint}", path.display()))?
         }
-        Some(arg) => match super::read_public_inputs(&project.xark_dir, arg)? {
-            Some(public) => public,
-            None => {
-                let (prog, _) = load_backend_r1cs(&project.circuit_xbc())?;
-                let inputs = parse_inputs_arg(arg)?;
-                super::check_uint_ranges(&project.xark_dir, &inputs)?;
-                public_inputs_from_inputs(&prog, &inputs)?
-            }
-        },
+        Some(arg) => super::read_public_inputs(&project.xark_dir, arg)?,
     };
 
     let ok = verify(&vk, &proof, &public)?;

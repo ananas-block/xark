@@ -111,7 +111,7 @@ test("byte args reject a non-bytes value with a clear message", () => {
   );
 });
 
-test("inputs share the CLI resolver: numbers, bigints, and 0x-hex all work", () => {
+test("inputs take numbers, bigints, and 0x-hex", () => {
   for (const inputs of [
     { secret: 3, result: 27 },
     { secret: 3n, result: 27n },
