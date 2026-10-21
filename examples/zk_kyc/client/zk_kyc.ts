@@ -158,7 +158,11 @@ export class ZkKyc {
     only: readonly (keyof ZkKycKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
     init?: RequestInit,
   ): Promise<ZkKyc> {
-    const root = new URL(base, (globalThis as { location?: { href: string } }).location?.href);
+    const page = (globalThis as { location?: { href: string } }).location?.href;
+    if (!page && !URL.canParse(base)) {
+      throw new Error(`load: ${base} is relative, and there's no page to resolve it against; pass an absolute URL`);
+    }
+    const root = new URL(base, page);
     if (!root.pathname.endsWith("/")) root.pathname += "/";
     const keys: Record<string, Uint8Array | string> = {};
     await Promise.all(

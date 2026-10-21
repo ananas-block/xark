@@ -31,6 +31,7 @@ test("loads its build output from a URL", async () => {
     expect(verifier.verify(proof, publicInputs)).toBe(true);
     expect(() => verifier.prove({ secret: 3, result: 27 })).toThrow(/needs `circuit`/);
     await expect(Cube.load(wasm, server.url + "missing/")).rejects.toThrow(/404/);
+    await expect(Cube.load(wasm, "/circuits/cube/")).rejects.toThrow(/pass an absolute URL/);
   } finally {
     await server.close();
   }

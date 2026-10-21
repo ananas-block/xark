@@ -29,9 +29,15 @@ ark-bn254 = { version = "0.6", default-features = false, features = ["scalar_fie
 ark-ff = { version = "0.6", default-features = false }
 # Host-only: big-integer hints (bignum mul/inverse) computed natively.
 num-bigint = "0.4"
+
 # The host-side prover (`xark::prover`): what `#[circuit]`'s validator and the
-# input traits use, so a circuit crate needs no other xark dependency.
+# input traits use, so a circuit crate needs no other xark dependency. Parallel
+# (rayon, its default) natively; single-threaded on `wasm32`, where xark-wasm uses a
+# gadget's native code (`xark-poseidon2`) and rayon's threads aren't available.
+[target.'cfg(all(not(xark), not(target_arch = "wasm32")))'.dependencies]
 xark-prover = { path = "../prover", version = "0.3.0" }
+[target.'cfg(all(not(xark), target_arch = "wasm32"))'.dependencies]
+xark-prover = { path = "../prover", version = "0.3.0", default-features = false }
 
 [dev-dependencies]
 xark-test-harness = { path = "../test-harness", version = "0.3.0" }
