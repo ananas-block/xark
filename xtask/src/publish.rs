@@ -193,7 +193,9 @@ fn dry_run() -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.args(["package", "--workspace"])
         .current_dir(&copy)
-        .env("CARGO_TARGET_DIR", crate::target_dir());
+        // Its own target: cargo never rechecks a registry package's build, so a
+        // shared one would reuse an earlier run's build of a crate at this version.
+        .env("CARGO_TARGET_DIR", copy.join("target"));
     for p in metadata(&copy)? {
         if p["publish"] == serde_json::json!([]) {
             cmd.args(["--exclude", p["name"].as_str().unwrap_or_default()]);
