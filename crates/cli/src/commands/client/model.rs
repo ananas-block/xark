@@ -481,7 +481,7 @@ mod tests {
             ts.contains("  next(): PValue {\n    return P.next(this);"),
             "{ts}"
         );
-        assert!(ts.contains("  day(p: P, d: number): PValue {"), "{ts}");
-        assert!(!ts.contains("  day(d: number)"), "{ts}");
+        assert!(ts.contains("  day(p: P, d: U8): PValue {"), "{ts}");
+        assert!(!ts.contains("  day(d: U8)"), "{ts}");
     }
 }

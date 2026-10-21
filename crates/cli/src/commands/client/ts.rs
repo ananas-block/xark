@@ -66,15 +66,20 @@ fn prop(name: &str) -> String {
 fn input(ty: &Ty) -> String {
     match ty {
         Ty::Field => "Field | bigint | number | string".into(),
+        Ty::Uint(w @ (8 | 16 | 32 | 64 | 128)) => format!("U{w}"),
         Ty::Uint(w) if *w <= 32 => "number".into(),
         Ty::Uint(_) => "bigint | number".into(),
         Ty::Bool => "boolean".into(),
         Ty::Bytes { .. } => "Bytes".into(),
         Ty::Number { .. } => "bigint | number | string | Uint8Array".into(),
-        Ty::Date => "Date".into(),
+        Ty::Date => "Day".into(),
+        Ty::Text { max: TEXT } => "Text".into(),
         Ty::Text { .. } => "string".into(),
         Ty::Choice(e) => e.clone(),
         Ty::Set(e) => format!("{e} | readonly {e}[]"),
+        Ty::Array(t, n) if *n as usize <= TUPLE => {
+            format!("readonly [{}]", vec![input(t); *n as usize].join(", "))
+        }
         Ty::Array(t, _) => format!("readonly {}[]", paren(&input(t))),
         Ty::Tuple(ts) => {
             let parts: Vec<String> = ts.iter().map(input).collect();
@@ -93,10 +98,14 @@ fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
         Ty::Uint(_) => "bigint".into(),
         Ty::Bool => "boolean".into(),
         Ty::Bytes { .. } => "Uint8Array".into(),
-        Ty::Date => "Date".into(),
+        Ty::Date => "Day".into(),
+        Ty::Text { max: TEXT } => "Text".into(),
         Ty::Text { .. } => "string".into(),
         Ty::Choice(e) => e.clone(),
         Ty::Set(e) => format!("{e}[]"),
+        Ty::Array(t, n) if *n as usize <= TUPLE => {
+            format!("[{}]", vec![value(t, structs); *n as usize].join(", "))
+        }
         Ty::Array(t, _) => format!("{}[]", paren(&value(t, structs))),
         Ty::Tuple(ts) => {
             let parts: Vec<String> = ts.iter().map(|t| value(t, structs)).collect();
@@ -118,6 +127,11 @@ fn revive(ty: &Ty, e: &str) -> String {
         Ty::Uint(_) | Ty::Bool | Ty::Text { .. } | Ty::Choice(_) | Ty::Set(_) => e.into(),
         Ty::Bytes { .. } => format!("fromHex({e})"),
         Ty::Date => format!("new Date({e})"),
+        // Element by element, so a fixed length stays a tuple.
+        Ty::Array(t, n) if *n as usize <= TUPLE => {
+            let parts: Vec<String> = (0..*n).map(|i| revive(t, &format!("{e}[{i}]"))).collect();
+            format!("[{}]", parts.join(", "))
+        }
         Ty::Array(t, _) => format!("{e}.map((x) => {})", revive(t, "x")),
         Ty::Tuple(ts) => {
             let parts: Vec<String> = ts
@@ -134,6 +148,10 @@ fn revive(ty: &Ty, e: &str) -> String {
 /// A doc line for what the TS type doesn't say (widths, lengths, limits).
 fn note(ty: &Ty) -> Option<String> {
     Some(match ty {
+        // Named aliases (`U64`, `Day`, `Text`) carry their own docs, and a tuple its length.
+        Ty::Uint(8 | 16 | 32 | 64 | 128) | Ty::Date | Ty::Text { max: TEXT } => return None,
+        Ty::Array(_, n) if *n as usize <= TUPLE => return None,
+        Ty::Choice(_) => return None,
         Ty::Uint(w) => format!("`u{w}`: an integer in [0, 2^{w})."),
         Ty::Bytes {
             of: None,
@@ -149,11 +167,7 @@ fn note(ty: &Ty) -> Option<String> {
         } => format!("`{r}`: its bytes."),
         Ty::Bytes { .. } => return None,
         Ty::Number { of } => format!("`{of}`: the number, or its little-endian bytes."),
-        Ty::Date => "A calendar day: the `Date`'s UTC day, as `toISOString()` shows it \
-             (`new Date(\"1990-01-01\")`)."
-            .into(),
-        Ty::Text { max } => format!("`Text`: at most {max} UTF-8 bytes."),
-        Ty::Choice(e) => format!("One `{e}`."),
+        Ty::Text { max } => format!("Text: at most {max} UTF-8 bytes."),
         Ty::Set(e) => format!("A set of `{e}`: one, or a list of them."),
         Ty::Array(_, n) => format!("Exactly {n} elements."),
         Ty::Field | Ty::Bool | Ty::Tuple(_) | Ty::Struct(_) => return None,
@@ -310,7 +324,8 @@ pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
     for (r, fields) in &m.structs {
         let _ = writeln!(
             out,
-            "/** A `{r}` (an input struct). */\nexport interface {r} {{"
+            "/** {} `{r}` (an input struct). */\nexport interface {r} {{",
+            article(r)
         );
         for f in fields {
             if let Some(n) = note(&f.ty) {
@@ -473,10 +488,26 @@ pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
     if out.contains("fromHex(") {
         values.push("fromHex");
     }
-    let mut types = vec!["Json", "Proof", "Prover", "Verifier"];
-    if out.contains(": Bytes") {
-        types.insert(0, "Bytes");
-    }
+    // The runtime's types the body names (outside comments).
+    let code: String = out
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//") && !l.trim_start().starts_with('*'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let names = |name: &str| {
+        code.match_indices(name).any(|(i, _)| {
+            let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+            !code[..i].ends_with(ident) && !code[i + name.len()..].starts_with(ident)
+        })
+    };
+    let mut types: Vec<&str> = [
+        "Bytes", "Day", "Json", "Proof", "Prover", "Text", "U128", "U16", "U32", "U64", "U8",
+        "Verifier",
+    ]
+    .into_iter()
+    .filter(|t| matches!(*t, "Json" | "Proof" | "Prover" | "Verifier") || names(t))
+    .collect();
+    types.sort();
     let imports: Vec<String> = values
         .iter()
         .map(|v| v.to_string())
@@ -491,6 +522,20 @@ pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
         imports.join(", ")
     ))
 }
+
+/// "A" or "An", for a name.
+fn article(name: &str) -> &'static str {
+    match name.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "An",
+        _ => "A",
+    }
+}
+
+/// `Text`'s length, the standard one the runtime's `Text` alias documents.
+const TEXT: u64 = 31;
+/// Arrays up to this long are tuples (`readonly [Field, Field, Field, Field]`), so a
+/// wrong length doesn't compile; longer ones are arrays checked when encoded.
+const TUPLE: usize = 16;
 
 /// The module every generated client imports: `Field`, `Proof`, `Circuit`.
 const RUNTIME: &str = "@blueshift-gg/xark-wasm/client";
@@ -541,18 +586,18 @@ mod tests {
         for want in [
             "fn kyc_check(id: Private<Identity>, born_before: Public<Date>, allowed: Public<Bitfield<Country>>, doc: Private<[u8; 4]>, commitment: Public<Field>)",
             "export const Country = {\n  AD: \"AD\", US: \"US\",\n} as const;\nexport type Country = (typeof Country)[keyof typeof Country];",
-            "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
-            "  /** One `Country`. */\n  home: Country;",
+            "/** An `Identity` (an input struct). */\nexport interface Identity {\n  netWorth: U64;",
+            "  home: Country;",
             "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
-            "  pair: readonly [Field | bigint | number | string, number];",
+            "  pair: readonly [Field | bigint | number | string, U16];",
             "  active: boolean;",
-            "  bornBefore: Date;",
+            "  bornBefore: Day;",
             "  allowed: Country | readonly Country[];",
             "  doc: Bytes;",
-            "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: Field;\n}",
+            "export interface KycCheckPublicValues {\n  bornBefore: Day;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "import { CheckFailed, Circuit, Field, InputError, type Bytes, type Json, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.json\" with { type: \"json\" };\nexport { CheckFailed, Field, InputError };",
+            "import { CheckFailed, Circuit, Field, InputError, type Bytes, type Day, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.json\" with { type: \"json\" };\nexport { CheckFailed, Field, InputError };",
             "  name: \"kyc_check\",\n  schema,\n",
             "export interface KycCheckStructs {\n  Identity: Identity;\n}",
             "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",

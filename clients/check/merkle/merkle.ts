@@ -17,10 +17,8 @@ export { CheckFailed, Field, InputError };
 /** Every input of `merkle`. */
 export interface MerkleInputs {
   leaf: Field | bigint | number | string;
-  /** Exactly 4 elements. */
-  siblings: readonly (Field | bigint | number | string)[];
-  /** Exactly 4 elements. */
-  indexBits: readonly (Field | bigint | number | string)[];
+  siblings: readonly [Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string];
+  indexBits: readonly [Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string, Field | bigint | number | string];
   root: Field | bigint | number | string;
 }
 

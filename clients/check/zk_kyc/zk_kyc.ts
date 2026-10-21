@@ -10,7 +10,7 @@
 // schema, `zk_kyc.schema.json` (written with this file), exactly as `xark prove --inputs`
 // does.
 
-import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, type Day, type Json, type Proof, type Prover, type Text, type U16, type U64, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./zk_kyc.schema.json" with { type: "json" };
 export { CheckFailed, Field, InputError };
 
@@ -51,29 +51,21 @@ export const Country = {
 } as const;
 export type Country = (typeof Country)[keyof typeof Country];
 
-/** A `Identity` (an input struct). */
+/** An `Identity` (an input struct). */
 export interface Identity {
-  /** `Text`: at most 31 UTF-8 bytes. */
-  document: string;
-  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
-  born: Date;
-  /** One `Country`. */
+  document: Text;
+  born: Day;
   nationality: Country;
-  /** `u64`: an integer in [0, 2^64). */
-  netWorth: bigint | number;
-  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
-  expires: Date;
+  netWorth: U64;
+  expires: Day;
   salt: Field | bigint | number | string;
 }
 
 /** A `Policy` (an input struct). */
 export interface Policy {
-  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
-  today: Date;
-  /** A calendar day: the `Date`'s UTC day, as `toISOString()` shows it (`new Date("1990-01-01")`). */
-  bornBy: Date;
-  /** `u64`: an integer in [0, 2^64). */
-  minNetWorth: bigint | number;
+  today: Day;
+  bornBy: Day;
+  minNetWorth: U64;
   /** A set of `Country`: one, or a list of them. */
   allowed: Country | readonly Country[];
 }
@@ -93,14 +85,14 @@ export interface ZkKycPublicInputs {
 
 /** A `Policy`, decoded, with its Rust methods. */
 export class PolicyValue {
-  today: Date;
-  bornBy: Date;
+  today: Day;
+  bornBy: Day;
   minNetWorth: bigint;
   allowed: Country[];
 
   constructor(v: {
-    today: Date;
-    bornBy: Date;
+    today: Day;
+    bornBy: Day;
     minNetWorth: bigint;
     allowed: Country[];
   }) {
@@ -113,7 +105,7 @@ export class PolicyValue {
   /**
    * At least `years` old on `today`.
    */
-  minAge(years: number): PolicyValue {
+  minAge(years: U16): PolicyValue {
     return Policy.minAge(this, years);
   }
 
@@ -127,7 +119,7 @@ export class PolicyValue {
   /**
    * Worth at least `amount`, in the attestor's unit.
    */
-  worthAtLeast(amount: bigint | number): PolicyValue {
+  worthAtLeast(amount: U64): PolicyValue {
     return Policy.worthAtLeast(this, amount);
   }
 }
@@ -173,13 +165,13 @@ export const Policy = {
    * A check on `today` that any holder with a valid document passes: tighten it
    * with the other constructors.
    */
-  on(today: Date): PolicyValue {
+  on(today: Day): PolicyValue {
     return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [today]));
   },
   /**
    * At least `years` old on `today`.
    */
-  minAge(policy: Policy, years: number): PolicyValue {
+  minAge(policy: Policy, years: U16): PolicyValue {
     return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_age", [policy, years]));
   },
   /**
@@ -191,7 +183,7 @@ export const Policy = {
   /**
    * Worth at least `amount`, in the attestor's unit.
    */
-  worthAtLeast(policy: Policy, amount: bigint | number): PolicyValue {
+  worthAtLeast(policy: Policy, amount: U64): PolicyValue {
     return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.worth_at_least", [policy, amount]));
   },
 };

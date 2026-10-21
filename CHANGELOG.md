@@ -98,6 +98,10 @@ gadgets now check more:
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
   `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
   writes beside the client (`cube.schema.json`), which the client imports.
+- **Generated types read like the Rust.** xark's standard types have named
+  aliases, each documented once in the runtime: `Day` (a `Date`), `Text`, `U8` …
+  `U128`. An array of up to 16 elements is a tuple (`readonly [Field, Field, Field,
+  Field]` for `[Field; 4]`), so a wrong length doesn't compile.
 - **Typed errors.** A refused input is an `InputError` with the input's `path`
   (`"id.document"`; `xark_schema::InputError` in Rust), and inputs that fail a check
   a `CheckFailed` with the statement's `site` (`file`, `line`, `col`, `text`,

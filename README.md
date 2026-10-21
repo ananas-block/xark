@@ -210,11 +210,11 @@ export const Country = { AD: "AD", AE: "AE", /* … */ US: "US", ZW: "ZW" } as c
 export type Country = (typeof Country)[keyof typeof Country]; // "AD" | "AE" | …
 
 export interface Identity {
-  document: string;            // Text
-  born: Date;                  // its UTC day
+  document: Text;              // a string, at most 31 bytes
+  born: Day;                   // a Date: its UTC day
   nationality: Country;        // Country.US, or "US"; "XX" won't compile
-  netWorth: bigint | number;   // u64, in the attestor's unit
-  expires: Date;
+  netWorth: U64;               // bigint | number, in the attestor's unit
+  expires: Day;
   salt: Field | bigint | number | string; // a field element
 }
 ```

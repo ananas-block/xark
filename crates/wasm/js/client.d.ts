@@ -58,6 +58,24 @@ export class CheckFailed extends Error {
   constructor(message: string, site: Site);
 }
 
+/**
+ * A calendar day: the `Date`'s UTC day, as `toISOString()` shows it
+ * (`new Date("1990-01-01")` is 1990-01-01 anywhere). xark's `Date`.
+ */
+export type Day = Date;
+/** A string of at most 31 UTF-8 bytes. xark's `Text`. */
+export type Text = string;
+/** An integer in [0, 2^8): Rust's `u8`. */
+export type U8 = number;
+/** An integer in [0, 2^16): Rust's `u16`. */
+export type U16 = number;
+/** An integer in [0, 2^32): Rust's `u32`. */
+export type U32 = number;
+/** An integer in [0, 2^64): Rust's `u64`. A `number` must be a safe integer. */
+export type U64 = bigint | number;
+/** An integer in [0, 2^128): Rust's `u128`. A `number` must be a safe integer. */
+export type U128 = bigint | number;
+
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
 
