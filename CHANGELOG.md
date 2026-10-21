@@ -63,6 +63,24 @@ gadgets now check more:
   `Choice::require_in(set)` costs about 570 constraints over `Country`. `examples/zk_kyc` uses them: an `Identity`
   with a document number, birth date, nationality and net worth, checked
   against a public policy.
+- **`bool` inputs.** A `bool` parameter (or struct field) is one field
+  element, checked to be 0 or 1 on entry, and works as a condition (`if flag`)
+  and a value (`Field::from(flag)`); clients take `true`/`false`.
+- **`Date::parse` and `Text::parse`** return a `Result` (`xark::InvalidValue`),
+  and `Date::checked`/`Text::checked` an `Option`, for input you didn't write.
+  `From<&str>` still panics, for literals in tests.
+- **`cargo test` rebuilds when a gadget changes.** `xark build` records every
+  local source file the circuit came from in `target/xark/<name>/deps` (from
+  cargo's dep-info: path-dependency gadgets and `xark` included), and a circuit
+  test rebuilds when one is newer. Before, only the circuit crate's own files
+  were checked.
+- **Hash values in a client as the circuit does.** xark-wasm adds
+  `valueFields` (a value's field elements, as `to_fields()` gives them) and
+  `poseidon2`; a generated client has a typed `fields("Identity", id)`. zk_kyc's
+  TypeScript test computes the issuer's commitment this way.
+- **`load` in the TypeScript client**: `await ZkKyc.load(wasm, "/circuits/zk_kyc/")`
+  fetches `circuit.xbc`, the keys and `sources.json` from a URL (or only the
+  parts named, such as `["verifyingKey"]` for a verifier).
 - **Clients are generated per language from one model.** `xark client`
   resolves `schema.json` into the standard types once, and a target per
   language maps them to its own types (TypeScript today: `Date`, string unions

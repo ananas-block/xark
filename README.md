@@ -116,7 +116,8 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, born_before: Public<
 // In a test: zk_kyc(id, commitment, "2008-10-20", 500_000, "2026-10-20", [US, GB, FR, DE])
 ```
 
-`examples/zk_kyc` is this circuit in full.
+`examples/zk_kyc` is this circuit in full. A `bool` input works too: one field
+element, checked to be 0 or 1.
 
 A type the derive doesn't cover implements `Input` by hand, in one impl that
 serves the circuit and the host alike:
@@ -209,9 +210,13 @@ export interface Identity {
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
 import { ZkKyc } from "./zk_kyc";
 
-const kyc = new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources }); // sources.json, as text
+const kyc = await ZkKyc.load(wasm, "/circuits/zk_kyc/"); // a copy of target/xark/zk_kyc/
+// (or `new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources })` with bytes you have)
+const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: new Date("2030-01-01"), salt } as const;
+// The issuer's commitment, hashed as the circuit hashes it (`id.commitment()`).
+const commitment = wasm.poseidon2(kyc.fields("Identity", id).map(String));
 const { proof, publicInputs } = kyc.prove({
-  id: { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: new Date("2030-01-01"), salt },
+  id,
   commitment,
   bornBefore: new Date("2008-10-20"),
   minNetWorth: 500_000,

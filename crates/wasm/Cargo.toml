@@ -31,6 +31,8 @@ xark-ir = { path = "../ir", default-features = false }
 xark-prover = { path = "../prover", default-features = false }
 # The streaming prover (`proveStreaming`) and its worker kernels.
 xark-groth16 = { path = "../groth16" }
+# `poseidon2`: the gadget's hash, natively, so a client can hash as the circuit does.
+xark-poseidon2 = { path = "../../gadgets/xark-poseidon2" }
 
 # Only the arkworks crates actually named in `lib.rs`. `ark-ff` / `ark-ec` are
 # pulled transitively (via `xark-groth16` etc.) with the right features — the `parallel`-OFF guarantee comes from the `xark-*`

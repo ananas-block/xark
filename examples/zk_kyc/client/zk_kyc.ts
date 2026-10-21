@@ -96,6 +96,7 @@ export interface XarkWasm {
   encodeInputs(schema: string, inputs: string): Record<string, string>;
   encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
   decodePublicValues(schema: string, publicInputs: Uint8Array): string;
+  valueFields(schema: string, typeName: string, value: string): string[];
 }
 
 /** A proof, with its public inputs decoded and as the bytes `verify` takes. */
@@ -118,6 +119,14 @@ export interface ZkKycKeys {
   sources?: string;
 }
 
+/** Each part of `ZkKycKeys` as `xark build` and `xark setup` name its file. */
+const FILES = {
+  circuit: "circuit.xbc",
+  provingKey: "pk.bin",
+  verifyingKey: "vk.bin",
+  sources: "sources.json",
+} as const;
+
 /**
  * Prove and verify `zk_kyc` with the xark-wasm module you pass in:
  *
@@ -136,6 +145,35 @@ export class ZkKyc {
     private readonly wasm: XarkWasm,
     private readonly keys: ZkKycKeys,
   ) {}
+
+  /**
+   * Fetch the build output from `base`, a URL serving a copy of
+   * `target/xark/zk_kyc/` (relative to the page in a browser):
+   * `await ZkKyc.load(wasm, "/circuits/zk_kyc/")`. `only` fetches less
+   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
+   */
+  static async load(
+    wasm: XarkWasm,
+    base: string | URL,
+    only: readonly (keyof ZkKycKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
+    init?: RequestInit,
+  ): Promise<ZkKyc> {
+    const root = new URL(base, (globalThis as { location?: { href: string } }).location?.href);
+    if (!root.pathname.endsWith("/")) root.pathname += "/";
+    const keys: Record<string, Uint8Array | string> = {};
+    await Promise.all(
+      only.map(async (part) => {
+        const url = new URL(FILES[part], root);
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          if (part === "sources" && res.status === 404) return;
+          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
+        }
+        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
+      }),
+    );
+    return new ZkKyc(wasm, keys as ZkKycKeys);
+  }
 
   /**
    * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
@@ -169,6 +207,15 @@ export class ZkKyc {
   /** Canonical public-input bytes, decoded. */
   decodePublicInputs(bytes: Uint8Array): ZkKycPublicValues {
     return decodePublic(JSON.parse(this.wasm.decodePublicValues(ZkKyc.schema, bytes)));
+  }
+
+  /**
+   * A value's field elements in input order, as `to_fields()` gives them in
+   * Rust: hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).
+   */
+  fields(type: "Identity", value: Identity): bigint[];
+  fields(type: string, value: unknown): bigint[] {
+    return this.wasm.valueFields(ZkKyc.schema, type, toJson(value)).map(BigInt);
   }
 }
 

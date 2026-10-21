@@ -42,6 +42,7 @@
 //! |----------------------------|-------------------|--------------------------------------------|
 //! | `Field`                    | `Field`           | a decimal or `0x`-hex string, or a number  |
 //! | `Uint(n)`                  | `u8` … `u128`     | a number, or a decimal string              |
+//! | `Bool`                     | `bool`            | `true` / `false` (or `1` / `0`)            |
 //! | `Array(Uint(8), n)`        | `[u8; N]`         | `0x`-hex, or an array of numbers           |
 //! | `Array`, `Tuple`           | `[T; N]`, `(A, B)`| an array                                   |
 //! | named, [`Encoding::Fields`]| a struct          | an object of its fields                    |
@@ -114,6 +115,8 @@ pub enum Type {
     Field,
     /// An unsigned integer of this many bits, range-checked on entry.
     Uint(u32),
+    /// `true` or `false`: one field element, `0` or `1`, checked on entry.
+    Bool,
     /// `N` values of one type, named `name[i]`.
     Array(&'static Type, usize),
     /// Values of different types, named `name.0`, `name.1`, …
@@ -199,7 +202,7 @@ impl Type {
     /// The number of leaves a value of this type takes.
     pub const fn leaves(&self) -> usize {
         match self {
-            Type::Field | Type::Uint(_) => 1,
+            Type::Field | Type::Uint(_) | Type::Bool => 1,
             Type::Array(t, n) => t.leaves() * *n,
             Type::Tuple(ts) => {
                 let (mut n, mut i) = (0, 0);
@@ -318,6 +321,18 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// The next leaf, a `bool` (checked to be `0` or `1` when it is a circuit input).
+    pub fn bool(&mut self) -> bool {
+        let at = self.next();
+        match &self.src {
+            #[cfg(all(xark, target_arch = "wasm32"))]
+            Source::Inputs { names, public } => crate::wasm::bind_bool(leaf(names, at), *public),
+            Source::Values(v) => !v[at].is_zero(),
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
+        }
+    }
+
     /// The next leaf, a `u128` (range-checked when it is a circuit input).
     pub fn u128(&mut self) -> u128 {
         let at = self.next();
@@ -419,6 +434,16 @@ impl Input for u128 {
     }
 }
 
+impl Input for bool {
+    const TYPE: Type = Type::Bool;
+    fn read(r: &mut Reader<'_>) -> Self {
+        r.bool()
+    }
+    fn write(&self, w: &mut Writer<'_>) {
+        w.field(Field::from(*self))
+    }
+}
+
 impl<T: Input, const N: usize> Input for [T; N] {
     const TYPE: Type = Type::Array(&T::TYPE, N);
     fn read(r: &mut Reader<'_>) -> Self {
@@ -462,7 +487,7 @@ pub fn leaf_names(ty: &Type, prefix: &str) -> Vec<String> {
 fn names_into(ty: &Type, name: &mut String, out: &mut Vec<String>) {
     let at = name.len();
     match ty {
-        Type::Field | Type::Uint(_) => out.push(name.clone()),
+        Type::Field | Type::Uint(_) | Type::Bool => out.push(name.clone()),
         Type::Array(t, n) => {
             for i in 0..*n {
                 name.push('[');
@@ -632,6 +657,7 @@ impl Defs {
 fn type_json(ty: &Type, defs: &mut Defs, s: &mut String) {
     match ty {
         Type::Field => s.push_str("\"field\""),
+        Type::Bool => s.push_str("\"bool\""),
         Type::Uint(w) => {
             s.push_str("{\"uint\":");
             push_usize(s, *w as usize);

@@ -13,7 +13,7 @@
 //! ```
 //!
 //! `xark::input::schema_json` writes it from each parameter's `Input::TYPE`. A type
-//! is `"field"`, `{"uint": N}`, `{"array": {"of", "len"}}`, `{"tuple": […]}` or
+//! is `"field"`, `{"uint": N}`, `"bool"`, `{"array": {"of", "len"}}`, `{"tuple": […]}` or
 //! `{"ref": "<Name>"}`: a struct (`{"struct": [{"name", "type"}, …]}`) or a newtype
 //! (`{"newtype": <type>}`). An enum (`{"enum": [names]}`) is never an input itself,
 //! only what a `choice` or `set` names. A named type may carry an `encoding`, the
@@ -194,7 +194,7 @@ impl Schema {
 
     /// The leaf names of a value of `ty` at `prefix`, in flatten order.
     fn leaf_names(&self, ty: &Value, prefix: &str, out: &mut Vec<String>) {
-        if ty == "field" || ty.get("uint").is_some() {
+        if ty == "field" || ty == "bool" || ty.get("uint").is_some() {
             out.push(prefix.to_string());
         } else if let Some(a) = ty.get("array") {
             for i in 0..a["len"].as_u64().unwrap_or(0) {
@@ -221,6 +221,14 @@ impl Schema {
         let err = |e: String| format!("input `{at}`: {e}");
         if ty == "field" {
             out.insert(at.into(), field(v).map_err(err)?);
+        } else if ty == "bool" {
+            let b = match v {
+                Value::Bool(b) => *b,
+                Value::Number(n) if n.as_u64() == Some(0) => false,
+                Value::Number(n) if n.as_u64() == Some(1) => true,
+                _ => return Err(err(format!("expected true or false, got {v}"))),
+            };
+            out.insert(at.into(), Fr::from(b as u8));
         } else if let Some(w) = ty["uint"].as_u64() {
             let n = integer(v).map_err(err)?;
             if n.bits() > w {
@@ -398,6 +406,29 @@ impl Schema {
         Ok(())
     }
 
+    /// A value of the named type `name` (a struct, `Date`, …), in its natural form, as
+    /// its field elements in input order: what `to_fields()` gives in Rust, so a client
+    /// can hash a value as the circuit does.
+    pub fn fields(&self, name: &str, value: &Value) -> Result<Vec<Fr>, String> {
+        if self.def(name).is_null() {
+            return Err(format!("no type `{name}` in this circuit's inputs"));
+        }
+        let ty = json!({ "ref": name });
+        let mut leaves = Leaves::new();
+        self.encode(&ty, value, "value", &mut leaves)?;
+        let mut names = Vec::new();
+        self.leaf_names(&ty, "value", &mut names);
+        names
+            .iter()
+            .map(|n| {
+                leaves
+                    .get(n)
+                    .copied()
+                    .ok_or_else(|| format!("missing `{}`", &n[6..]))
+            })
+            .collect()
+    }
+
     /// The public inputs `values` (in proof order), decoded into their natural forms:
     /// an object of the public inputs, keyed `camelCase` when `camel`.
     pub fn decode_public(&self, values: &[Fr], camel_keys: bool) -> Result<Value, String> {
@@ -430,6 +461,13 @@ impl Schema {
         };
         if ty == "field" {
             return Ok(Value::String(next()?.into_bigint().to_string()));
+        }
+        if ty == "bool" {
+            let b = next()?;
+            if b > Fr::from(1u8) {
+                return Err(format!("{b} is not a bool"));
+            }
+            return Ok(Value::Bool(b == Fr::from(1u8)));
         }
         if let Some(w) = ty["uint"].as_u64() {
             let n = BigUint::from(next()?.into_bigint());
@@ -596,6 +634,9 @@ impl Schema {
         if ty == "field" {
             return q("<field>");
         }
+        if ty == "bool" {
+            return "false".into();
+        }
         if let Some(w) = ty["uint"].as_u64() {
             return q(&format!("<u{w}>"));
         }
@@ -659,6 +700,9 @@ impl Schema {
 fn describe(ty: &Value) -> String {
     if ty == "field" {
         return "Field".into();
+    }
+    if ty == "bool" {
+        return "bool".into();
     }
     if let Some(w) = ty["uint"].as_u64() {
         return format!("u{w}");
@@ -887,7 +931,8 @@ mod tests {
                 {"name": "home", "visibility": "public", "type": {"ref": "Choice<Country>"}},
                 {"name": "k", "visibility": "private", "type": {"ref": "Fq"}},
                 {"name": "h", "visibility": "public", "type": {"ref": "Hash"}},
-                {"name": "msg", "visibility": "private", "type": {"array": {"of": {"uint": 8}, "len": 2}}}
+                {"name": "msg", "visibility": "private", "type": {"array": {"of": {"uint": 8}, "len": 2}}},
+                {"name": "ok", "visibility": "public", "type": "bool"}
               ],
               "types": {
                 "Identity": {"struct": [
@@ -904,7 +949,7 @@ mod tests {
                 "Hash": {"struct": [{"name": "hi", "type": "field"}, {"name": "lo", "type": "field"}],
                          "encoding": {"bytes": 32, "concat": [16, 16]}}
               },
-              "public_inputs": ["born_before", "allowed", "home", "h.hi", "h.lo"]}"#,
+              "public_inputs": ["born_before", "allowed", "home", "h.hi", "h.lo", "ok"]}"#,
         )
         .unwrap()
     }
@@ -918,6 +963,7 @@ mod tests {
             "k": "77371252455336267181195264",
             "h": format!("0x{}{}", "00".repeat(15) + "02", "00".repeat(15) + "03"),
             "msg": "0x6162",
+            "ok": true,
         })
     }
 
@@ -944,6 +990,7 @@ mod tests {
         assert_eq!(back["bornBefore"], "2008-10-20");
         assert_eq!(back["allowed"], json!(["FR", "US"]));
         assert_eq!(back["home"], "FR");
+        assert_eq!(back["ok"], true);
         let mut bad = pubs.clone();
         bad[2] = Fr::from(3u8); // `home`, past the three countries
         assert!(
@@ -962,6 +1009,18 @@ mod tests {
     }
 
     #[test]
+    fn values_as_fields() {
+        let f = schema()
+            .fields("Identity", &inputs()["id"])
+            .unwrap()
+            .iter()
+            .map(|x| x.into_bigint().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(f, [(0x4241u32).to_string(), "19900102".into(), "7".into()]);
+        assert!(schema().fields("Nope", &json!({})).is_err());
+    }
+
+    #[test]
     fn mistakes_are_named() {
         let s = schema();
         let with = |k: &str, v: Value| {
@@ -975,6 +1034,7 @@ mod tests {
         assert!(with("home", json!(3)).contains("3 is not a Country (there are 3)"));
         assert!(with("msg", json!("0x61")).contains("expected 2 elements"));
         assert!(with("typo", json!(1)).contains("unknown input `typo`"));
+        assert!(with("ok", json!("yes")).contains("expected true or false"));
         let mut i = inputs();
         i["id"].as_object_mut().unwrap().remove("born");
         assert!(s.leaves(&i).unwrap_err().contains("missing field `born`"));

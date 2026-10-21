@@ -319,6 +319,38 @@ pub mod native {
     pub fn hash<const N: usize>(inputs: [Fr; N]) -> Fr {
         super::hash_in(inputs)
     }
+
+    /// [`hash`] of any number of elements, known only at run time (a client
+    /// hashing a value's field elements).
+    pub fn hash_slice(inputs: &[Fr]) -> Fr {
+        let mut state = [
+            Fr::from(0u64),
+            Fr::from(0u64),
+            Fr::from(inputs.len() as u64),
+        ];
+        for pair in inputs.chunks(2) {
+            state[0] += pair[0];
+            if let Some(b) = pair.get(1) {
+                state[1] += b;
+            }
+            state = poseidon2_perm(state);
+        }
+        state[0]
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn slices_hash_like_arrays() {
+            let x: [Fr; 5] = core::array::from_fn(|i| Fr::from(i as u64 * 7 + 1));
+            assert_eq!(hash_slice(&x[..0]), hash::<0>([]));
+            assert_eq!(hash_slice(&x[..1]), hash::<1>([x[0]]));
+            assert_eq!(hash_slice(&x[..4]), hash::<4>([x[0], x[1], x[2], x[3]]));
+            assert_eq!(hash_slice(&x), hash(x));
+        }
+    }
 }
 
 /// Bring the gadget's public API into scope alongside the xark circuit

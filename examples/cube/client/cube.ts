@@ -37,6 +37,7 @@ export interface XarkWasm {
   encodeInputs(schema: string, inputs: string): Record<string, string>;
   encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
   decodePublicValues(schema: string, publicInputs: Uint8Array): string;
+  valueFields(schema: string, typeName: string, value: string): string[];
 }
 
 /** A proof, with its public inputs decoded and as the bytes `verify` takes. */
@@ -59,6 +60,14 @@ export interface CubeKeys {
   sources?: string;
 }
 
+/** Each part of `CubeKeys` as `xark build` and `xark setup` name its file. */
+const FILES = {
+  circuit: "circuit.xbc",
+  provingKey: "pk.bin",
+  verifyingKey: "vk.bin",
+  sources: "sources.json",
+} as const;
+
 /**
  * Prove and verify `cube` with the xark-wasm module you pass in:
  *
@@ -77,6 +86,35 @@ export class Cube {
     private readonly wasm: XarkWasm,
     private readonly keys: CubeKeys,
   ) {}
+
+  /**
+   * Fetch the build output from `base`, a URL serving a copy of
+   * `target/xark/cube/` (relative to the page in a browser):
+   * `await Cube.load(wasm, "/circuits/cube/")`. `only` fetches less
+   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
+   */
+  static async load(
+    wasm: XarkWasm,
+    base: string | URL,
+    only: readonly (keyof CubeKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
+    init?: RequestInit,
+  ): Promise<Cube> {
+    const root = new URL(base, (globalThis as { location?: { href: string } }).location?.href);
+    if (!root.pathname.endsWith("/")) root.pathname += "/";
+    const keys: Record<string, Uint8Array | string> = {};
+    await Promise.all(
+      only.map(async (part) => {
+        const url = new URL(FILES[part], root);
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          if (part === "sources" && res.status === 404) return;
+          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
+        }
+        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
+      }),
+    );
+    return new Cube(wasm, keys as CubeKeys);
+  }
 
   /**
    * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a

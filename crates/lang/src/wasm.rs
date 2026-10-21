@@ -91,6 +91,8 @@ mod ffi {
         pub fn xark_input_uint(name: *const u8, len: usize, vis: u32, width: u32) -> u64;
         #[cfg_attr(target_arch = "wasm32", link_name = "input_schema")]
         pub fn xark_input_schema(json: *const u8, len: usize);
+        #[cfg_attr(target_arch = "wasm32", link_name = "input_bool")]
+        pub fn xark_input_bool(name: *const u8, len: usize, vis: u32) -> bool;
         #[cfg_attr(target_arch = "wasm32", link_name = "input_uint_hi")]
         pub fn xark_input_uint_hi() -> u64;
         #[cfg_attr(target_arch = "wasm32", link_name = "inputs_done")]
@@ -253,6 +255,12 @@ pub(crate) fn bind_field(name: &str, public: bool) -> Field {
 /// Bind the input leaf `name` as a `bits`-bit unsigned integer (`bits ≤ 64`).
 pub(crate) fn bind_uint(name: &str, public: bool, bits: u32) -> u64 {
     unsafe { ffi::xark_input_uint(name.as_ptr(), name.len(), public as u32, bits) }
+}
+
+/// Bind the input leaf `name` as a `bool` (a `{0, 1}` wire, range-checked once every
+/// input is bound).
+pub(crate) fn bind_bool(name: &str, public: bool) -> bool {
+    unsafe { ffi::xark_input_bool(name.as_ptr(), name.len(), public as u32) }
 }
 
 /// Bind the input leaf `name` as a `u128`: two wasm registers, the low half first,

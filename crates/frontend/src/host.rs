@@ -51,6 +51,7 @@ enum Intr {
     ToBitsRecord,
     InputField,
     InputUint,
+    InputBool,
     InputsDone,
     InputSchema,
     InputUintHi,
@@ -84,6 +85,7 @@ fn intrinsic(name: &str) -> Option<Intr> {
         "to_bits_record" => Intr::ToBitsRecord,
         "input_field" => Intr::InputField,
         "input_uint" => Intr::InputUint,
+        "input_bool" => Intr::InputBool,
         "inputs_done" => Intr::InputsDone,
         "input_schema" => Intr::InputSchema,
         "input_uint_hi" => Intr::InputUintHi,
@@ -1852,8 +1854,9 @@ impl crate::interp::Host for Host {
                     self.b.bit_cache.insert((canonical_lc_key(&x), n), vars);
                 }
             }
-            Intr::InputField | Intr::InputUint => {
-                // field: (out, name, len, vis) ; uint: (name, len, vis, width) -> i64
+            Intr::InputField | Intr::InputUint | Intr::InputBool => {
+                // field: (out, name, len, vis) ; uint: (name, len, vis, width) -> i64 ;
+                // bool: (name, len, vis) -> i32, a `u1` (range-checked with the `uN`s)
                 let (name_at, len_at, vis_at) = if intr == Intr::InputField {
                     (1, 2, 3)
                 } else {
@@ -1868,7 +1871,11 @@ impl crate::interp::Host for Host {
                 } else {
                     Visibility::Private
                 };
-                let width = (intr == Intr::InputUint).then(|| a[3].b as u32);
+                let width = match intr {
+                    Intr::InputUint => Some(a[3].b as u32),
+                    Intr::InputBool => Some(1),
+                    _ => None,
+                };
                 self.leaves
                     .push((name.clone(), matches!(vis, Visibility::Public), width));
                 let id = self.b.alloc_var(name, vis);
@@ -1877,7 +1884,10 @@ impl crate::interp::Host for Host {
                 if intr == Intr::InputField {
                     self.put_field(m, a[0], LinearCombination::var(id))?;
                 } else {
-                    let width = int_of(a[3], "width")? as u32;
+                    let width = match intr {
+                        Intr::InputBool => 1,
+                        _ => int_of(a[3], "width")? as u32,
+                    };
                     if width > 64 {
                         // A `u128` spans two wasm registers: range-check it now and
                         // hand out its halves, recomposed from the check's bits.

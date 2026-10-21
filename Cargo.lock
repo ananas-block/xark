@@ -5037,6 +5037,7 @@ dependencies = [
  "wasm-bindgen",
  "xark-groth16",
  "xark-ir",
+ "xark-poseidon2",
  "xark-prover",
 ]
 

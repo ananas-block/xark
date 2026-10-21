@@ -3,12 +3,14 @@
 //! * a string union per enum (`type Country = "AD" | …`);
 //! * an interface per input struct, every value in its natural TypeScript form;
 //! * the inputs, the public inputs as given, and as decoded from a proof;
-//! * a class with `prove`, `verify`, and the public-input encode/decode.
+//! * a class with `prove`, `verify`, the public-input encode/decode, `load` (the
+//!   build output from a URL) and `fields` (a value's field elements, to hash it).
 //!
 //! | standard type          | as given                      | decoded       |
 //! |------------------------|-------------------------------|---------------|
 //! | field                  | `bigint \| number \| string`  | `bigint`      |
 //! | `uN`                   | `number` (`bigint` past 32)   | `number`/`bigint` |
+//! | bool                   | `boolean`                     | `boolean`     |
 //! | bytes                  | `Uint8Array`, numbers, `0x…`  | `Uint8Array`  |
 //! | number (limbed)        | a field-like value, or bytes  | `bigint`      |
 //! | date                   | `Date` (its UTC day)          | `Date`        |
@@ -54,6 +56,7 @@ fn input(ty: &Ty) -> String {
         Ty::Field => "FieldLike".into(),
         Ty::Uint(w) if *w <= 32 => "number".into(),
         Ty::Uint(_) => "bigint | number".into(),
+        Ty::Bool => "boolean".into(),
         Ty::Bytes { .. } => "Bytes".into(),
         Ty::Number { .. } => "FieldLike | Uint8Array".into(),
         Ty::Date => "Date".into(),
@@ -75,6 +78,7 @@ fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
         Ty::Field | Ty::Number { .. } => "bigint".into(),
         Ty::Uint(w) if *w <= 53 => "number".into(),
         Ty::Uint(_) => "bigint".into(),
+        Ty::Bool => "boolean".into(),
         Ty::Bytes { .. } => "Uint8Array".into(),
         Ty::Date => "Date".into(),
         Ty::Text { .. } => "string".into(),
@@ -97,7 +101,7 @@ fn revive(ty: &Ty, e: &str) -> String {
     match ty {
         Ty::Field | Ty::Number { .. } => format!("BigInt({e})"),
         Ty::Uint(w) if *w > 53 => format!("BigInt({e})"),
-        Ty::Uint(_) | Ty::Text { .. } | Ty::Choice(_) | Ty::Set(_) => e.into(),
+        Ty::Uint(_) | Ty::Bool | Ty::Text { .. } | Ty::Choice(_) | Ty::Set(_) => e.into(),
         Ty::Bytes { .. } => format!("fromHex({e})"),
         Ty::Date => format!("new Date({e})"),
         Ty::Array(t, _) => format!("{e}.map((x: any) => {})", revive(t, "x")),
@@ -138,7 +142,7 @@ fn note(ty: &Ty) -> Option<String> {
         Ty::Choice(e) => format!("One `{e}`."),
         Ty::Set(e) => format!("A set of `{e}`: one, or a list of them."),
         Ty::Array(_, n) => format!("Exactly {n} elements."),
-        Ty::Field | Ty::Tuple(_) | Ty::Struct(_) => return None,
+        Ty::Field | Ty::Bool | Ty::Tuple(_) | Ty::Struct(_) => return None,
     })
 }
 
@@ -285,9 +289,27 @@ pub fn generate(m: &Model) -> Result<String> {
     out.push_str(&structs);
     out.push_str(&body);
 
+    // A value's field elements, per input struct (to hash one as the circuit does).
+    let mut fields = String::new();
+    if !m.structs.is_empty() {
+        fields.push_str(
+            "\n  /**\n   * A value's field elements in input order, as `to_fields()` gives them in\n   \
+             * Rust: hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).\n   \
+             */\n",
+        );
+        for r in m.structs.keys() {
+            let _ = writeln!(fields, "  fields(type: {r:?}, value: {r}): bigint[];");
+        }
+        fields.push_str(
+            "  fields(type: string, value: unknown): bigint[] {\n    \
+             return this.wasm.valueFields(__NAME__.schema, type, toJson(value)).map(BigInt);\n  }\n",
+        );
+    }
+
     // The class.
     out.push_str(
         &CLASS
+            .replace("__FIELDS__", &fields)
             .replace("__NAME__", &name)
             .replace("__CIRCUIT__", circuit)
             .replace("__SCHEMA__", &format!("{:?}", m.schema)),
@@ -304,6 +326,7 @@ export interface XarkWasm {
   encodeInputs(schema: string, inputs: string): Record<string, string>;
   encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
   decodePublicValues(schema: string, publicInputs: Uint8Array): string;
+  valueFields(schema: string, typeName: string, value: string): string[];
 }
 
 /** A proof, with its public inputs decoded and as the bytes `verify` takes. */
@@ -326,6 +349,14 @@ export interface __NAME__Keys {
   sources?: string;
 }
 
+/** Each part of `__NAME__Keys` as `xark build` and `xark setup` name its file. */
+const FILES = {
+  circuit: "circuit.xbc",
+  provingKey: "pk.bin",
+  verifyingKey: "vk.bin",
+  sources: "sources.json",
+} as const;
+
 /**
  * Prove and verify `__CIRCUIT__` with the xark-wasm module you pass in:
  *
@@ -344,6 +375,35 @@ export class __NAME__ {
     private readonly wasm: XarkWasm,
     private readonly keys: __NAME__Keys,
   ) {}
+
+  /**
+   * Fetch the build output from `base`, a URL serving a copy of
+   * `target/xark/__CIRCUIT__/` (relative to the page in a browser):
+   * `await __NAME__.load(wasm, "/circuits/__CIRCUIT__/")`. `only` fetches less
+   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
+   */
+  static async load(
+    wasm: XarkWasm,
+    base: string | URL,
+    only: readonly (keyof __NAME__Keys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
+    init?: RequestInit,
+  ): Promise<__NAME__> {
+    const root = new URL(base, (globalThis as { location?: { href: string } }).location?.href);
+    if (!root.pathname.endsWith("/")) root.pathname += "/";
+    const keys: Record<string, Uint8Array | string> = {};
+    await Promise.all(
+      only.map(async (part) => {
+        const url = new URL(FILES[part], root);
+        const res = await fetch(url, init);
+        if (!res.ok) {
+          if (part === "sources" && res.status === 404) return;
+          throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
+        }
+        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
+      }),
+    );
+    return new __NAME__(wasm, keys as __NAME__Keys);
+  }
 
   /**
    * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
@@ -378,7 +438,7 @@ export class __NAME__ {
   decodePublicInputs(bytes: Uint8Array): __NAME__PublicValues {
     return decodePublic(JSON.parse(this.wasm.decodePublicValues(__NAME__.schema, bytes)));
   }
-}
+__FIELDS__}
 
 "#;
 
@@ -421,6 +481,7 @@ mod tests {
         "Identity": {"struct": [
           {"name": "net_worth", "type": {"uint": 64}},
           {"name": "salt", "type": "field"},
+          {"name": "active", "type": "bool"},
           {"name": "home", "type": {"ref": "Choice<Country>"}},
           {"name": "pair", "type": {"tuple": ["field", {"uint": 16}]}}]},
         "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
@@ -448,6 +509,7 @@ mod tests {
             "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
             "  /** One `Country`. */\n  home: Country;",
             "  pair: readonly [FieldLike, number];",
+            "  active: boolean;",
             "  bornBefore: Date;",
             "  allowed: Country | readonly Country[];",
             "  doc: Bytes;",
@@ -455,6 +517,8 @@ mod tests {
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: BigInt(v.commitment),",
             "export class KycCheck {",
+            "  fields(type: \"Identity\", value: Identity): bigint[];",
+            "static async load(",
         ] {
             assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
         }

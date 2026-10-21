@@ -5025,6 +5025,61 @@ fn build_writes_input_schema() {
     );
 }
 
+/// A byte input costs its entry range check and nothing more. Code in the entry shim
+/// between binding the bytes and using them can make LLVM carry `[u8; 3]` packed in
+/// one integer, which the circuit then unpacks (an `Or` and range checks per bit:
+/// about 47 more constraints on `sha256`); see `xark::input::Binder`.
+#[test]
+fn byte_inputs_are_not_repacked() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[circuit]\n\
+        pub fn bytes_in(msg: Private<[u8; 3]>, k: Public<Field>) {\n\
+        let mut acc = Field::from(0u8);\n\
+        let mut i = 0;\n\
+        while i < 3 { let b = msg[i].to_bits::<8>(); acc = acc + b[0] * b[7]; i += 1; }\n\
+        require_eq(acc, k);\n}\n";
+    let c = compile_with_field(&write_case("bytes_in", src), "bytes_in", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let json = std::fs::read_to_string(c.out_dir.join("r1cs.json")).unwrap();
+    let rows = xark_ir::json::from_json(&json).unwrap().constraints.len();
+    // 3 × 9 entry range checks, 3 × 9 decompositions (`to_bits` hasn't the entry's bits),
+    // 3 products and the final equality. A repacking shim costs 105.
+    assert_eq!(rows, 58, "byte inputs cost more than their range checks");
+}
+
+/// A `bool` input is a `{0, 1}` wire: it selects, converts to a `Field`, sits in a
+/// derived struct, and a value other than 0 or 1 fails its entry check.
+#[test]
+fn bool_inputs() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[derive(Clone, Copy, Input)]\n\
+        pub struct Gate { pub open: bool, pub level: u8 }\n\
+        #[circuit]\n\
+        pub fn gated(flag: Private<bool>, g: Private<Gate>, x: Private<Field>, out: Public<Field>) {\n\
+        let y = if flag { x } else { x * x };\n\
+        require(g.open);\n\
+        require_eq(y + Field::from(flag) + Field::from(g.level), out);\n}\n";
+    let c = compile_with_field(&write_case("bool_in", src), "bool_in", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let p = c.program();
+    let run = |flag: &str, open: &str, out: &str| {
+        solves(
+            &p,
+            &[
+                ("flag", flag),
+                ("g.open", open),
+                ("g.level", "2"),
+                ("x", "5"),
+                ("out", out),
+            ],
+        )
+    };
+    assert!(run("1", "1", "8") && run("0", "1", "27"));
+    assert!(!run("1", "0", "8"), "the gate is closed");
+    assert!(!run("2", "1", "8"), "2 is not a bool");
+    assert!(!run("1", "1", "9"));
+}
+
 /// `Choice::require_in` accepts exactly a declared variant that the set allows: not
 /// one outside it, not a position past the enum, and not the forged
 /// `i − 2⁶⁴ (mod p)` that would zero a disallowed variant's factor without the

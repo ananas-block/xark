@@ -351,6 +351,37 @@ pub fn decode_public_values(
     Ok(v.to_string())
 }
 
+/// A value of the input type `typeName` (JSON text, in its natural form) as its
+/// field elements, decimal, in input order: what `to_fields()` gives in Rust. Hash
+/// them with [`poseidon2`] to compute a commitment the way the circuit does.
+#[wasm_bindgen(js_name = valueFields)]
+pub fn value_fields(
+    schema_json: &str,
+    type_name: &str,
+    value_json: &str,
+) -> Result<Vec<String>, js_sys::Error> {
+    let fields = schema(schema_json)?
+        .fields(type_name, &json(value_json, "value")?)
+        .map_err(|e| js_error(&e))?;
+    Ok(fields.iter().map(|f| f.to_string()).collect())
+}
+
+/// `xark_poseidon2::hash` of field elements (decimal or `0x`-hex strings, each
+/// below the field order), as a decimal string: the value the gadget constrains.
+#[wasm_bindgen]
+pub fn poseidon2(inputs: Vec<String>) -> Result<String, js_sys::Error> {
+    let fields = inputs
+        .iter()
+        .map(|s| {
+            xark_prover::field_input_decimal(s)
+                .ok()
+                .and_then(|d| <Fr as std::str::FromStr>::from_str(&d).ok())
+                .ok_or_else(|| js_error(&format!("{s:?} is not a field element")))
+        })
+        .collect::<Result<Vec<Fr>, _>>()?;
+    Ok(xark_poseidon2::native::hash_slice(&fields).to_string())
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

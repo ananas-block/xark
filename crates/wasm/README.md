@@ -276,6 +276,33 @@ const { publicInputs } = prove(xbc, pk, { secret: "3", result: "27" });
 decode_public_inputs(publicInputs); // ["27"]
 ```
 
+### Typed values (`schema.json`)
+
+A generated client (`xark client`) calls these with the circuit's
+`schema.json`, so values go in and come out in their natural forms (dates,
+strings, variant names, bytes). Each takes the schema as JSON text.
+
+- `encodeInputs(schema, inputs)`: every input (JSON text) → the `leaf → decimal`
+  object `prove` takes.
+- `encodePublicInputs(schema, publicInputs)`: the public ones → the bytes `verify`
+  takes.
+- `decodePublicValues(schema, bytes)`: those bytes → JSON text of the natural
+  values.
+- `valueFields(schema, typeName, value)`: a value of one of the circuit's input
+  types → its field elements (decimal strings) in input order, what `to_fields()`
+  gives in Rust.
+
+### `poseidon2(inputs)` → `string`
+
+`xark_poseidon2::hash` of field elements (decimal or `0x`-hex strings), as a
+decimal string. With `valueFields`, a client computes a commitment the way the
+circuit does:
+
+```js
+const fields = valueFields(schema, "Identity", JSON.stringify(id));
+poseidon2(fields); // == the circuit's `xark_poseidon2::hash(id.to_fields())`
+```
+
 ## Security
 
 Prover randomness comes from the platform CSPRNG (`crypto.getRandomValues`).

@@ -316,7 +316,7 @@ fn unwrap_visibility(ty: &Type) -> syn::Result<(syn::Ident, Type)> {
 /// parameter; a type that isn't one is a compile error at its `Input` bound.
 fn host_arg(ty: &Type) -> syn::Result<HostArg> {
     match ty {
-        _ if uint_type_bits(ty).is_some() => Ok(HostArg::Exact),
+        _ if uint_type_bits(ty).is_some() || is_ident(ty, "bool") => Ok(HostArg::Exact),
         Type::Array(arr) => {
             let n = eval_usize_lit(&arr.len)?;
             Ok(if is_ident(&arr.elem, "u8") {
@@ -332,7 +332,7 @@ fn host_arg(ty: &Type) -> syn::Result<HostArg> {
         other => Err(syn::Error::new_spanned(
             other,
             "unsupported #[circuit] parameter type; a parameter is any `xark::Input` type: \
-             `Field`, `u8`..`u128`, `[T; N]`, a tuple, a `#[derive(Input)]` struct, a \
+             `Field`, `u8`..`u128`, `bool`, `[T; N]`, a tuple, a `#[derive(Input)]` struct, a \
              standard type (`Date`, `Text`, `Choice<E>`, `Bitfield<E>`) or a gadget type",
         )),
     }

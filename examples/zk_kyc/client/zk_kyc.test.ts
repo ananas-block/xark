@@ -16,7 +16,7 @@ const id: Identity = {
   expires: new Date("2030-01-01"),
   salt: "33701741659145338741541800171033551611705418330992198479621539463087461139",
 };
-// The issuer's Poseidon2 commitment over `id` (see the Rust tests).
+// The issuer's Poseidon2 commitment over `id` (see the Rust tests, and the test below).
 const commitment = 4058172634906005022229777495117820733710818327967433754570325414295423937452n;
 // Born before 2008-10-20, worth ≥ 500k, valid today, from US/GB/FR/DE.
 const policy: ZkKycPublicInputs = {
@@ -50,6 +50,13 @@ test("names the check a holder fails", () => {
   expect(fails({ bornBefore: new Date("1989-12-31") })).toThrow(/`require\(id\.born < born_before\);`/);
   expect(fails({ minNetWorth: 2_000_000 })).toThrow(/`require\(id\.net_worth >= min_net_worth\);`/);
   expect(fails({ commitment: 1 })).toThrow(/`require_eq\(id\.commitment\(\), commitment\);`/);
+});
+
+test("computes the issuer's commitment as the circuit does", () => {
+  // `xark_poseidon2::hash(id.to_fields())`, the circuit's `id.commitment()`.
+  const fields = kyc.fields("Identity", id);
+  expect(fields).toHaveLength(6);
+  expect(BigInt(wasm.poseidon2(fields.map(String)))).toBe(commitment);
 });
 
 test("names the input at fault", () => {

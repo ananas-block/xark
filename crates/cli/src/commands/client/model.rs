@@ -20,6 +20,8 @@ pub enum Ty {
     Field,
     /// An unsigned integer of this many bits.
     Uint(u64),
+    /// `true` or `false`.
+    Bool,
     /// A byte string: `[u8; N]` (`of: None`), or a byte-encoded type such as a hash or
     /// a curve point (`of: Some(name)`), of `len` bytes when that is fixed.
     Bytes {
@@ -104,6 +106,9 @@ impl Model {
     fn ty(&mut self, schema: &Value, ty: &Value) -> Result<Ty> {
         if ty == "field" {
             return Ok(Ty::Field);
+        }
+        if ty == "bool" {
+            return Ok(Ty::Bool);
         }
         if let Some(w) = ty["uint"].as_u64() {
             return Ok(Ty::Uint(w));
@@ -197,6 +202,9 @@ fn byte_len(schema: &Value, r: &str) -> Option<u64> {
 fn rust_type(ty: &Value) -> String {
     if ty == "field" {
         return "Field".into();
+    }
+    if ty == "bool" {
+        return "bool".into();
     }
     if let Some(w) = ty["uint"].as_u64() {
         return format!("u{w}");
