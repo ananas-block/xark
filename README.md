@@ -62,7 +62,7 @@ Inputs that fail a check are reported as the statement that fails, in tests, in
 ```text
 error: witness does not satisfy the circuit
 
-  src/lib.rs:77:20  id.nationality.require_one_of(allowed);
+  src/lib.rs:96:20  id.nationality.require_in(policy.allowed);
 ```
 
 Every build writes `sources.json` beside `circuit.xbc` for this: which source
@@ -101,19 +101,24 @@ and each with its natural form in tests, `--inputs` and the TypeScript client:
 
 ```rust
 #[derive(Clone, Copy, Debug, Input)]
-pub struct Identity { document: Text, born: Date, nationality: Bitfield<Country>, net_worth: u64, expires: Date, salt: Field }
+pub struct Identity { document: Text, born: Date, nationality: Choice<Country>, net_worth: u64, expires: Date, salt: Field }
+
+/// A verifier's rules, a public input: one circuit serves every policy.
+#[derive(Clone, Copy, Debug, Input)]
+pub struct Policy { today: Date, born_by: Date, min_net_worth: u64, allowed: Bitfield<Country> }
 
 #[circuit]
-fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, born_before: Public<Date>,
-          min_net_worth: Public<u64>, today: Public<Date>, allowed: Public<Bitfield<Country>>) {
+fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Policy>) {
     require_eq(id.commitment(), commitment);
-    require(id.born < born_before);
-    require(id.net_worth >= min_net_worth);
-    require(id.expires >= today);
-    id.nationality.require_one_of(allowed);
+    require(id.born <= policy.born_by);
+    require(id.net_worth >= policy.min_net_worth);
+    require(id.expires >= policy.today);
+    id.nationality.require_in(policy.allowed);
 }
 
-// In a test: zk_kyc(id, commitment, "2008-10-20", 500_000, "2026-10-20", [US, GB, FR, DE])
+// In a test:
+// let policy = Policy::on("2026-10-20").min_age(18).min_net_worth(500_000).nationalities([US, GB, FR, DE]);
+// zk_kyc(id, id.commitment(), policy)
 ```
 
 `examples/zk_kyc` is this circuit in full. A `bool` input works too: one field
@@ -188,18 +193,19 @@ xark check examples/cube
 
 `xark build` also writes `schema.json`: every input's name, visibility and
 `Input::TYPE`, plus the public inputs in proof order. `xark client` resolves it
-into the standard types and writes one `.ts` file: a string union per enum, an
-interface per struct, the inputs, the public inputs as given and as decoded, and
+into the standard types and writes one `.ts` file: constants and a type per enum,
+an interface per struct, the inputs, the public inputs as given and as decoded, and
 a class over the `xark-wasm` module you pass in. Each type is the one you'd write
 by hand:
 
 ```ts
-export type Country = | "AD" | "AE" | /* … */ "US" | "ZW";
+export const Country = { AD: "AD", AE: "AE", /* … */ US: "US", ZW: "ZW" } as const;
+export type Country = (typeof Country)[keyof typeof Country]; // "AD" | "AE" | …
 
 export interface Identity {
   document: string;            // Text
   born: Date;                  // its UTC day
-  nationality: Country | readonly Country[];
+  nationality: Country;        // Country.US, or "US"; "XX" won't compile
   netWorth: bigint | number;   // u64
   expires: Date;
   salt: FieldLike;
@@ -208,22 +214,16 @@ export interface Identity {
 
 ```ts
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
-import { ZkKyc } from "./zk_kyc";
+import { Country, ZkKyc } from "./zk_kyc";
 
 const kyc = await ZkKyc.load(wasm, "/circuits/zk_kyc/"); // a copy of target/xark/zk_kyc/
 // (or `new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources })` with bytes you have)
-const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: "US", netWorth: 1_000_000, expires: new Date("2030-01-01"), salt } as const;
+const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt };
 // The issuer's commitment, hashed as the circuit hashes it (`id.commitment()`).
 const commitment = wasm.poseidon2(kyc.fields("Identity", id).map(String));
-const { proof, publicInputs } = kyc.prove({
-  id,
-  commitment,
-  bornBefore: new Date("2008-10-20"),
-  minNetWorth: 500_000,
-  today: new Date(),
-  allowed: ["US", "GB", "FR", "DE"],
-});
-publicInputs.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
+const policy = { today: new Date(), bornBy: new Date("2008-10-20"), minNetWorth: 500_000, allowed: [Country.US, Country.GB, "FR", "DE"] };
+const { proof, publicInputs } = kyc.prove({ id, commitment, policy });
+publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
 kyc.verify(proof, publicInputs); // true
 ```
 

@@ -487,6 +487,14 @@ mod host {
         pub fn parse(s: &str) -> Result<Date, InvalidValue> {
             s.parse()
         }
+
+        /// The same day `years` earlier (29 February becomes the 28th in a common
+        /// year): the latest birth date of someone `years` old today.
+        pub fn years_before(self, years: u16) -> Date {
+            let (y, m, d) = self.parts();
+            let y = y.checked_sub(years).expect("a date before year 0");
+            Date::checked(y, m, d).unwrap_or(Date::new(y, m, d - 1))
+        }
     }
 
     /// `"YYYY-MM-DD"` (or `"YYYYMMDD"`), checked like [`Date::new`].
@@ -635,6 +643,9 @@ mod tests {
         );
         assert!(Date::parse("1990-1-1").is_err() && Date::parse("soon").is_err());
         assert!(Date::checked(2023, 13, 1).is_none());
+        let (today, leap) = (Date::new(2026, 10, 20), Date::new(2024, 2, 29));
+        assert_eq!(today.years_before(18).parts(), (2008, 10, 20));
+        assert_eq!(leap.years_before(1).parts(), (2023, 2, 28));
         assert!(Text::parse(&"x".repeat(32)).is_err() && Text::parse("A1").is_ok());
     }
 

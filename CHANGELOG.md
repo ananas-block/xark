@@ -34,8 +34,8 @@ gadgets now check more:
 - **Failing checks name their source line.** Every `xark build` writes
   `sources.json` (which statement each constraint came from; `circuit.xbc` and
   its digest are unchanged), and inputs that fail a check report that statement
-  in Rust tests, `xark prove`/`check` and xark-wasm: `src/lib.rs:77:20
-  id.nationality.require_one_of(allowed);` rather than a constraint number.
+  in Rust tests, `xark prove`/`check` and xark-wasm: `src/lib.rs:96:20
+  id.nationality.require_in(policy.allowed);` rather than a constraint number.
   Before, only `xark test` and `xark profile` builds had the line. xark-wasm's
   `prove` and `preload` take `sources.json` as an optional last argument (the
   streaming API as `options.sources`), and the generated client as
@@ -60,9 +60,21 @@ gadgets now check more:
   ships the ISO 3166 `Country` enum. Each compares with `require_eq` and `==`
   (`choice == Country::US`), as does a derived struct (every field element), and
   `Bitfield::of([US, GB])` builds a constant set inside a circuit too.
-  `Choice::require_in(set)` costs about 570 constraints over `Country`. `examples/zk_kyc` uses them: an `Identity`
-  with a document number, birth date, nationality and net worth, checked
-  against a public policy.
+  `Choice::require_in(set)` costs about 570 constraints over `Country`.
+  `examples/zk_kyc` uses them: a private `Identity` (document number, birth
+  date, nationality, net worth) checked against a public `Policy`, built with
+  `Policy::on(today).min_age(18).min_net_worth(500_000).nationalities([US, GB])`
+  (`Date::years_before` gives the birth-date cutoff).
+- **Packing narrow values into a word is free.** An `|` (or `^`) of values whose
+  bits can't overlap (`c << 16 | b << 8 | a`) is now their sum, and reading a piece
+  back (`>>`, a mask, `/` or `%` by a power of two, `as u8`, a byte through
+  memory) takes it off that sum, where each used to decompose the word into
+  bits: such a round trip on three `u8` inputs went from 151 constraints to 28.
+  No example circuit changes. It also makes the input-binding shim's layout
+  harmless: LLVM packing byte inputs costs nothing.
+- **Enums in TypeScript are constants.** A generated client exports each enum as
+  an object of its variants and a type of the same name: `Country.US` (with
+  completion), or the name `"US"`; anything else doesn't compile.
 - **`bool` inputs.** A `bool` parameter (or struct field) is one field
   element, checked to be 0 or 1 on entry, and works as a condition (`if flag`)
   and a value (`Field::from(flag)`); clients take `true`/`false`.
