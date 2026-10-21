@@ -55,11 +55,17 @@ export class Proof<PublicValues> {
 /** The parts of `@blueshift-gg/xark-wasm` a client uses (any of its builds). */
 export interface Wasm {
   prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
-  verify(verifyingKey: Uint8Array, proof: Uint8Array, publicInputs: Uint8Array): boolean;
-  encodeInputs(schema: string, inputs: string): Record<string, string>;
-  encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
-  decodePublicValues(schema: string, publicInputs: Uint8Array): string;
-  valueFields(schema: string, typeName: string, value: string): string[];
+  /** A circuit's `schema.json`, parsed once. */
+  Schema: new (schema: string) => {
+    encodeInputs(inputs: string): Record<string, string>;
+    encodePublicInputs(publicInputs: string): Uint8Array;
+    decodePublicValues(publicInputs: Uint8Array): string;
+    valueFields(typeName: string, value: string): string[];
+  };
+  /** `vk.bin`, decoded once (throws if malformed). */
+  VerifyingKey: new (bytes: Uint8Array) => {
+    verify(proof: Uint8Array, publicInputs: Uint8Array): boolean;
+  };
   poseidon2(inputs: string[]): string;
 }
 

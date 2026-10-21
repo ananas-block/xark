@@ -273,12 +273,20 @@ pub fn verify(
     public_inputs_bytes: &Bytes,
 ) -> Result<bool, js_sys::Error> {
     let vk_bytes = to_bytes(vk_bytes, "verifying key")?;
+    let vk = deserialize_bytes::<VerifyingKey<Bn254>>(&vk_bytes, "verifying key")?;
+    verify_with(&vk, proof_bytes, public_inputs_bytes)
+}
+
+fn verify_with(
+    vk: &VerifyingKey<Bn254>,
+    proof_bytes: &Bytes,
+    public_inputs_bytes: &Bytes,
+) -> Result<bool, js_sys::Error> {
     let proof_bytes = to_bytes(proof_bytes, "proof")?;
     let public_inputs_bytes = to_bytes(public_inputs_bytes, "public inputs")?;
-    let vk = deserialize_bytes::<VerifyingKey<Bn254>>(&vk_bytes, "verifying key")?;
     let proof = deserialize_bytes::<Proof<Bn254>>(&proof_bytes, "proof")?;
     let public: Vec<Fr> = deserialize_bytes(&public_inputs_bytes, "public inputs")?;
-    xark_groth16::verify(&vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
+    xark_groth16::verify(vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
 }
 
 /// Decode binary public inputs (the `publicInputs` `Uint8Array` from [`prove`],
@@ -302,13 +310,89 @@ fn json(text: &str, what: &str) -> Result<serde_json::Value, js_sys::Error> {
     serde_json::from_str(text).map_err(|e| js_error(&format!("{what}: {e}")))
 }
 
+/// A circuit's `schema.json`, parsed once: what a generated client holds to encode
+/// and decode values, instead of passing the text to every call.
+#[wasm_bindgen(js_name = Schema)]
+pub struct JsSchema(xark_schema::Schema);
+
+#[wasm_bindgen(js_class = Schema)]
+impl JsSchema {
+    /// Parse `schema.json` (text). Throws if it isn't a schema this xark reads.
+    #[wasm_bindgen(constructor)]
+    pub fn new(schema_json: &str) -> Result<JsSchema, js_sys::Error> {
+        Ok(JsSchema(schema(schema_json)?))
+    }
+
+    /// As [`encode_inputs`].
+    #[wasm_bindgen(js_name = encodeInputs)]
+    pub fn encode_inputs(&self, inputs_json: &str) -> Result<JsValue, js_sys::Error> {
+        encode_inputs_with(&self.0, inputs_json)
+    }
+
+    /// As [`encode_public_inputs`].
+    #[wasm_bindgen(js_name = encodePublicInputs)]
+    pub fn encode_public_inputs(&self, public_json: &str) -> Result<Vec<u8>, js_sys::Error> {
+        encode_public_inputs_with(&self.0, public_json)
+    }
+
+    /// As [`decode_public_values`].
+    #[wasm_bindgen(js_name = decodePublicValues)]
+    pub fn decode_public_values(
+        &self,
+        public_inputs_bytes: &Bytes,
+    ) -> Result<String, js_sys::Error> {
+        decode_public_values_with(&self.0, public_inputs_bytes)
+    }
+
+    /// As [`value_fields`].
+    #[wasm_bindgen(js_name = valueFields)]
+    pub fn value_fields(
+        &self,
+        type_name: &str,
+        value_json: &str,
+    ) -> Result<Vec<String>, js_sys::Error> {
+        value_fields_with(&self.0, type_name, value_json)
+    }
+}
+
+/// A verifying key (`vk.bin`), decoded once: a malformed key throws here, so that
+/// [`VerifyingKey::verify`](JsVerifyingKey::verify) throws only on a malformed proof
+/// or public inputs.
+#[wasm_bindgen(js_name = VerifyingKey)]
+pub struct JsVerifyingKey(VerifyingKey<Bn254>);
+
+#[wasm_bindgen(js_class = VerifyingKey)]
+impl JsVerifyingKey {
+    #[wasm_bindgen(constructor)]
+    pub fn new(vk_bytes: &Bytes) -> Result<JsVerifyingKey, js_sys::Error> {
+        let bytes = to_bytes(vk_bytes, "verifying key")?;
+        Ok(JsVerifyingKey(deserialize_bytes(&bytes, "verifying key")?))
+    }
+
+    /// As [`verify`], with this key.
+    pub fn verify(
+        &self,
+        proof_bytes: &Bytes,
+        public_inputs_bytes: &Bytes,
+    ) -> Result<bool, js_sys::Error> {
+        verify_with(&self.0, proof_bytes, public_inputs_bytes)
+    }
+}
+
 /// The circuit's inputs (JSON text: an object of every input, each in its natural
 /// form, `camelCase` or `snake_case` keys) as the `leaf → decimal` object [`prove`]
 /// takes, encoded and checked against `schema` (the circuit's `schema.json` text).
-/// A generated client calls this; see `xark client`.
+/// A generated client holds a [`Schema`](JsSchema) instead.
 #[wasm_bindgen(js_name = encodeInputs)]
 pub fn encode_inputs(schema_json: &str, inputs_json: &str) -> Result<JsValue, js_sys::Error> {
-    let leaves = schema(schema_json)?
+    encode_inputs_with(&schema(schema_json)?, inputs_json)
+}
+
+fn encode_inputs_with(
+    schema: &xark_schema::Schema,
+    inputs_json: &str,
+) -> Result<JsValue, js_sys::Error> {
+    let leaves = schema
         .leaves(&json(inputs_json, "inputs")?)
         .map_err(|e| js_error(&e))?;
     let out = js_sys::Object::new();
@@ -325,7 +409,14 @@ pub fn encode_public_inputs(
     schema_json: &str,
     public_json: &str,
 ) -> Result<Vec<u8>, js_sys::Error> {
-    let values = schema(schema_json)?
+    encode_public_inputs_with(&schema(schema_json)?, public_json)
+}
+
+fn encode_public_inputs_with(
+    schema: &xark_schema::Schema,
+    public_json: &str,
+) -> Result<Vec<u8>, js_sys::Error> {
+    let values = schema
         .public_inputs(&json(public_json, "public inputs")?)
         .map_err(|e| js_error(&e))?;
     let mut out = Vec::new();
@@ -343,9 +434,16 @@ pub fn decode_public_values(
     schema_json: &str,
     public_inputs_bytes: &Bytes,
 ) -> Result<String, js_sys::Error> {
+    decode_public_values_with(&schema(schema_json)?, public_inputs_bytes)
+}
+
+fn decode_public_values_with(
+    schema: &xark_schema::Schema,
+    public_inputs_bytes: &Bytes,
+) -> Result<String, js_sys::Error> {
     let bytes = to_bytes(public_inputs_bytes, "public inputs")?;
     let values: Vec<Fr> = deserialize_bytes(&bytes, "public inputs")?;
-    let v = schema(schema_json)?
+    let v = schema
         .decode_public(&values, true)
         .map_err(|e| js_error(&e))?;
     Ok(v.to_string())
@@ -360,7 +458,15 @@ pub fn value_fields(
     type_name: &str,
     value_json: &str,
 ) -> Result<Vec<String>, js_sys::Error> {
-    let fields = schema(schema_json)?
+    value_fields_with(&schema(schema_json)?, type_name, value_json)
+}
+
+fn value_fields_with(
+    schema: &xark_schema::Schema,
+    type_name: &str,
+    value_json: &str,
+) -> Result<Vec<String>, js_sys::Error> {
+    let fields = schema
         .fields(type_name, &json(value_json, "value")?)
         .map_err(|e| js_error(&e))?;
     Ok(fields.iter().map(|f| f.to_string()).collect())

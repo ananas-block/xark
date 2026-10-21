@@ -37,7 +37,15 @@ test("a proof travels as one blob", () => {
   expect(verifier.decode(tampered).publicInputs.result.equals(26)).toBe(true);
   expect(verifier.verify(tampered)).toBe(false);
   expect(verifier.verify(blob.slice(0, 10))).toBe(false);
+  const garbled = blob.slice();
+  garbled[10] ^= 0xff; // inside the proof: malformed, so not a valid proof
+  expect(verifier.verify(garbled)).toBe(false);
   expect(() => verifier.decode(blob.slice(0, 10))).toThrow(/not a serialized proof/);
+});
+
+test("a broken verifying key fails when the verifier is made", async () => {
+  const vk = artifacts("cube").verifyingKey.slice(0, 40);
+  await expect(Cube.verifier(vk)).rejects.toThrow(/verifying key/);
 });
 
 test("refuses bad inputs", () => {

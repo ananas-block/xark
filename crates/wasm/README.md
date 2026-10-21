@@ -300,9 +300,12 @@ prover.poseidon2(prover.fields("Identity", id)); // hash a value as the circuit 
 
 ### Typed values (`schema.json`)
 
-A generated client (`xark client`) calls these with the circuit's
-`schema.json`, so values go in and come out in their natural forms (dates,
-strings, variant names, bytes). Each takes the schema as JSON text.
+These take the circuit's `schema.json` text, so values go in and come out in
+their natural forms (dates, strings, variant names, bytes). Each also exists as a
+method of `new Schema(text)`, which parses the schema once; a generated client
+(`xark client`) holds one. Likewise `new VerifyingKey(vkBytes)` decodes `vk.bin`
+once (throwing if it's malformed), and its `verify(proof, publicInputs)` decodes
+only the proof.
 
 - `encodeInputs(schema, inputs)`: every input (JSON text) → the `leaf → decimal`
   object `prove` takes.

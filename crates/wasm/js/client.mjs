@@ -271,14 +271,16 @@ class Session {
   constructor(circuit, wasm) {
     this.circuit = circuit;
     this.wasm = wasm;
+    // The schema, parsed once.
+    this.codec = new wasm.Schema(circuit.schema);
   }
 
   encodePublicInputs(publicInputs) {
-    return this.wasm.encodePublicInputs(this.circuit.schema, toJson(publicInputs));
+    return this.codec.encodePublicInputs(toJson(publicInputs));
   }
 
   decodePublicInputs(bytes) {
-    return this.circuit.decodePublic(JSON.parse(this.wasm.decodePublicValues(this.circuit.schema, bytes)));
+    return this.circuit.decodePublic(JSON.parse(this.codec.decodePublicValues(bytes)));
   }
 
   /** A `Proof` from its `toBytes()`, with its public inputs decoded (not verified). */
@@ -288,7 +290,7 @@ class Session {
   }
 
   fields(type, value) {
-    return this.wasm.valueFields(this.circuit.schema, type, toJson(value)).map((f) => new Field(f));
+    return this.codec.valueFields(type, toJson(value)).map((f) => new Field(f));
   }
 
   poseidon2(fields) {
@@ -304,7 +306,7 @@ export class Prover extends Session {
 
   prove(inputs) {
     const { circuit, provingKey, sources } = this.parts;
-    const leaves = this.wasm.encodeInputs(this.circuit.schema, toJson(inputs));
+    const leaves = this.codec.encodeInputs(toJson(inputs));
     const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
     return new Proof(proof.slice(), this.decodePublicInputs(publicInputs), publicInputs.slice());
   }
@@ -313,7 +315,8 @@ export class Prover extends Session {
 export class Verifier extends Session {
   constructor(circuit, wasm, parts) {
     super(circuit, wasm);
-    this.verifyingKey = parts.verifyingKey;
+    // Decoded once: a malformed key throws here, not as a `false` from every verify.
+    this.key = new wasm.VerifyingKey(parts.verifyingKey);
   }
 
   verify(proof, publicInputs) {
@@ -330,9 +333,9 @@ export class Verifier extends Session {
           ? publicInputs
           : this.encodePublicInputs(publicInputs);
     try {
-      return this.wasm.verify(this.verifyingKey, parts.proofBytes, inputs);
+      return this.key.verify(parts.proofBytes, inputs);
     } catch {
-      return false; // malformed proof bytes
+      return false; // a malformed proof, or public inputs of the wrong shape
     }
   }
 }
