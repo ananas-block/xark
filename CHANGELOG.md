@@ -18,439 +18,267 @@ gadgets now check more:
 - `xark-secp256r1`: the same check, +3 constraints.
 - `xark-bignum`: `mod_neg` gave a wrong result for some inputs at full 256-bit
   width; `mod_add` could overflow; `mod_neg(0)` is fixed.
+- `grumpkin_nova_fold` takes its inputs grouped by instance.
+
+### Highlights
+
+- **Stable Rust only.** Circuits compile with any stable Rust from 1.89, and are
+  identical on every supported version. The pinned-nightly `xark-rustc` is gone.
+- **Typed inputs.** One `xark::Input` trait, implemented by `#[input]` or by hand,
+  and everyday types (`Date`, `Text`, `Choice<E>`, `Bitfield<E>`, `Country`), in
+  the circuit, in tests, on the command line and in clients.
+- **Typed TypeScript clients.** `xark client` generates a client that proves and
+  verifies through xark-wasm, with the circuit's types and its Rust constructors.
+- **A streaming Groth16 prover** (`xark-groth16`) that never holds the whole
+  constraint system or key in memory, with arkworks' Groth16 removed.
+- **Failing checks name their source line**, everywhere inputs are checked.
 
 ### Changed
 
-- **Circuit code runs natively on the host.** In a host build the `Field`
-  intrinsics compute instead of panicking: arithmetic on BN254, comparisons,
-  and every hint as the solver computes it (bits, division, inverses, the
-  bignum hints). A failed `require`/`require_eq` panics at the caller's line
-  (`#[track_caller]`, host only), and `witness_begin`/`witness_end` regions
-  skip their checks as a circuit does. So a helper such as `id.commitment()`,
-  or a whole gadget (`xark_sha256::sha256`, ECDSA `verify`), runs in tests and
-  services: zk_kyc's tests no longer re-implement the commitment with a
-  separate native Poseidon2. Circuit builds are unchanged. Only hint-less
-  `Field::advice()` has no host value.
-- **Failing checks name their source line.** Every `xark build` writes
-  `sources.json` (which statement each constraint came from; `circuit.xbc` and
-  its digest are unchanged), and inputs that fail a check report that statement
-  in Rust tests, `xark prove`/`check` and xark-wasm: `src/lib.rs:96:20
-  id.nationality.require_in(policy.allowed);` rather than a constraint number.
-  Before, only `xark test` and `xark profile` builds had the line. xark-wasm's
-  `prove` and `preload` take `sources.json` as an optional last argument (the
-  streaming API as `options.sources`), and the generated client as
-  `keys.sources`. Recording it costs about 10% of lowering time (0.25s on
-  the 1.6M-constraint `secp256k1_ecdsa`).
-- **One `Input` trait for every circuit input.** A type is a circuit input when
-  it implements `xark::Input`: its `TYPE` (how clients see it, built from a fixed
-  set of standard types), and `read`/`write` of its field elements in order. The
-  one impl serves the circuit build and the host (the prover's leaves,
-  `to_fields()` for hashing, decoding values back), so a hand-written impl is a
-  few lines with no `cfg`s. The `#[input]` attribute implements it for a
-  struct, and with `#[input(number(bits = B))]` or `#[input(bytes)]` gives one a
-  standard encoding plus its host conversions; on a fieldless enum it implements
-  `xark::Enum`, and on an `impl` block it makes client functions (below). It
-  derives `Clone`, `Copy` and `Debug` (and `PartialEq`, `Eq` on an enum) unless
-  the type lists them; `#[input(no_derive)]` leaves them to you. This
-  replaces `#[derive(CircuitInput)]`,
-  `#[derive(Transparent)]`, `xark::flags!`, `ToFields`, `NativeInput` and the
-  per-gadget `wasm::Input` impls. `schema.json` is now version 2, written from
-  each parameter's `TYPE`; a build fails if one type name would stand for two
-  different types (two widths of `Bignum`), since clients look types up by name.
-- **Everyday input types** in `xark`: `Date`, `Text`, `Choice<E>` (one variant
-  of an enum) and `Bitfield<E>` (a set of them), each one field, with natural
-  forms in tests (`"1990-01-01"`, `[US, GB]`), `--inputs` and clients. `xark`
-  ships the ISO 3166 `Country` enum. Each compares with `require_eq` and `==`
-  (`choice == Country::US`), as does a derived struct (every field element), and
-  `Bitfield::of([US, GB])` builds a constant set inside a circuit too.
-  Checks are sized to the enum: a set splits into one bit per variant (not
-  all 253), and `Choice::require_in(set)` range-checks the choice to just the
-  bits that number the variants, so a three-variant enum's checks cost under 10
-  constraints each, and `require_in` over `Country` about 510.
-  `examples/zk_kyc` uses them: a private `Identity` (document number, birth
-  date, nationality, net worth) checked against a public `Policy`, built with
-  `Policy::on(today).min_age(18).min_net_worth(500_000).nationalities([US, GB])`
-  (`Date::years_before` gives the birth-date cutoff).
-- **Rust constructors and helpers in generated clients.** `#[input]` on an `impl`
-  block makes its methods client functions, from any crate (a gadget's reach every
-  circuit that takes its types): `xark client` builds the
-  crate's host code as `client.wasm` (no JS glue; zk_kyc's is 250 KB, 100 KB
-  gzipped) and types each from its signature and doc comment, so
-  `Policy.on(day).minAge(18)` and `Identity.commitment(id)` in TypeScript run the
-  crate's Rust. Values cross as JSON in their natural forms (`xark::client`), a
-  panic is an exception with its message. `Date::MIN`/`Date::MAX` give "any date"
-  limits a client can read back (a raw `99999999` isn't a day).
-- **One way to read input values.** `xark prove/check/verify --inputs` read
-  every value against `schema.json` (natural forms, ranges checked), and a
-  missing or older `schema.json` asks for `xark build` instead of falling back to
-  guessing how a value splits into leaves. xark-wasm's low-level `prove()` takes
-  leaf values (nested to mirror the input's shape); natural forms go through
-  `encodeInputs(schema, …)` first, as generated clients already do. The old
-  resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
-  limbs) are gone.
-- **Generated clients: a prover, a verifier and a proof.** `ZkKyc.prover(source)`
-  and `ZkKyc.verifier(source)` replace `new ZkKyc(wasm, keys)` and `ZkKyc.load`:
-  `source` is a URL serving the build output or its bytes, each has only the
-  methods it can run, and either loads `client.wasm` (no `initClient` step) and
-  xark-wasm itself (no module to import and pass in; `{ wasm }` overrides it). `prove` returns a `Proof`; `proof.toBytes()` is one blob that
-  `verifier.verify(bytes, required)` and `verifier.decode(bytes)` read. The shared
-  code (`Field`, `Proof`, loading, the Rust-function bridge) is xark-wasm's
-  `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
-  `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
-  writes beside the client (`cube.schema.json`), which the client imports.
-- **Clients are tested in a browser.** A CI job runs generated clients in headless
-  Chromium (`npm run test:browser` in `clients/check`), through xark-wasm's web build: loading it and its `init()`,
-  fetching the build output from URLs, proving, verifying, and the Rust functions.
-- **Generated types read like the Rust.** xark's standard types have named
-  aliases, each documented once in the runtime: `Day` (a `Date`), `Text`, `U8` …
-  `U128`. An array of up to 16 elements is a tuple (`readonly [Field, Field, Field,
-  Field]` for `[Field; 4]`), so a wrong length doesn't compile.
-- **Typed errors.** A refused input is an `InputError` with the input's `path`
-  (`"id.document"`; `xark_schema::InputError` in Rust), and inputs that fail a check
-  a `CheckFailed` with the statement's `site` (`file`, `line`, `col`, `text`,
-  `chain`). Generated clients export both. xark-wasm names its errors the same way.
-  Paths use a client's field names (`id.netWorth`). A Rust function's bad argument is
-  an `InputError` too, its path starting at the parameter (`allowed`), and so is a
-  value JS can't send (an invalid `Date`: `policy.today`).
-- **Bytes are little-endian wherever they're an integer.** A wide integer (a
-  limbed number: a scalar, a bignum) given as a list of byte values is read
-  little-endian, like `Field::from_le_bytes` and `new Field(bytes)`; it was
-  big-endian. A hex string is still a number, most significant digit first. A
-  client sends a `Uint8Array` as its list of bytes. `Field.fromBeBytes` remains the
-  explicit way in for big-endian data.
-- **Field elements are a `Field` class in TypeScript.** Generated clients return
-  `Field` (replacing `bigint`), and a field input takes a `Field` or a plain integer
-  (replacing `FieldLike`), checked the same way. `new Field(x)` takes a `bigint`, a
-  safe integer, a decimal or `0x`-hex string, little-endian bytes
-  (`Field.fromBeBytes` for big-endian) or another `Field`, and throws unless it's an
-  integer below the modulus. A number past 2^53 is refused, not rounded.
-- **Rust methods chain as in Rust.** A type's `self` methods are methods on the
-  values its functions return and on decoded public inputs (a generated
-  `PolicyValue` class): `Policy.on(today).minAge(18).worthAtLeast(500_000)`. A
-  method named like a field stays `Policy.method(value, …)`, and `xark client`
-  warns. zk_kyc's `Policy::min_net_worth` is now `worth_at_least`.
-  `await ZkKyc.ready(url)` loads `client.wasm` without a prover or verifier.
-- **Repository tasks are `cargo xtask`.** The shell and Python scripts are one Rust
-  tool (`xtask/`): `cargo xtask digests [--check|--update] [--toolchain 1.89]`
-  (circuits built in parallel, the toolchain under test a flag rather than
-  `RUSTUP_TOOLCHAIN`), `cargo xtask difftest [examples] [--shard k/n] [--jobs N]`
-  (flags instead of `XARK_SWEEP_*` variables), and `cargo xtask publish --plan |
-  --dry-run | --execute`, which orders the crates itself, so `Makefile.publish` and
-  its generator are gone.
-- **`xark-schema`: the input codec as its own crate.** `schema.json` and the
-  encoding of values (`xark_prover::schema` until now) need only the BN254 scalar
-  field and JSON. The CLI, xark-wasm and `client.wasm` use it directly, and the
-  client build no longer links the prover (nor needs a refusing `getrandom`).
-- **Builds show where the constraints go.** `xark build` lists the three source
-  lines that cost the most constraints. `xark profile` ends with a breakdown by
-  kind, saying what each kind is and how to have fewer of them, and the
-  costliest functions including what they call (`commitment → hash → perm`).
-  `--json` carries both (`kinds`, `functions`). xark-wasm's `bench` feature,
-  `lastTimings` and the pool's `configure` are gone.
-- **Circuit crates can use `std`.** The circuit build links `std` (which
-  `wasm32-unknown-unknown` ships), and panics reach the compiler through a panic
-  hook the `#[circuit]` entry installs, rather than a `#[panic_handler]` that
-  clashed with std's. So `#![cfg_attr(xark, no_std)]` is no longer needed (`xark
-  init` drops it; it still works), and circuit code can use `std` and crates that
-  assume it. No circuit changes; the intermediate wasm grows (sha256's: 1.1 MB to
-  1.9 MB) with no change in lowering time. `xark` and the gadgets stay `no_std`
-  libraries, and the on-chain verifier doesn't depend on any of this.
-- **Packing narrow values into a word is free.** An `|` (or `^`) of values whose
-  bits can't overlap (`c << 16 | b << 8 | a`) is now their sum, and reading a piece
-  back (`>>`, a mask, `/` or `%` by a power of two, `as u8`, a byte through
-  memory) takes it off that sum, where each used to decompose the word into
-  bits: such a round trip on three `u8` inputs went from 151 constraints to 28.
-  No example circuit changes. It also makes the input-binding shim's layout
-  harmless: LLVM packing byte inputs costs nothing.
-- **Enums in TypeScript are constants.** A generated client exports each enum as
-  an object of its variants and a type of the same name: `Country.US` (with
-  completion), or the name `"US"`; anything else doesn't compile.
-- **`bool` inputs.** A `bool` parameter (or struct field) is one field
-  element, checked to be 0 or 1 on entry, and works as a condition (`if flag`)
-  and a value (`Field::from(flag)`); clients take `true`/`false`.
-- **`Date::parse` and `Text::parse`** return a `Result` (`xark::InvalidValue`),
-  and `Date::checked`/`Text::checked` an `Option`, for input you didn't write.
-  `From<&str>` still panics, for literals in tests.
-- **`cargo test` rebuilds when a gadget changes.** `xark build` records every
-  local source file the circuit came from in `target/xark/<name>/deps` (from
-  cargo's dep-info: path-dependency gadgets and `xark` included), and a circuit
-  test rebuilds when one is newer. Before, only the circuit crate's own files
-  were checked.
-- **Hash values in a client as the circuit does.** xark-wasm adds
-  `valueFields` (a value's field elements, as `to_fields()` gives them) and
-  `poseidon2`; a generated client has a typed `fields("Identity", id)`. zk_kyc's
-  TypeScript test computes the issuer's commitment this way.
-- **`load` in the TypeScript client**: `await ZkKyc.load(wasm, "/circuits/zk_kyc/")`
-  fetches `circuit.xbc`, the keys and `sources.json` from a URL (or only the
-  parts named, such as `["verifyingKey"]` for a verifier).
-- **Clients are generated per language from one model.** `xark client`
-  resolves `schema.json` into the standard types once, and a target per
-  language maps them to its own types (TypeScript today: `Date`, string unions
-  of variant names, `bigint`, bytes). Values are encoded by the one Rust codec,
-  so a Python or Go client is one more target, not a second encoder.
-- **A cleaner TypeScript client.** `xark client` emits plain types (`Date`,
-  string unions of variant names, `bigint`, bytes) and a thin class; encoding and
-  decoding run in xark-wasm (`encodeInputs`, `encodePublicInputs`,
-  `decodePublicValues`) on the same code as the CLI (`xark_prover::schema`), so a
-  generated client is ~150 lines instead of ~350 and the two can't disagree. The
-  file's header shows the `#[circuit]` signature it came from. The example
-  client tests run under vitest.
-- **Natural input forms everywhere.** A gadget input type declares its natural
-  encoding (`schema.json`'s `encoding`: limbs of a number, fields back to back,
-  SEC1, a compressed Ed25519 point), and both `xark prove/check/verify --inputs`
-  and the generated TypeScript client accept it: `"pubkey": "0x…"` for an
-  Ed25519 `PointL` (decompressed for you), a hash's 32 bytes, a scalar's number.
-  The client also takes `[u8; N]` as hex, and its decoded public inputs have their
-  own `<Name>PublicValues` type. The old leaf-name guessing in `--inputs` also
-  mis-split Ed25519's 3×85-bit limbs; encoded types no longer go through it.
-- `xark inspect` lists inputs by name and type (`aad: [u8; 13]`), not leaf by
-  leaf, and `xark setup`'s next step shows a `--inputs` template in natural forms
-  (inline, or written to `inputs.example.json` for big circuits).
-- **One dependency per circuit crate.** `xark` re-exports the prover as
-  `xark::prover` (host builds only), and `#[circuit]`/the derives use it, so a
-  circuit crate no longer needs `xark-prover` (`xark init` no longer adds it,
-  and the examples and gadgets dropped it). Use `xark::prover::circuit(..)`.
-- **Typed host inputs.** The validator `#[circuit]` generates (and its
-  `<Fn>Inputs` struct) takes typed values instead of strings: a `Field` takes
-  anything that converts (`cube(3, 27)`, an `ark_bn254::Fr`, a decimal / `0x`-hex
-  string; values `>= p` or negative are rejected), and a gadget type takes its
-  natural form (`PointL` an Ed25519 key's 32 bytes, secp `Point` its 64 / 65
-  bytes, scalars their 32 bytes, `Affine` an `(x, y)`, bignums a number). Input
-  leaves carry field elements, not decimal strings.
-- Derived input structs can hold gadget types (`Affine`, `PointL`, `Hash`, …),
-  and `#[circuit]` parameters can be arrays of them (`[Affine; 4]`).
-  `xark-grumpkin` gains
-  `Instance`, `WideScalar` and `wide_scalar_mul`; the grumpkin examples use them
-  (`grumpkin_ivc`: 20 parameters → 8). `grumpkin_nova_fold`'s inputs are now
-  grouped by instance, so its circuit (and keys) change.
-- The on-chain verifier skips the scalar multiplication for public inputs of
-  0, 1 or up to 128 (a skip or a few point additions instead): booleans,
-  enum values and counts verify cheaper. Up to 38% less compute on a
-  circuit whose public inputs are all small, about 0.5% more on one whose
-  inputs are all large (hashes). The reference program's hash changes.
-- `xark export` no longer writes `client_call_example.rs`. It was generic
-  Solana client boilerplate (and its listed dependencies didn't compile
-  together); the generated README now says how to send `instruction_data.bin`.
-- **Field inputs must be field elements.** A `Field` input outside `0 <= x < p`
-  (negative, or `p` and above) is rejected instead of silently reduced mod p, in
-  `xark prove` / `check` / `verify`, xark-wasm, generated TS clients and the Rust
-  API (`circuit.check` / `.prove`). A value that wraps proves a different number
-  than the one written, e.g. a 256-bit hash passed as a `Field`.
-  `xark_prover::hex_to_field_decimal` is replaced by `field_input_decimal`
-  (decimal or hex, range-checked).
-- A constant `Field` from `Field::constant` / `from_le_bytes` / `from_be_bytes` is
-  reduced mod p when it's made, so `to_decimal()` (and `{:?}`) give the value
-  the circuit sees. 32 random bytes used to print a number above p.
-- **Stable Rust only.** Circuits are compiled to wasm by any stable Rust from
-  1.89 on and lowered by `xark-frontend`. The pinned-nightly MIR compiler
-  (`xark-rustc`) is removed, along with `--frontend`, `XARK_FRONTEND`,
-  `XARK_TEST_FRONTEND` and `XARK_MIR_COMPAT`. A circuit is identical on every
-  supported Rust version. The minimum Rust is 1.89, for both the CLI and
-  circuits.
+#### The toolchain and the frontend
+
+- **Stable Rust only.** A circuit crate is compiled to wasm by the ambient stable
+  `cargo` (1.89 or later, for the CLI too) and lowered by the new `xark-frontend`.
+  The pinned-nightly MIR compiler `xark-rustc` is removed. A circuit's R1CS is the
+  same on every supported Rust version (`cargo xtask digests` checks every example
+  on 1.89, stable and beta in CI).
 - **What compiles** is documented from the new frontend in
   [docs/subset.md](docs/subset.md). Branches on witness values, small witness
-  indices and short witness-bounded loops now work. Constructs the frontend can't
-  compile soundly (a witness-sized `memory.grow`, a circuit input declared inside
-  a witness branch, a loop whose length depends on a witness and isn't provably
-  short) are refused with a message naming the source line.
-- **Groth16 prover**: `xark prove` uses `xark-groth16`, a streaming prover that
-  never holds the whole constraint system or proving key in memory. Keys and
-  proofs are compatible with the arkworks path (byte-identical for the same
-  randomness).
+  indices and short witness-bounded loops work. Constructs that can't compile
+  soundly (a witness-sized `memory.grow`, a circuit input declared inside a witness
+  branch, a loop whose length depends on a witness and isn't provably short) are
+  refused with a message naming the source line.
+- **Circuit crates can use `std`.** `#![cfg_attr(xark, no_std)]` is no longer
+  needed (`xark init` leaves it out): circuit code can use `std` and crates that
+  assume it. `xark` and the gadgets stay `no_std` libraries, and the on-chain
+  verifier doesn't depend on any of this.
+- **Circuit code runs natively on the host.** In a host build the `Field`
+  operations compute instead of panicking: arithmetic on BN254, comparisons, and
+  every hint as the solver computes it. A failed `require`/`require_eq` panics at
+  the caller's line, and `witness_begin`/`witness_end` regions skip their checks as
+  a circuit does. So a helper such as `id.commitment()`, or a whole gadget
+  (`xark_sha256::sha256`, ECDSA `verify`), runs in tests and services. Only
+  hint-less `Field::advice()` has no host value.
+- **Packing narrow values into a word is free.** An `|` (or `^`) of values whose
+  bits can't overlap (`c << 16 | b << 8 | a`) is their sum, and reading a piece
+  back (`>>`, a mask, `/` or `%` by a power of two, `as u8`, a byte through memory)
+  takes it off that sum instead of splitting the word into bits: such a round trip
+  on three `u8` inputs costs 28 constraints rather than 151.
+- **Failing checks name their source line.** `xark build` writes `sources.json`
+  (which statement each constraint came from), and inputs that fail a check report
+  that statement in Rust tests, `xark prove`/`check`, xark-wasm and clients:
+  `src/lib.rs:96:20 id.nationality.require_in(policy.allowed);` rather than a
+  constraint number.
+- **`cargo test` rebuilds a stale circuit**, one older than any local source it
+  came from (path-dependency gadgets and `xark` included, from cargo's dep-info),
+  instead of testing the previous build. Without an `xark` to rebuild with, it
+  warns.
+
+#### Inputs
+
+- **One `Input` trait for every circuit input.** A type is a circuit input when it
+  implements `xark::Input`: its `TYPE` (how clients see it, built from a fixed set
+  of standard types) and `read`/`write` of its field elements. The one impl serves
+  the circuit build and the host (the prover's inputs, `to_fields()` for hashing,
+  decoding public inputs), so a hand-written impl is a few lines with no `cfg`s.
+  `#[input]` implements it for a struct (`#[input(number(bits = B))]` or
+  `#[input(bytes)]` give it a standard encoding), `xark::Enum` for a fieldless
+  enum, and client functions for an `impl` block. It derives `Clone`, `Copy` and
+  `Debug` (and `PartialEq`, `Eq` on an enum) unless listed;
+  `#[input(no_derive)]` leaves them to you. It replaces `#[derive(CircuitInput)]`,
+  `#[derive(Transparent)]` and `NativeInput`.
+- **Everyday input types**: `Date`, `Text`, `Choice<E>` (one variant of an enum)
+  and `Bitfield<E>` (a set of them), each one field, with natural forms in tests
+  (`"1990-01-01"`, `[US, GB]`), `--inputs` and clients, and the ISO 3166 `Country`
+  enum. Each compares with `require_eq` and `==`, as does an `#[input]` struct.
+  Checks are sized to the enum: a set splits into one bit per variant, and
+  `Choice::require_in(set)` costs about 510 constraints over `Country`.
+  `Date::parse`/`Text::parse` return a `Result` for input you didn't write.
+  `examples/zk_kyc` uses them: a private `Identity` checked against a public
+  `Policy` built with `Policy::on(today).min_age(18).worth_at_least(500_000)`.
+- **`bool` inputs.** A `bool` parameter or field is one field element, checked to
+  be 0 or 1, usable as a condition and a value.
+- **`schema.json`.** `xark build` writes every input's name, visibility and type,
+  and the public inputs in proof order. A build fails if one type name would stand
+  for two different types, since clients look types up by name.
+- **Natural input forms, read one way.** `xark prove/check/verify --inputs` read
+  every value against `schema.json`, in its natural form: a date, a variant name,
+  an Ed25519 key or a hash as `0x`-hex bytes (decompressed for you), a scalar as a
+  number. A missing `schema.json` asks for `xark build` instead of guessing how a
+  value splits into leaves. `xark setup`'s next step shows a template in these forms
+  (or writes `inputs.example.json`), and `xark inspect` lists inputs by name and
+  type.
+- **Bytes are little-endian where they're an integer.** A wide integer (a limbed
+  number: a scalar, a bignum) given as a list of bytes is read little-endian, like
+  `Field::from_le_bytes`. A hex string is a number, most significant digit first.
+- **Field inputs must be field elements.** A `Field` input outside `0 <= x < p` is
+  rejected instead of silently reduced, everywhere inputs are read. A value that
+  wraps proves a different number than the one written (a 256-bit hash passed as a
+  `Field`). `xark_prover::hex_to_field_decimal` is replaced by `field_input_decimal`.
+- **Typed host inputs.** The validator `#[circuit]` generates (and its `<Fn>Inputs`
+  struct) takes typed values: a `Field` anything that converts (`cube(3, 27)`, an
+  `ark_bn254::Fr`, a decimal or `0x`-hex string), a gadget type its natural form.
+  Input structs can hold gadget types, and parameters can be arrays of them.
+- **One dependency per circuit crate.** `xark` re-exports the prover as
+  `xark::prover` (host builds), so a circuit crate needs only `xark`.
+- A constant `Field` (`Field::constant`, `from_le_bytes`, `from_be_bytes`) is
+  reduced mod p when made, so `to_decimal()` gives the value the circuit sees.
+
+#### TypeScript clients
+
+`xark client` now generates a typed client; in 0.2 it scaffolded a snarkjs
+verification starter, and the `xark-client` npm package is removed.
+
+- **What it writes:** `<circuit>.ts` and the `<circuit>.schema.json` it imports. The
+  types read like the circuit's: interfaces for input structs, enums as constants
+  and a type (`Country.US` or `"US"`; `"XX"` doesn't compile), named aliases for
+  xark's standard types (`Day`, `Text`, `U8` … `U128`), and arrays of up to 16
+  elements as tuples, so a wrong length doesn't compile.
+- **Proving and verifying:** `ZkKyc.prover(source)` and `ZkKyc.verifier(source)`,
+  from a URL serving the build output or its bytes, each with only the methods it
+  can run. They load xark-wasm themselves (node, web or workerd; `{ wasm }` passes
+  your own). `prove` returns a `Proof` whose `toBytes()` is one blob to send;
+  `verifier.verify(bytes, required)` checks it proves the public inputs you
+  require, and `verifier.decode(bytes)` reads them. A malformed verifying key fails
+  when the verifier is made.
+- **The circuit's Rust in TypeScript:** `#[input]` on an `impl` makes its methods
+  client functions, from any crate. `xark client` builds the crate's host code as
+  `client.wasm`, so `Policy.on(day).minAge(18)` and `Identity.commitment(id)` run the
+  crate's Rust, chaining as in Rust. A method named like a field stays
+  `Policy.method(value, …)`, and `xark client` warns. A Rust panic is an exception
+  with its message. `await ZkKyc.ready(url)` loads `client.wasm` on its own.
+- **Field elements** are a `Field` class: `new Field(x)` takes a `bigint`, a safe
+  integer, a decimal or `0x`-hex string, little-endian bytes (`Field.fromBeBytes`
+  for big-endian) or another `Field`, and throws unless it's below the modulus. A
+  field input also takes a plain integer, checked the same way, and a number past
+  2^53 is refused rather than rounded.
+- **Typed errors:** a refused input throws an `InputError` with its `path` in the
+  caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
+  fail a check a `CheckFailed` with the statement's `site` (file, line, column,
+  text, the functions it called into).
+- **Hashing as the circuit does:** `prover.fields("Identity", id)` gives a value's
+  field elements and `prover.poseidon2(fields)` hashes them.
+- The shared code is xark-wasm's `@blueshift-gg/xark-wasm/client`, and every value
+  is encoded by one Rust codec, `xark-schema`, shared with the CLI, so a client and
+  `xark prove --inputs` can't disagree.
+
+#### Proving and verifying
+
+- **A streaming Groth16 prover.** `xark prove` uses `xark-groth16`, which never
+  holds the whole constraint system or proving key in memory, always from
+  `circuit.xbc`. Keys and proofs are compatible with the arkworks path
+  (byte-identical for the same randomness), and existing key and proof files load.
+- **arkworks' Groth16 removed.** `xark-groth16` owns key generation, proving,
+  verification and the `Proof`/`VerifyingKey`/`ProvingKey` types; arkworks is only
+  the BN254 arithmetic. `xark_backend::{setup, prove, stream_prove}` are gone,
+  `xark_backend::ptau::setup_from_ptau` takes a constraint source,
+  `xark_prover::XarkCircuit` no longer implements arkworks' circuit trait, and
+  verification rejects a wrong number of public inputs.
+- **Proving from Rust:** `xark_prover::circuit("name").prove(inputs)` proves with the
+  built circuit and its `pk.bin` and returns the same bytes `xark prove` writes;
+  `prove_with_key` takes another key, and `prove_dev` makes throwaway keys.
+  `prove_only`, `prove_and_verify` and `check_fields` are no longer public.
+- The on-chain verifier skips the scalar multiplication for public inputs of 0, 1
+  or up to 128: booleans, enum values and counts verify cheaper (up to 38% less
+  compute when all are small, about 0.5% more when all are large). The reference
+  program's hash changes.
+- xark-wasm: `public_inputs_to_snarkjs` becomes `decode_public_inputs`; `Schema` and
+  `VerifyingKey` parse a schema or key once.
+
+#### The CLI
+
+- `xark build` prints the circuit digest (a fingerprint of the R1CS, written to
+  `target/xark/<name>/digest`) and the three source lines that cost the most
+  constraints.
+- `xark profile` ends with a breakdown by kind of constraint, saying what each is
+  and how to have fewer, and the costliest functions including what they call
+  (`commitment → hash → perm`); `--json` carries both.
 - `xark clean` also removes the wasm build cache (`target/xark-wasm`).
-- **One proving path.** `xark prove` always uses the streaming prover from
-  `circuit.xbc`, and tells a key's row form from its metadata or, failing that,
-  its size. Removed: `--r1cs` / `--circuit` (reading `r1cs.json` / `circuit.json`)
-  from `prove`, `setup`, `verify`, `inspect` and `ceremony init`; `prove
-  --stream` (always streams now); `setup --cache` and the `r1cs.min.wcz` cache
-  (`r1cs.stream` replaces it). `xark build --emit-json` still writes the JSON as
-  a debugging view.
-- **arkworks' Groth16 removed.** `xark-groth16` now owns the whole Groth16 stack:
-  key generation, the prover, verification, and the `Proof` / `VerifyingKey` /
-  `ProvingKey` types, which serialize byte-for-byte like `ark-groth16`'s, so
-  existing key and proof files still load. arkworks is only the BN254 arithmetic
-  (`ark-bn254` / `ark-ff` / `ark-ec`); `ark-groth16`, `ark-relations` and
-  `ark-snark` are test-only, as an independent reference. API changes:
-  `xark_backend::{setup, prove, stream_prove}` are gone;
-  `xark_backend::ptau::setup_from_ptau` takes a constraint source;
-  `xark_prover::XarkCircuit` no longer implements arkworks' circuit trait; and
-  verification rejects a wrong number of public inputs instead of ignoring the
-  difference.
-- **snarkjs output removed.** `xark setup` no longer writes
-  `snarkjs-verification_key.json`, `xark prove` no longer writes
-  `snarkjs-proof.json` / `snarkjs-public.json`, and xark-wasm drops
-  `proof_to_snarkjs` (`public_inputs_to_snarkjs` becomes `decode_public_inputs`).
-  Verify in JavaScript with xark-wasm's `verify`.
-- **No proof bundle.** `xark prove` no longer writes `<name>-<hash>.proof.json`
-  (it duplicated `proof.bin` / `public_inputs.bin`) or prints the proof's
-  on-chain bytes; it prints the proof's SHA-256 fingerprint. The Solana
-  verifier from `xark export` builds its own instruction data.
-- **`xark client` generates a typed TypeScript client** from `schema.json` (typed
-  `prove` / `verify` through xark-wasm, no setup needed). It replaces the old
-  starter scaffold, and the `xark-client` npm package (snarkjs verify) is removed:
-  prove and verify with xark-wasm or the generated client.
 
 ### Added
 
-- `xark_verifier::verify_groth16_batch`: several proofs of one circuit in a
-  single pairing call (`M + 3` pairs instead of `4M`). On chain each extra
-  proof costs about 29k CU instead of 77k (4 proofs: 168k vs 310k), so the
+- `xark_verifier::verify_groth16_batch`: several proofs of one circuit in a single
+  pairing call. On chain each extra proof costs about 29k CU instead of 77k, so the
   compute limit allows about 46 proofs instead of 18. Needs
-  `solana-nostd-alt-bn128` 0.1.3 (`pairing_bytes`).
-- `xark_poseidon2::native`: the Poseidon2 permutation, `hash2` and `hash` on
-  the host (over `ark_bn254::Fr`), from the same code as the circuit gadget, so
-  wallets and tests compute the digests a circuit commits to without a second
-  implementation. Circuits are unchanged.
-- `xark build` prints the circuit digest (a fingerprint of the R1CS) and writes it
-  to `target/xark/<name>/digest`.
-- Proving from Rust: `xark_prover::circuit("name").prove(inputs)` proves with the
-  built circuit and its `pk.bin` and returns the proof and public-input bytes
-  (`CircuitProof`, the same bytes `xark prove` writes); `prove_with_key` takes
-  another key. The throwaway-keys round trip it used to do is now `prove_dev`.
-  `prove_only` / `prove_and_verify` / `check_fields` are no longer public.
-  `circuit` / `circuit_at` load `circuit.xbc` only (the `circuit.json` +
-  `r1cs.json` fallback is gone, like the CLI's).
+  `solana-nostd-alt-bn128` 0.1.3.
+- `xark_poseidon2::native`: the Poseidon2 permutation and hashes on the host, from
+  the same code as the gadget.
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).
-- Generated clients for `cube`, `zk_kyc`, `sha256` and `merkle` are committed in
-  `clients/check/<name>/` (the examples stay plain Rust crates) with tests that
-  prove and verify through xark-wasm; `npm test` there (in CI) checks they're
-  current and typecheck, and runs them (`npm run update` rewrites stale ones).
-- Exhaustive witness search (`xark_ir::witness_search`) and
-  `scripts/difftest-examples.sh` (on every pull request), which check that each example
-  accepts exactly the inputs it should, with exactly one witness. It covers every
-  example except the two ECDSA circuits, including the whole ed25519 verify
-  circuit; the ECDSA ones are searched block by block.
-- `xark-groth16` is published.
-- Every crate declares the minimum Rust (`rust-version = "1.89"`), and CI
-  builds the whole workspace on 1.89, not only the example circuits.
+- `xark-schema`, `xark-frontend` and `xark-groth16` are published.
+- Exhaustive witness search (`xark_ir::witness_search`), and `cargo xtask difftest`
+  on every pull request: each example must accept exactly the inputs it should,
+  with exactly one witness. It covers every example but the two ECDSA circuits
+  (searched block by block), the whole ed25519 verify included.
+- Every crate declares `rust-version = "1.89"`, and CI builds the workspace on 1.89.
 - The slow CI checks (known-answer vectors, the EC gadget vectors, the example
-  sweep, the publish rehearsal) run on every pull request (`slow.yml`) instead
-  of daily, so a break shows on the PR that caused it. `scheduled.yml` keeps,
-  weekly, only what can fail with no code change: the circuit-digest check on
-  Rust stable and beta, and the long fuzz run. Nightly Rust is no longer
-  checked.
-- The on-chain (Solana) test workflow also runs when its own tests, the
-  fixtures they embed or `Cargo.lock` change; it used to run only for verifier
-  changes, so an edit to `sbpf.rs` was never tested.
-- CI runs `grumpkin_nova_prover`'s tests and builds `grumpkin_reference`, the
-  two examples that aren't circuits; nothing ran them before.
+  sweep, a publish rehearsal) run on every pull request instead of nightly. A
+  weekly run keeps what can fail with no code change: the digest check on Rust
+  stable and beta, and a long fuzz run. Generated clients are tested in CI, in Node
+  and in headless Chromium. Repository tasks are `cargo xtask` (`digests`,
+  `difftest`, `publish`).
+
+### Removed
+
+- `xark-rustc` and the pinned nightly.
+- snarkjs output: `snarkjs-verification_key.json`, `snarkjs-proof.json`,
+  `snarkjs-public.json`, and xark-wasm's `proof_to_snarkjs`. Verify in JavaScript
+  with xark-wasm or a generated client.
+- The proof bundle `<name>-<hash>.proof.json` (it duplicated `proof.bin` and
+  `public_inputs.bin`); `xark prove` prints the proof's SHA-256 fingerprint.
+- `--r1cs` / `--circuit` (reading `r1cs.json` / `circuit.json`) from `prove`,
+  `setup`, `verify`, `inspect` and `ceremony init`; `prove --stream` (it always
+  streams); `setup --cache` and `r1cs.min.wcz`. `xark build --emit-json` still
+  writes the JSON as a debugging view.
+- `xark export`'s `client_call_example.rs` (its dependencies didn't compile
+  together); the generated README says how to send `instruction_data.bin`.
+- The `xark-client` npm package.
 
 ### Fixed
 
-- `require_eq` accepts an integer or decimal string on either side:
-  `require_eq(7u64, x)` no longer fails to compile.
-- The verifier docs no longer suggest `verify_strict` makes proof bytes safe
-  as a replay or dedup key. It only rejects non-canonical encodings; Groth16
-  proofs are re-randomizable, so anyone holding a valid proof can make another
-  for the same public inputs. The exported crate's README, xark-verifier and
-  `docs/security.md` now say to put replay protection in the public inputs (a
-  nullifier, nonce or signer) instead.
-- `xark setup` writes the keys and `metadata.json` under temporary names and
-  swaps them in at the end. A failed or interrupted setup used to be able to
-  leave a new dev key next to old metadata marking it `production_safe`, which
-  `xark export` would then accept without `--allow-insecure`.
-- `xark ceremony contribute` likewise swaps its files in at the end (an
-  interruption could leave keys the recorded chain didn't explain, ruining the
-  ceremony), and refuses to contribute to a finalized ceremony.
-- `xark_test_harness::compile_file` builds debug notes and variable names only
-  when it writes the JSON views (`compile_file_json`), and `minimized_r1cs_len`
-  minimizes the per-template-reduced expansion, where unbounded fill-in is safe.
-  Same counts; `grumpkin_ipa_fold`'s tests went from 34 GB and 106 s to 3.6 GB
-  and 7 s, which a CI runner couldn't hold.
-- The builds that `xark test`, `profile`, `check --inputs` and `prove` run
-  first no longer print `xark build`'s "Next: xark setup" hint in the middle of
-  their output, and build paths have no stray `/./`.
-- In an editor, errors in a circuit crate's tests (and other host-only code)
-  now show. rust-analyzer's `overrideCommand`, which `xark init` sets, replaces
-  its `cargo check`, and `xark check` only built the circuit for wasm; with
-  `--message-format=json` it now runs `cargo check --all-targets` first.
-- Plain `cargo test` on a circuit crate rebuilds a circuit older than the
-  crate's `src/` or `Cargo.toml` (it only built a missing one), so it no longer
-  tests the previous build after an edit. Without an `xark` to rebuild with, it
-  warns that it is testing the previous build.
-- `xark doctor` warns when the `xark` that `cargo test` and rust-analyzer run
-  (`$XARK`, else `PATH`) is a different version, e.g. an old 0.2 install.
-- `xark export --out` and `xark client -o` refuse to overwrite files they
-  didn't generate. An `--out` naming your own program's crate used to replace
-  its `Cargo.toml` and `src/lib.rs` without a word; regenerating an earlier
-  export or client still works.
-- `xark ceremony init` refuses a directory that already holds a ceremony
-  unless given `--force`, which then removes all of it first. It used to
-  overwrite the keys and reset the count, discarding every contribution, and
-  could leave a finalized ceremony's production-safe `metadata.json` beside the
-  fresh keys.
-- `xark build`, `test`, `check` and `profile` find the crate from inside it,
-  as cargo does (`xark test` from `src/` used to fail with "no Cargo.toml"), and
-  a project path given as a relative directory is found by walking up from it
-  (`xark profile` from `src/` couldn't find the build).
-- A mistyped path is reported (`no such directory: …`) by every command.
-  `xark prove` used to build the crate in the current directory instead, and
-  `xark test` passed the path to `cargo test` as a test filter.
-- `xark init` refuses names `cargo new` refuses (a Rust keyword such as `type`,
-  a leading digit) and suggests one that works; it used to write a crate that
-  didn't build.
-- `xark build` / `xark test` with no path name the circuit after its package
-  (`building circuit cube`), not `circuit`.
-- `xark prove` with a proving key made before the circuit last changed says
-  so ("run `xark setup` again"); it used to fail with "proof failed
-  self-verification".
-- A proof that fails its self-check now says why. If the witness breaks a
-  constraint, xark-wasm says the inputs don't satisfy the circuit; if every
-  constraint holds, it says the proving key was made for a different circuit
-  or build. Before, both said "check the inputs". `xark_groth16::ProveError`
-  gains `Unsatisfied { row }` for the first case, and `first_unsatisfied`
-  finds that row.
-- `xark ceremony` documents its `--ptau-file`, `--out` and `--ceremony-dir`
-  flags in `--help`.
-- `xark clean` no longer follows symlinks (which could reach build output
-  outside the current directory) and skips `node_modules`.
-- `xark setup` says a key needs xark's provers only when its QAP domain is
-  actually mixed-radix; a smooth domain of `2^k` points is the standard one.
-- `xark verify` reports a public-input count mismatch as such, not as an "R1CS
-  synthesis error".
-- `--help` gives the default artifact paths as `target/xark/<name>/…` (where
-  they are), and no longer mentions the removed `--r1cs` flag.
-- `xark verify` suggests running `xark prove` only when `public_inputs.bin` is
-  missing, not when it's corrupt. `xark export` gives the same "run `xark setup`
-  first?" hint as the other commands when the key is missing.
-- An out-of-range `uN` input is named before solving (`input `b` is a u8: 256 is
-  out of range (0..=255)`) instead of failing as an opaque constraint.
-- A whole number written as a JSON float (`1e3`) is accepted as an input; it was
-  rejected as "not an exact integer".
-- `xark doctor` says what `xark` on PATH is for (rust-analyzer, and `cargo test`'s
-  auto-build), not `xark init`.
+- `require_eq` accepts an integer or decimal string on either side
+  (`require_eq(7u64, x)` compiles).
+- The verifier docs no longer suggest `verify_strict` makes proof bytes safe as a
+  replay or dedup key: Groth16 proofs are re-randomizable. They now say to put
+  replay protection in the public inputs (a nullifier, nonce or signer).
+- `xark setup` and `xark ceremony contribute` write their files under temporary
+  names and swap them in at the end, so an interruption can't leave a new dev key
+  beside metadata marking it production-safe, or keys the ceremony's chain doesn't
+  explain. `ceremony contribute` refuses a finalized ceremony, and `ceremony init`
+  refuses a directory holding one unless given `--force`.
+- `xark export --out` refuses to overwrite files it didn't generate (it could
+  replace your own crate's `Cargo.toml` and `src/lib.rs`).
+- `xark build`, `test`, `check` and `profile` find the crate from inside it, as cargo
+  does, and every command reports a mistyped path (`no such directory: …`) instead
+  of building the current directory or passing it to `cargo test` as a filter.
+- `xark init` refuses names `cargo new` refuses and suggests one that works, names
+  the crate after the last path component, and makes a crate that passes its own
+  `xark test`.
+- `xark test` passes its arguments to `cargo test` as given (`xark test . -- --list`).
+- `xark prove` with a proving key older than the circuit says to run `xark setup`
+  again, and a proof that fails its self-check says whether the inputs don't
+  satisfy the circuit or the key is for another one (`ProveError::Unsatisfied`).
+- A missing input is named (`missing input `result``), an out-of-range `uN` input
+  is named before solving, and a whole number written as a JSON float (`1e3`) is
+  accepted.
+- `xark verify` reports a public-input count mismatch as such, and suggests
+  `xark prove` only when `public_inputs.bin` is missing.
+- Errors in a circuit crate's tests show in an editor: `xark check
+  --message-format=json` (rust-analyzer's command) runs `cargo check --all-targets`
+  first.
+- `xark doctor` warns when the `xark` that `cargo test` and rust-analyzer run is a
+  different version, and says what it's for.
+- `xark clean` no longer follows symlinks and skips `node_modules`.
+- Solving a circuit multiplied out every `A·B = C` row, so two 500-term sides made
+  250,000 terms (a 12k-constraint Grumpkin circuit took 27 GB and 80 s); such rows
+  are factored through a helper variable (0.7 GB, about 2 s).
+- `xark_test_harness::compile_file` builds debug notes and variable names only when
+  it writes the JSON views: `grumpkin_ipa_fold`'s tests went from 34 GB and 106 s
+  to 3.6 GB and 7 s.
 - A circuit importing `Field` by name (`use xark::{Field, …}`) no longer gets an
-  `unused import` warning on host builds: `#[circuit]` keeps the parameter types
-  as written instead of rewriting them to `::xark::Field`.
-- A missing input is named (`missing input `result``) instead of reported as
-  `missing input for variable 1`, in `xark prove`, `xark check` and xark-wasm.
-- A failing `check` suggested building with `--profile`, which `xark build`
-  doesn't accept; it now points to `xark test` / `xark profile`.
-- A crate from `xark init` passes its own `xark test`. The scaffold declared
-  `xark-prover` as a dev-dependency, but `#[circuit]`'s generated code needs it
-  in every host build, so the tests didn't compile. `xark init <path>` names the
-  crate after the last path component (it used the whole path), and the scaffold
-  uses edition 2024.
-- `make -f Makefile.publish publish-dry` works before a release: it builds every
-  crate from its own package (`scripts/publish-dry.sh`) instead of resolving
-  the new version's dependencies from crates.io, where they aren't yet.
-- `crates/wasm/build.sh` runs on macOS (its `sed -i` was GNU-only, so the
-  `module` build stopped before copying in the optimized wasm).
-- `xark test` passes its arguments to `cargo test` as given: a name filter,
-  cargo flags, and after `--` the test binary's (`xark test . -- --list` used to
-  fail with "unexpected argument").
-- Witness search skips rows it provably can't learn from, so wide circuits decide
-  in seconds instead of timing out (a Grumpkin IPA search: 107 s → 4 s).
-- `xark ceremony init` reads the build's `circuit.xbc` like every other command
-  (it required an `r1cs.json`, which `xark build` no longer writes by default),
-  and the ceremony has a CLI end-to-end test again.
-
-- Soundness fixes in the new frontend before release: facts learned inside
-  witness-only code are no longer reused by real constraints; copies, overlapping
-  stores and sign-extending loads through witness-selected pointers; indirect
-  calls check the callee's signature.
-- Loading a circuit to solve it (`xark test`, `xark prove`) multiplied out every
-  `A·B = C` row, so a row with two 500-term sides became 250,000 terms: a
-  12k-constraint Grumpkin circuit took 27 GB and 80 s. Such rows are now factored
-  through a helper variable (0.7 GB, about 2 s).
+  `unused import` warning on host builds.
+- `crates/wasm/build.sh` runs on macOS.
+- Smaller fixes to messages and `--help`: `xark ceremony` documents its flags,
+  default artifact paths are given as `target/xark/<name>/…`, the builds that other
+  commands run don't print `xark build`'s next-step hint, and `xark setup` says a
+  key needs xark's provers only for a mixed-radix QAP domain.
