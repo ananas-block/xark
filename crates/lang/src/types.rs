@@ -54,6 +54,16 @@ impl Date {
         ))
     }
 
+    /// A real calendar day, or `None` (30 February, month 13, year 10000).
+    pub const fn checked(year: u16, month: u8, day: u8) -> Option<Date> {
+        if year > 9999 || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) {
+            return None;
+        }
+        Some(Date(Field::from_u64(
+            year as u64 * 10_000 + month as u64 * 100 + day as u64,
+        )))
+    }
+
     /// The raw integer `YYYYMMDD`, unchecked: for sentinels that aren't calendar days
     /// (`Date::from_raw(99_999_999)`: after every date).
     pub const fn from_raw(yyyymmdd: u32) -> Date {
@@ -104,6 +114,14 @@ impl PartialEq for Date {
 pub struct Text(Field);
 
 impl Text {
+    /// The string's bytes, little-endian, or `None` past 31 bytes.
+    pub const fn checked(s: &str) -> Option<Text> {
+        if s.len() > 31 {
+            return None;
+        }
+        Some(Text(Field::from_le_bytes(s.as_bytes())))
+    }
+
     /// The string's bytes, little-endian. Panics past 31 bytes.
     pub const fn new(s: &str) -> Text {
         assert!(
@@ -435,6 +453,9 @@ mod circuit_debug {
 }
 
 #[cfg(not(xark))]
+pub use host::InvalidValue;
+
+#[cfg(not(xark))]
 mod host {
     use alloc::string::String;
     use core::fmt;
@@ -449,17 +470,45 @@ mod host {
         }
     }
 
-    /// `"YYYY-MM-DD"` (or `"YYYYMMDD"`), checked like [`Date::new`]. Panics otherwise.
+    /// A value that isn't one of its type: a malformed date, text too long.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct InvalidValue(String);
+
+    impl fmt::Display for InvalidValue {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+
+    impl core::error::Error for InvalidValue {}
+
+    impl Date {
+        /// `"YYYY-MM-DD"` (or `"YYYYMMDD"`), checked like [`Date::new`].
+        pub fn parse(s: &str) -> Result<Date, InvalidValue> {
+            s.parse()
+        }
+    }
+
+    /// `"YYYY-MM-DD"` (or `"YYYYMMDD"`), checked like [`Date::new`].
+    impl core::str::FromStr for Date {
+        type Err = InvalidValue;
+        fn from_str(s: &str) -> Result<Date, InvalidValue> {
+            let d: String = s.chars().filter(|c| *c != '-').collect();
+            let bad = || InvalidValue(alloc::format!("`{s}` is not a YYYY-MM-DD date"));
+            let n = |r: core::ops::Range<usize>| d.get(r).and_then(|x| x.parse::<u16>().ok());
+            match (d.len(), n(0..4), n(4..6), n(6..8)) {
+                (8, Some(y), Some(m), Some(day)) => Date::checked(y, m as u8, day as u8)
+                    .ok_or_else(|| InvalidValue(alloc::format!("`{s}` is not a calendar day"))),
+                _ => Err(bad()),
+            }
+        }
+    }
+
+    /// `"YYYY-MM-DD"` (or `"YYYYMMDD"`), as [`Date::parse`]. Panics on anything else:
+    /// for literals in tests (`"1990-01-01".into()`); parse input you didn't write.
     impl From<&str> for Date {
         fn from(s: &str) -> Date {
-            let d: String = s.chars().filter(|c| *c != '-').collect();
-            let n = |r: core::ops::Range<usize>| -> u32 {
-                d.get(r)
-                    .and_then(|x| x.parse().ok())
-                    .unwrap_or_else(|| panic!("`{s}` is not a YYYY-MM-DD date"))
-            };
-            assert!(d.len() == 8, "`{s}` is not a YYYY-MM-DD date");
-            Date::new(n(0..4) as u16, n(4..6) as u8, n(6..8) as u8)
+            Date::parse(s).unwrap_or_else(|e| panic!("{e}"))
         }
     }
 
@@ -476,6 +525,15 @@ mod host {
         }
     }
 
+    impl Text {
+        /// The string, checked to fit (at most 31 UTF-8 bytes).
+        pub fn parse(s: &str) -> Result<Text, InvalidValue> {
+            Text::checked(s)
+                .ok_or_else(|| InvalidValue(alloc::format!("{s:?} is longer than 31 bytes")))
+        }
+    }
+
+    /// The string, as [`Text::parse`]. Panics past 31 bytes.
     impl From<&str> for Text {
         fn from(s: &str) -> Text {
             Text::new(s)
@@ -566,6 +624,18 @@ mod tests {
             alloc::format!("{:?}", Date::from("20261005")),
             "Date(2026-10-05)"
         );
+    }
+
+    #[test]
+    fn parsing_returns_errors() {
+        assert_eq!(Date::parse("2024-02-29").unwrap().parts(), (2024, 2, 29));
+        assert_eq!(
+            alloc::format!("{}", Date::parse("2023-02-29").unwrap_err()),
+            "`2023-02-29` is not a calendar day"
+        );
+        assert!(Date::parse("1990-1-1").is_err() && Date::parse("soon").is_err());
+        assert!(Date::checked(2023, 13, 1).is_none());
+        assert!(Text::parse(&"x".repeat(32)).is_err() && Text::parse("A1").is_ok());
     }
 
     #[test]

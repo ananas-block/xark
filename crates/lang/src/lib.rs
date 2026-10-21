@@ -47,6 +47,8 @@ pub use input::{Enum, Input};
 /// Everyday input types: [`Date`], [`Text`], [`Choice`] and [`Bitfield`] (of an
 /// [`Enum`]).
 pub mod types;
+#[cfg(not(xark))]
+pub use types::InvalidValue;
 pub use types::{Bitfield, Choice, Date, Text};
 
 /// ISO 3166-1 [`Country`] codes.
