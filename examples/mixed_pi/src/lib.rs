@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 // mixed_pi: main(x: priv, y: pub) -> pub Field { x*y + x }.

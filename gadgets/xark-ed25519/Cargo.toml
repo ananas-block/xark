@@ -15,7 +15,7 @@ name = "xark_ed25519"
 path = "src/lib.rs"
 
 [dependencies]
-xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
+xark = { path = "../../crates/lang", version = "0.3.0" }
 xark-bignum = { path = "../xark-bignum", version = "0.3.0" }
 xark-curve = { path = "../xark-curve", version = "0.3.0" }
 

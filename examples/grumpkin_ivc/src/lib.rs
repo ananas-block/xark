@@ -20,7 +20,6 @@
 //! per-step *fresh instances* with the augmented step circuit's own folded
 //! instance (true self-referential Nova) — the verifier core is identical.
 
-#![cfg_attr(xark, no_std)]
 #![allow(clippy::assign_op_pattern)]
 
 use xark_grumpkin::prelude::*;

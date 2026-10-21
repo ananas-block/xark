@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 // `to_bits::<8>` range-checks `x` to 8 bits (booleanity + recomposition);

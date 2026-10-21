@@ -1,8 +1,6 @@
 //! Struct support: a `Point { x: [Field; 3], y: [Field; 3] }` built in-circuit and
 //! passed through a helper returning a tuple, with field access `p.x[i]`. Exercises
 //! `AggregateKind::Adt` and tuple lowering — zero-cost, same R1CS as bare fields.
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 struct Point {

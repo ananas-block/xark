@@ -1,11 +1,10 @@
 //! `xark`: the standard prelude (`use xark::prelude::*`) for writing zero-knowledge
-//! programs in the `xark` Rust subset. A circuit is an ordinary `#![no_std]` Rust
+//! programs in the `xark` Rust subset. A circuit is an ordinary Rust
 //! function over [`Field`] values; the toolchain compiles it end to end (rustc →
 //! wasm32 → xark-IR → R1CS → Groth16) with no per-gadget backend support — gadgets are
 //! ordinary frontend library code lowering to the same primitive constraint set.
 //!
 //! ```rust,ignore
-//! #![no_std]
 //! use xark::prelude::*;
 //!
 //! /// Prove knowledge of a cube root: `secret^3 == result`.
@@ -26,8 +25,10 @@
 // in both builds; the allocation only ever runs host-side, never in a circuit.
 extern crate alloc;
 // Host builds run circuit code natively (`intrinsics::native`), with a per-thread
-// witness-region depth.
-#[cfg(not(xark))]
+// witness-region depth. The circuit build links `std` too (`wasm32-unknown-unknown`
+// ships it), so a circuit crate may use it: panics reach the compiler through a hook
+// (`wasm::install_panic_hook`), not a `#[panic_handler]` that would clash with std's.
+#[cfg(any(not(xark), target_arch = "wasm32"))]
 extern crate std;
 
 // Self-alias so `#[input]`'s generated `::xark::…` paths resolve *inside*

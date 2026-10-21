@@ -35,7 +35,7 @@ fn a_gadgets_functions_reach_the_client() {
         &tmp.path().join("gadget/Cargo.toml"),
         &format!(
             "[package]\nname = \"gadget\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
-             [dependencies]\nxark = {{ path = {:?}, default-features = false }}\n{lints}",
+             [dependencies]\nxark = {{ path = {:?} }}\n{lints}",
             lang.display().to_string()
         ),
     );
@@ -56,7 +56,7 @@ fn a_gadgets_functions_reach_the_client() {
         &tmp.path().join("circ/Cargo.toml"),
         &format!(
             "[package]\nname = \"circ\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
-             [dependencies]\nxark = {{ path = {:?}, default-features = false }}\n\
+             [dependencies]\nxark = {{ path = {:?} }}\n\
              gadget = {{ path = \"../gadget\" }}\n[workspace]\n{lints}",
             lang.display().to_string()
         ),

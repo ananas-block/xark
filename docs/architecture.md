@@ -1,7 +1,7 @@
 # Architecture
 
 xark is one tool with two faces — a **language** (write a circuit as ordinary
-`#![no_std]` Rust) and a **toolchain** (`xark build` / `xark prove`) — split into
+Rust) and a **toolchain** (`xark build` / `xark prove`) — split into
 focused crates with strict layering so that:
 
 * the circuit-author surface (`xark`'s prelude: `Field`, `require_eq`,

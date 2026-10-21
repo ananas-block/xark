@@ -561,9 +561,9 @@ pub fn cmd_init(args: &[String]) -> i32 {
          [lib]\n\
          crate-type = [\"lib\"]\n\n\
          [dependencies]\n\
-         xark = {{ version = \"{ver}\", default-features = false }}\n\
-         # From git:               xark = {{ git = \"https://github.com/blueshift-gg/xark\", default-features = false }}\n\
-         # From a local checkout:  xark = {{ path = \"../xark/crates/lang\", default-features = false }}\n\n\
+         xark = {{ version = \"{ver}\" }}\n\
+         # From git:               xark = {{ git = \"https://github.com/blueshift-gg/xark\" }}\n\
+         # From a local checkout:  xark = {{ path = \"../xark/crates/lang\" }}\n\n\
          # `xark` is set only by the circuit build; declare it so rustc's `unexpected_cfgs`\n\
          # lint (1.80+) stays quiet.\n\
          [lints.rust]\n\
@@ -715,12 +715,8 @@ fn ident_of(name: &str) -> String {
 
 /// The starter circuit written by `xark init`. The `#[cfg(test)] mod tests`
 /// block ([`tests_template`]) is appended with the crate's own name filled in.
-///
-/// `no_std` applies to the real circuit build (via `xark build`) but is dropped
-/// under `cargo test` so the host-side prover (which uses `std`) can
-/// link.
+/// Plain `std` Rust: the circuit build links `std` as the host build does.
 const LIB_TEMPLATE: &str = "\
-#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 #[circuit]

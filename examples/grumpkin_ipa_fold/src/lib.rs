@@ -25,7 +25,6 @@
 //! The Fiat–Shamir binding + native folding is the reusable core of a
 //! Grumpkin-cycle folding *recursion* step's in-circuit verifier.
 
-#![cfg_attr(xark, no_std)]
 #![allow(clippy::assign_op_pattern)]
 
 use xark_grumpkin::prelude::*;

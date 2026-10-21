@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 // memory_const: arr = [x, x*2, x*3]; require(arr sum == y),

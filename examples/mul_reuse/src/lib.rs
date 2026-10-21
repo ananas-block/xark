@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 //! A product reused across two `require_eq`s must stay bound to `a*b` in BOTH:
 //! folding the product's defining row into the first would leave the second
 //! pinning a free witness, letting a prover pick `c != d`. Must enforce

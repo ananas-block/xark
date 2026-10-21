@@ -80,6 +80,14 @@ gadgets now check more:
   crate's Rust. Values cross as JSON in their natural forms (`xark::client`), a
   panic is an exception with its message. `Date::MIN`/`Date::MAX` give "any date"
   limits a client can read back (a raw `99999999` isn't a day).
+- **Circuit crates can use `std`.** The circuit build links `std` (which
+  `wasm32-unknown-unknown` ships), and panics reach the compiler through a panic
+  hook the `#[circuit]` entry installs, rather than a `#[panic_handler]` that
+  clashed with std's. So `#![cfg_attr(xark, no_std)]` is no longer needed (`xark
+  init` drops it; it still works), and circuit code can use `std` and crates that
+  assume it. No circuit changes; the intermediate wasm grows (sha256's: 1.1 MB to
+  1.9 MB) with no change in lowering time. `xark` and the gadgets stay `no_std`
+  libraries, and the on-chain verifier doesn't depend on any of this.
 - **Packing narrow values into a word is free.** An `|` (or `^`) of values whose
   bits can't overlap (`c << 16 | b << 8 | a`) is now their sum, and reading a piece
   back (`>>`, a mask, `/` or `%` by a power of two, `as u8`, a byte through

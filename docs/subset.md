@@ -20,7 +20,6 @@ and every operation on a witness becomes constraints. Rule of thumb:
 visibility. `require_eq(a, b)` emits an equality **constraint**.
 
 ```rust
-#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.

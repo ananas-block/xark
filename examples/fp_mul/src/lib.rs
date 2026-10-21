@@ -1,8 +1,6 @@
 //! Non-native base-field multiply `(a · b) mod p` over secp256k1's base field
 //! with 3×86-bit limbs (pure `mod_mul::<3, 86>`, no input range checks). Low-level
 //! bignum primitive demo: limbs are field values passed natively as decimals.
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 use xark_bignum::mod_mul;
 

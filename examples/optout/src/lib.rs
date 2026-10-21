@@ -1,4 +1,3 @@
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
 // `#[inline(never)]` keeps `sq` a separate wasm call. That only affects how the

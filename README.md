@@ -30,7 +30,6 @@ prelude (`xark init` scaffolds the crate, `Cargo.toml` included; see
 `.pow(n)` for exponentiation by a constant, and `^` as boolean XOR.
 
 ```rust
-#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 
 /// Prove knowledge of a cube root: `secret^3 == result`.
@@ -346,7 +345,6 @@ xark-poseidon = { path = "../../gadgets/xark-poseidon" }
 ```
 
 ```rust
-#![cfg_attr(xark, no_std)]
 use xark::prelude::*;
 use xark_poseidon::hash;
 // ... call `hash(..)` inside the `#[circuit]` fn and `require_eq` the result.

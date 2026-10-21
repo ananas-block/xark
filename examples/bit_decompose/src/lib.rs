@@ -1,4 +1,3 @@
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
 /// Decompose a private `x` into 8 bits and expose two of them publicly.

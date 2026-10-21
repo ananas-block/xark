@@ -21,7 +21,6 @@
 //! the remaining IVC scaffolding (augmented step circuit, IO hashing, driver) is
 //! systems assembly around this verified core.
 
-#![cfg_attr(xark, no_std)]
 #![allow(clippy::assign_op_pattern)]
 
 use xark_grumpkin::prelude::*;

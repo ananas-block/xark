@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Public};
 
 // large_pi: 16 public inputs; enforces `xs[0] + xs[15] == 30`. The running sum

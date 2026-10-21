@@ -16,7 +16,6 @@
 //! on the companion (CycleFold) curve over `Fq`, which Xark (`Fr`-native) can't
 //! yet compile. The verifier core here is complete.
 
-#![cfg_attr(xark, no_std)]
 #![allow(clippy::assign_op_pattern)]
 
 use xark_grumpkin::prelude::*;

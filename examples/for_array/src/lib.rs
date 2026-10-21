@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 /// Iterate a fixed-size array by value (`for x in arr`). Lowers byte-for-byte

@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 // reorder_pi: main(a: pub, b: priv, c: pub) { require(b*b == a+c) }.

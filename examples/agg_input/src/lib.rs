@@ -1,6 +1,5 @@
 //! Aggregate circuit inputs: an array of `Field` and a bare `Field` — the array
 //! collapses to `n` inputs named by access path (`a[0]`, `a[1]`, `a[2]`).
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
 #[circuit]

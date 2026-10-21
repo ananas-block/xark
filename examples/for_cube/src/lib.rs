@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark::{circuit, require_eq, Field, Private, Public};
 
 /// `a^3` via a compile-time-unrolled `for` loop. Lowers byte-for-byte identically

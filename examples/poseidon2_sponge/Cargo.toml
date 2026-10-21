@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 [lib]
 [dependencies]
-xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
+xark = { path = "../../crates/lang", version = "0.3.0" }
 xark-poseidon2 = { path = "../../gadgets/xark-poseidon2", version = "0.3.0" }
 
 [lints.rust]

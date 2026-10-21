@@ -34,7 +34,6 @@
 //! widened to 254 bits with a regenerated `corr = −(2^254·O)` (validated
 //! off-circuit against the gadget's own `corr₁₂₈`).
 
-#![cfg_attr(xark, no_std)]
 // Written in the `x = x + y` style (`+=` on `Field` works too).
 #![allow(clippy::assign_op_pattern)]
 

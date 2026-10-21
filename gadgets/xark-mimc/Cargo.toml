@@ -15,7 +15,7 @@ name = "xark_mimc"
 path = "src/lib.rs"
 
 [dependencies]
-xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
+xark = { path = "../../crates/lang", version = "0.3.0" }
 
 [dev-dependencies]
 xark-test-harness = { path = "../../crates/test-harness", version = "0.3.0" }

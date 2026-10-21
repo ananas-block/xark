@@ -1,5 +1,3 @@
-#![cfg_attr(xark, no_std)]
-
 use xark_poseidon::prelude::*;
 
 /// Prove knowledge of a Poseidon(t=3, alpha=5) 2-to-1 preimage: `hash2(a, b) == out`.

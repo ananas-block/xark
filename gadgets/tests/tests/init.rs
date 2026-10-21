@@ -21,9 +21,9 @@ fn init_then_test() {
     // The scaffold pins major.minor.
     let ver = env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0;
     let patched = toml.replace(
-        &format!("xark = {{ version = \"{ver}\","),
+        &format!("xark = {{ version = \"{ver}\" }}"),
         &format!(
-            "xark = {{ path = \"{}\",",
+            "xark = {{ path = \"{}\" }}",
             root.join("crates/lang").display()
         ),
     );

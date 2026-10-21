@@ -1,5 +1,4 @@
 //! Field arithmetic with native-integer constant operands (`a * 3 + 5`).
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
 #[circuit]

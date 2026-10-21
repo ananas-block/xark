@@ -798,6 +798,7 @@ impl<const N: usize> Binder<N> {
     /// Hand the compiler the schema and work out every leaf name.
     #[inline(never)]
     pub fn new(circuit: &str, params: &[Param; N]) -> Binder<N> {
+        crate::wasm::install_panic_hook();
         crate::wasm::record_schema(&schema_json(circuit, params));
         Binder {
             names: core::array::from_fn(|i| leaf_names(&params[i].2, params[i].0)),

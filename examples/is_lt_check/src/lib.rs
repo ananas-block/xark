@@ -1,8 +1,6 @@
 //! Bignum unsigned less-than: prove `is_lt(a, b) == claim` for two 2-limb
 //! 64-bit values. Demonstrates the `[Field; N]` circuit-input form — each limb
 //! is a field value passed natively as a decimal string.
-#![cfg_attr(xark, no_std)]
-
 use xark_bignum::prelude::*;
 
 #[circuit]

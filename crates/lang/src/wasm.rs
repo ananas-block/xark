@@ -292,46 +292,31 @@ pub(crate) fn inputs_done() {
 
 // --- runtime -----------------------------------------------------------------
 
+/// Report panics to the compiler: the message and where, through the `panic`
+/// import, which never returns (a panicking arm of a witness branch is ruled out,
+/// so `assert!` on a witness value becomes a constraint, and a build that panics
+/// names the line). A hook rather than a `#[panic_handler]`, so a circuit crate may
+/// use `std`: installed by the `#[circuit]` entry before anything can panic.
 #[cfg(target_arch = "wasm32")]
-struct Msg {
-    buf: [u8; 256],
-    len: usize,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl core::fmt::Write for Msg {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let n = s.len().min(self.buf.len() - self.len);
-        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
-        self.len += n;
-        Ok(())
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
-    use core::fmt::Write;
-    let mut msg = Msg {
-        buf: [0; 256],
-        len: 0,
-    };
-    let _ = write!(msg, "{}", info.message());
-    let (file, line, col) = info
-        .location()
-        .map(|l| (l.file(), l.line(), l.column()))
-        .unwrap_or(("", 0, 0));
-    unsafe {
-        ffi::xark_panic(
-            msg.buf.as_ptr(),
-            msg.len,
-            file.as_ptr(),
-            file.len(),
-            line,
-            col,
-        );
-    }
-    core::arch::wasm32::unreachable()
+pub(crate) fn install_panic_hook() {
+    extern crate std;
+    std::panic::set_hook(alloc::boxed::Box::new(|info| {
+        let msg = info.payload_as_str().unwrap_or("panic");
+        let (file, line, col) = info
+            .location()
+            .map(|l| (l.file(), l.line(), l.column()))
+            .unwrap_or(("", 0, 0));
+        unsafe {
+            ffi::xark_panic(
+                msg.as_ptr(),
+                msg.len(),
+                file.as_ptr(),
+                file.len(),
+                line,
+                col,
+            );
+        }
+    }));
 }
 
 /// A bump allocator over wasm linear memory (a circuit build is one short run).

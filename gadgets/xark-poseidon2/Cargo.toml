@@ -15,7 +15,7 @@ name = "xark_poseidon2"
 path = "src/lib.rs"
 
 [dependencies]
-xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
+xark = { path = "../../crates/lang", version = "0.3.0" }
 
 # The host-side `native` module (not in a circuit build).
 [target.'cfg(not(xark))'.dependencies]

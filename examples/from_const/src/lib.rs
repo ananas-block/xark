@@ -1,7 +1,6 @@
 //! Numeric constants for `u8`..`u128` via both `Field::from(x)` and `x.into()`
 //! (the public surface; the backing intrinsics are private). Values above `u128`
 //! use `Field::constant("...")` with a decimal string.
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 #[circuit]
 pub fn from_const(a: Private<Field>, doubled: Public<Field>, plus_big: Public<Field>) {

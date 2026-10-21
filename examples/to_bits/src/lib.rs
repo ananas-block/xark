@@ -1,7 +1,6 @@
 //! `Field::to_bits` / `from_bits`: bit decomposition as a first-class `Field`
 //! operation. `to_bits::<N>()` pins each bit boolean and proves `self < 2^N`;
 //! `from_bits` recomposes.
-#![cfg_attr(xark, no_std)]
 use xark::{circuit, require_eq, Field, Private, Public};
 
 #[circuit]

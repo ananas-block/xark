@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 path = "src/lib.rs"
 
 [dependencies]
-xark = { path = "../../crates/lang", version = "0.3.0", default-features = false }
+xark = { path = "../../crates/lang", version = "0.3.0" }
 # lean (no host) for the xark compiler's circuit extraction.
 xark-secp256r1 = { path = "../../gadgets/xark-secp256r1", version = "0.3.0" }
 

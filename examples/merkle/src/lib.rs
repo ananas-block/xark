@@ -3,8 +3,6 @@
 //! its authentication path `siblings`. [`merkle_verify`] folds the path (sibling
 //! mux, boolean-constrained direction bits, Poseidon compression) and asserts the
 //! computed root equals the public one.
-#![cfg_attr(xark, no_std)]
-
 use xark_merkle::prelude::*;
 
 #[circuit]

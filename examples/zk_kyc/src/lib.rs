@@ -2,8 +2,6 @@
 //! policy (old enough, wealthy enough, document still valid, nationality allowed)
 //! without revealing it. The identity stays private; the commitment and the policy
 //! are public, so a verifier picks the rules at proof time with no new circuit.
-#![cfg_attr(xark, no_std)]
-
 use xark::prelude::*;
 
 /// What an issuer attests about a holder, committed to as a whole with Poseidon2.
