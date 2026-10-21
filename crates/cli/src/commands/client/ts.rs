@@ -1,6 +1,6 @@
 //! The TypeScript target: one `.ts` file over the xark-wasm module you pass in.
 //!
-//! * a string union per enum (`type Country = "AD" | …`);
+//! * per enum, its variants as constants and their type (`Country.US`, or `"US"`);
 //! * an interface per input struct, every value in its natural TypeScript form;
 //! * the inputs, the public inputs as given, and as decoded from a proof;
 //! * a class with `prove`, `verify`, the public-input encode/decode, `load` (the
@@ -38,16 +38,26 @@ pub fn pascal(s: &str) -> String {
     }
 }
 
-/// A TS property key: bare when it's an identifier, quoted otherwise (tuple-struct `0`).
+/// A TS property key for a field: `camelCase`, bare when it's an identifier, quoted
+/// otherwise (tuple-struct `0`).
 fn ts_key(name: &str) -> String {
-    let c = camel(name);
-    let ident = c
+    prop(&camel(name))
+}
+
+/// `name` as a TS property key, unchanged: bare when it's an identifier.
+fn prop(name: &str) -> String {
+    let ident = name
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-        && c.chars()
+        && name
+            .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
-    if ident { c } else { format!("{c:?}") }
+    if ident {
+        name.into()
+    } else {
+        format!("{name:?}")
+    }
 }
 
 /// The TS type a caller passes for `ty`.
@@ -193,18 +203,26 @@ pub fn generate(m: &Model) -> Result<String> {
          export type Bytes = Uint8Array | readonly number[] | string;\n\n",
     );
 
-    // Enums.
+    // Enums: the variants as constants (`Country.US`) and their type (`"AD" | …`), so
+    // a value is checked, and either form passes.
     for (e, variants) in &m.enums {
-        let names: Vec<String> = variants.iter().map(|s| format!("{s:?}")).collect();
         let _ = writeln!(
             out,
-            "/** A `{e}` (an enum in the circuit), its variants in order. */\nexport type {e} ="
+            "/** A `{e}` (an enum in the circuit): `{e}.{v}`, or its name, `{v:?}`. */\n\
+             export const {e} = {{",
+            v = variants.first().map_or("", String::as_str),
         );
-        for chunk in names.chunks(12) {
-            let _ = writeln!(out, "  | {}", chunk.join(" | "));
+        for chunk in variants.chunks(8) {
+            let row: Vec<String> = chunk
+                .iter()
+                .map(|v| format!("{}: {v:?},", prop(v)))
+                .collect();
+            let _ = writeln!(out, "  {}", row.join(" "));
         }
-        out.pop();
-        out.push_str(";\n\n");
+        let _ = writeln!(
+            out,
+            "}} as const;\nexport type {e} = (typeof {e})[keyof typeof {e}];\n"
+        );
     }
 
     // Input structs.
@@ -487,11 +505,14 @@ mod tests {
           {"name": "salt", "type": "field"},
           {"name": "active", "type": "bool"},
           {"name": "home", "type": {"ref": "Choice<Country>"}},
+          {"name": "tier", "type": {"ref": "Choice<Tier>"}},
           {"name": "pair", "type": {"tuple": ["field", {"uint": 16}]}}]},
         "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
         "Bitfield<Country>": {"newtype": "field", "encoding": {"set": "Country"}},
         "Choice<Country>": {"newtype": "field", "encoding": {"choice": "Country"}},
-        "Country": {"enum": ["AD", "US"]}
+        "Choice<Tier>": {"newtype": "field", "encoding": {"choice": "Tier"}},
+        "Country": {"enum": ["AD", "US"]},
+        "Tier": {"enum": ["Retail", "Not_Set"]}
       },
       "public_inputs": ["born_before", "allowed", "commitment"]
     }"#;
@@ -509,9 +530,10 @@ mod tests {
         let ts = generate(&m).unwrap();
         for want in [
             "fn kyc_check(id: Private<Identity>, born_before: Public<Date>, allowed: Public<Bitfield<Country>>, doc: Private<[u8; 4]>, commitment: Public<Field>)",
-            "export type Country =\n  | \"AD\" | \"US\";",
+            "export const Country = {\n  AD: \"AD\", US: \"US\",\n} as const;\nexport type Country = (typeof Country)[keyof typeof Country];",
             "export interface Identity {\n  /** `u64`: an integer in [0, 2^64). */\n  netWorth: bigint | number;",
             "  /** One `Country`. */\n  home: Country;",
+            "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
             "  pair: readonly [FieldLike, number];",
             "  active: boolean;",
             "  bornBefore: Date;",
