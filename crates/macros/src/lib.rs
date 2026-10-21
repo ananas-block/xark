@@ -930,8 +930,11 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                     } else {
                         "value"
                     });
-                    decode
-                        .push(quote! { let __self: #self_ty = ::xark::client::arg(__args, #i)?; });
+                    // Named as the client names it (`policy`).
+                    let this = type_name.to_lowercase();
+                    decode.push(
+                        quote! { let __self: #self_ty = ::xark::client::arg(__args, #i, #this)?; },
+                    );
                     call_args.push(if r.reference.is_some() {
                         quote! { &__self }
                     } else {
@@ -947,7 +950,8 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                     };
                     let ty = into_target(&pt.ty).unwrap_or(&pt.ty);
                     let v = format_ident!("__a{i}");
-                    decode.push(quote! { let #v: #ty = ::xark::client::arg(__args, #i)?; });
+                    let pname = pi.ident.to_string();
+                    decode.push(quote! { let #v: #ty = ::xark::client::arg(__args, #i, #pname)?; });
                     call_args.push(quote! { #v });
                     params.push(format!(
                         "{{\"name\":{},\"type\":{}}}",
@@ -991,7 +995,7 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
             pub extern "C" fn #shim(__ptr: *const u8, __len: usize) -> u64 {
                 ::xark::client::call(__ptr, __len, |__args| {
                     #(#decode)*
-                    ::xark::client::to_json(&<#self_ty>::#name(#(#call_args),*))
+                    ::core::result::Result::Ok(::xark::client::to_json(&<#self_ty>::#name(#(#call_args),*))?)
                 })
             }
             #(#cfgs)*

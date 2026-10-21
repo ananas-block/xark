@@ -15,30 +15,35 @@
 //! same way.
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use serde_json::{Value, json};
 
 use crate::input::{Input, Type, from_fields, leaf_names, schema_json, write_fields};
 use crate::lang::Field;
+pub use xark_schema::InputError;
 
 /// The one-input schema describing a `ty` value named `v`.
-fn schema(ty: Type) -> Result<xark_schema::Schema, String> {
-    xark_schema::Schema::parse(&schema_json("value", &[("v", true, ty)]))
+fn schema(ty: Type) -> Result<xark_schema::Schema, InputError> {
+    xark_schema::Schema::parse(&schema_json("value", &[("v", true, ty)])).map_err(InputError::from)
 }
 
 /// A `T` from its natural JSON form, as a client gives it (and as `--inputs` takes
-/// a circuit input of that type).
-pub fn from_json<T: Input>(value: &Value) -> Result<T, String> {
+/// a circuit input of that type). An error's `path` is inside the value (`document`;
+/// empty for the value itself).
+pub fn from_json<T: Input>(value: &Value) -> Result<T, InputError> {
     let leaves = schema(T::TYPE)?
         .leaves(&json!({ "v": value }))
-        .map_err(|e| {
+        .map_err(|e| InputError {
             // Paths are under the one input `v`: name what's inside the value.
-            match e.path.strip_prefix('v').map(|p| p.trim_start_matches('.')) {
-                Some("") | None => e.message,
-                Some(p) => alloc::format!("`{p}`: {}", e.message),
-            }
+            path: e
+                .path
+                .strip_prefix('v')
+                .unwrap_or(&e.path)
+                .trim_start_matches('.')
+                .to_string(),
+            message: e.message,
         })?;
     let fields: Vec<Field> = leaf_names(&T::TYPE, "v")
         .iter()
@@ -47,7 +52,7 @@ pub fn from_json<T: Input>(value: &Value) -> Result<T, String> {
                 .get(n)
                 .copied()
                 .map(Field::from)
-                .ok_or_else(|| format!("missing `{n}`"))
+                .ok_or_else(|| InputError::from(format!("missing `{n}`")))
         })
         .collect::<Result<_, _>>()?;
     Ok(from_fields(&fields))
@@ -59,17 +64,31 @@ pub fn to_json<T: Input>(value: &T) -> Result<Value, String> {
     let mut fields = alloc::vec![Field::zero(); T::LEN];
     write_fields(value, &mut fields);
     let frs: Vec<ark_bn254::Fr> = fields.into_iter().map(Into::into).collect();
-    let mut out = schema(T::TYPE)?.decode_public(&frs, true)?;
+    let mut out = schema(T::TYPE)
+        .map_err(|e| e.to_string())?
+        .decode_public(&frs, true)?;
     Ok(out["v"].take())
 }
 
-/// Argument `i` of an exported call, as a `T`.
+/// Argument `i` of an exported call, named `name` (as the client names it), as a
+/// `T`. An error's `path` starts with that name (`policy.today`).
 #[doc(hidden)]
-pub fn arg<T: Input>(args: &[Value], i: usize) -> Result<T, String> {
+pub fn arg<T: Input>(args: &[Value], i: usize, name: &str) -> Result<T, InputError> {
     let v = args
         .get(i)
         .ok_or_else(|| format!("expected at least {} arguments, got {}", i + 1, args.len()))?;
-    from_json(v).map_err(|e| format!("argument {}: {e}", i + 1))
+    from_json(v).map_err(|e| {
+        let e = e.camel_case();
+        let name = xark_schema::camel(name);
+        InputError {
+            path: if e.path.is_empty() {
+                name
+            } else {
+                alloc::format!("{name}.{}", e.path)
+            },
+            message: e.message,
+        }
+    })
 }
 
 #[cfg(xark_client)]
@@ -84,6 +103,8 @@ mod abi {
     use std::sync::{Mutex, Once};
 
     use serde_json::{Value, json};
+
+    use super::InputError;
 
     static PANIC: Mutex<Option<String>> = Mutex::new(None);
     static HOOK: Once = Once::new();
@@ -120,12 +141,13 @@ mod abi {
     }
 
     /// Run an exported method: decode the JSON argument array at `ptr`, call `f`,
-    /// and hand back `{"ok": result}` or `{"err": message}`.
+    /// and hand back `{"ok": result}`, or `{"err": message, "path": input}` (no
+    /// `path` for an error that isn't about one argument).
     #[doc(hidden)]
     pub fn call(
         ptr: *const u8,
         len: usize,
-        f: impl FnOnce(&[Value]) -> Result<Value, String>,
+        f: impl FnOnce(&[Value]) -> Result<Value, InputError>,
     ) -> u64 {
         HOOK.call_once(|| {
             std::panic::set_hook(alloc::boxed::Box::new(|info| {
@@ -146,7 +168,8 @@ mod abi {
         let out = match serde_json::from_slice::<Vec<Value>>(input) {
             Ok(args) => match f(&args) {
                 Ok(v) => json!({ "ok": v }),
-                Err(e) => json!({ "err": e }),
+                Err(e) if e.path.is_empty() => json!({ "err": e.message }),
+                Err(e) => json!({ "err": e.to_string(), "path": e.path }),
             },
             Err(e) => json!({ "err": alloc::format!("arguments: {e}") }),
         };
@@ -168,10 +191,21 @@ mod tests {
         let pair: (u16, Field) = from_json(&json!([7, "9"])).unwrap();
         assert_eq!(to_json(&pair).unwrap(), json!([7, "9"]));
         assert!(from_json::<Date>(&json!("2023-02-29")).is_err());
+        let e = arg::<u8>(&[json!(1)], 1, "years").unwrap_err();
         assert!(
-            arg::<u8>(&[json!(1)], 1)
-                .unwrap_err()
-                .contains("at least 2 arguments")
+            e.path.is_empty() && e.message.contains("at least 2 arguments"),
+            "{e}"
         );
+    }
+
+    #[test]
+    fn argument_errors_name_the_argument() {
+        // A path from the argument's (camelCase) name into the value.
+        let e = arg::<Bitfield<Country>>(&[json!(["XX"])], 0, "allowed").unwrap_err();
+        assert_eq!(e.path, "allowed");
+        assert!(e.message.contains("\"XX\" is not a Country"), "{e}");
+        let e = arg::<(u16, Date)>(&[json!([7, "2023-02-29"])], 0, "born_by").unwrap_err();
+        assert_eq!(e.path, "bornBy.1");
+        assert!(e.message.contains("not a calendar day"), "{e}");
     }
 }

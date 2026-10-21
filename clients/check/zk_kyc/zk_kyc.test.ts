@@ -135,8 +135,19 @@ test("names the input at fault", () => {
       expect((e as InputError).path).toBe(path);
     }
   }
+  // A value JS can't send names its path too, before it reaches the circuit.
   expect(() => prover.prove({ id, commitment, policy: { ...policy, today: new Date("not a day") } })).toThrow(
-    /today: invalid Date/,
+    expect.objectContaining({ name: "InputError", path: "policy.today" }),
+  );
+  // Paths use the names you wrote (`netWorth`), as do the circuit's Rust functions'.
+  expect(() => prover.prove({ id: { ...id, netWorth: -1 }, commitment, policy })).toThrow(
+    expect.objectContaining({ name: "InputError", path: "id.netWorth" }),
+  );
+  expect(() => Policy.on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(
+    expect.objectContaining({ name: "InputError", path: "allowed" }),
+  );
+  expect(() => Policy.minAge({ ...policy, bornBy: new Date("x") }, 18)).toThrow(
+    expect.objectContaining({ name: "InputError", path: "argument 1.bornBy" }),
   );
 });
 

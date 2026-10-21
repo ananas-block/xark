@@ -74,6 +74,28 @@ impl std::fmt::Display for InputError {
 
 impl std::error::Error for InputError {}
 
+impl InputError {
+    /// The same error with a generated client's field names (`id.netWorth`), for a
+    /// caller who wrote the value in camelCase.
+    pub fn camel_case(&self) -> InputError {
+        InputError {
+            path: camel_path(&self.path),
+            message: self.message.clone(),
+        }
+    }
+}
+
+/// An input path with each name in camelCase (`id.net_worth[2]` → `id.netWorth[2]`).
+pub fn camel_path(path: &str) -> String {
+    path.split('.')
+        .map(|seg| {
+            let (name, index) = seg.split_at(seg.find('[').unwrap_or(seg.len()));
+            format!("{}{index}", camel(name))
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 /// An error about the inputs as a whole.
 impl From<String> for InputError {
     fn from(message: String) -> InputError {

@@ -53,7 +53,7 @@ test("refuses bad inputs", () => {
   // Checked as a `Field` would be, naming the input: never wrapped or rounded.
   expect(() => prover.prove({ ...inputs, secret: p + 3n })).toThrow(/secret/);
   expect(() => prover.prove({ ...inputs, secret: -1 })).toThrow(/secret/);
-  expect(() => prover.prove({ ...inputs, secret: 2 ** 53 + 2 })).toThrow(/secret: .* is not a safe integer/);
+  expect(() => prover.prove({ ...inputs, secret: 2 ** 53 + 2 })).toThrow(/`secret`: .* is not a safe integer/);
   expect(() => prover.prove({ ...inputs, secret: "three" })).toThrow(/secret/);
   expect(prover.prove({ secret: new Field(3), result: 27n }).publicInputs.result.equals(27)).toBe(true);
 });

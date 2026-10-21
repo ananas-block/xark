@@ -522,8 +522,9 @@ fn js_error(msg: &str) -> js_sys::Error {
 }
 
 /// A refused input value, as an `Error` named `InputError` whose `path` is the input
-/// at fault (`id.document`; empty for the inputs as a whole).
+/// at fault in a JS caller's names (`id.netWorth`; empty for the inputs as a whole).
 fn input_error(e: &xark_schema::InputError) -> js_sys::Error {
+    let e = e.camel_case();
     let err = js_error(&e.to_string());
     err.set_name("InputError");
     let _ = js_sys::Reflect::set(&err, &"path".into(), &e.path.as_str().into());

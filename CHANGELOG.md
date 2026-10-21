@@ -109,6 +109,9 @@ gadgets now check more:
   (`"id.document"`; `xark_schema::InputError` in Rust), and inputs that fail a check
   a `CheckFailed` with the statement's `site` (`file`, `line`, `col`, `text`,
   `chain`). Generated clients export both. xark-wasm names its errors the same way.
+  Paths use a client's field names (`id.netWorth`). A Rust function's bad argument is
+  an `InputError` too, its path starting at the parameter (`allowed`), and so is a
+  value JS can't send (an invalid `Date`: `policy.today`).
 - **Bytes are little-endian wherever they're an integer.** A wide integer (a
   limbed number: a scalar, a bignum) given as a list of byte values is read
   little-endian, like `Field::from_le_bytes` and `new Field(bytes)`; it was

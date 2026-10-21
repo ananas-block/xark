@@ -139,23 +139,37 @@ function splitProof(bytes) {
 
 /**
  * JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day,
- * a `Uint8Array` as its list of bytes (little-endian, where it's an integer).
+ * a `Uint8Array` as its list of bytes (little-endian, where it's an integer). A value
+ * that can't be sent (an invalid `Date`, a number past 2^53) throws an `InputError`
+ * naming where it is.
  */
 export function toJson(value) {
-  return JSON.stringify(value, function (key, v) {
-    const raw = this[key];
-    if (raw instanceof Date) {
-      if (Number.isNaN(raw.getTime())) throw new TypeError(`${key}: invalid Date`);
-      return raw.toISOString().slice(0, 10);
+  return JSON.stringify(plain(value, ""));
+}
+
+/** `v`, at input path `path`, as plain JSON values. */
+function plain(v, path) {
+  const refuse = (why) => {
+    throw new InputError(path ? `input \`${path}\`: ${why}` : why, path);
+  };
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) refuse("invalid Date");
+    return v.toISOString().slice(0, 10);
+  }
+  if (typeof v === "bigint") return v.toString();
+  // A number past 2^53 has already lost digits: refuse it rather than prove another.
+  if (typeof v === "number" && !Number.isSafeInteger(v)) refuse(`${v} is not a safe integer (pass a bigint)`);
+  if (v instanceof Uint8Array) return Array.from(v);
+  if (v !== null && typeof v === "object" && typeof v.toJSON === "function") return v.toJSON();
+  if (Array.isArray(v)) return v.map((x, i) => plain(x, `${path}[${i}]`));
+  if (v !== null && typeof v === "object") {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      if (x !== undefined && typeof x !== "function") out[k] = plain(x, path ? `${path}.${k}` : k);
     }
-    if (typeof raw === "bigint") return raw.toString();
-    // A number past 2^53 has already lost digits: refuse it rather than prove another.
-    if (typeof raw === "number" && !Number.isSafeInteger(raw)) {
-      throw new RangeError(`${key || "value"}: ${raw} is not a safe integer (pass a bigint)`);
-    }
-    if (raw instanceof Uint8Array) return Array.from(raw);
-    return v;
-  });
+    return out;
+  }
+  return v;
 }
 
 /** `0x`-hex (as xark-wasm writes bytes) to bytes. */
@@ -267,11 +281,11 @@ export class Circuit {
     const rust = this.rust;
     if (!rust) {
       throw new Error(
-        `${name} runs from client.wasm: \`await ${this.name}.ready(url)\` first (making a prover or verifier from a URL does it)`,
+        `${name} runs from client.wasm: load it first with the circuit's \`ready(url)\` (making a prover or verifier from a URL does it)`,
       );
     }
     const x = rust.instance.exports;
-    const input = new TextEncoder().encode(toJson(args));
+    const input = new TextEncoder().encode(JSON.stringify(args.map((a, i) => plain(a, `argument ${i + 1}`))));
     const ptr = x.xark_alloc(input.length);
     new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
     let packed;
@@ -284,7 +298,7 @@ export class Circuit {
     }
     x.xark_free(ptr, input.length);
     const out = JSON.parse(take(x, packed));
-    if ("err" in out) throw new Error(out.err);
+    if ("err" in out) throw "path" in out ? new InputError(out.err, out.path) : new Error(out.err);
     return out.ok;
   }
 }
