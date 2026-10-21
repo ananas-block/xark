@@ -301,7 +301,17 @@ pub(crate) fn inputs_done() {
 pub(crate) fn install_panic_hook() {
     extern crate std;
     std::panic::set_hook(alloc::boxed::Box::new(|info| {
-        let msg = info.payload_as_str().unwrap_or("panic");
+        // `payload_as_str` is only stable from 1.91; the oldest supported rustc is 1.89.
+        let payload = info.payload();
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<alloc::string::String>()
+                    .map(|s| s.as_str())
+            })
+            .unwrap_or("panic");
         let (file, line, col) = info
             .location()
             .map(|l| (l.file(), l.line(), l.column()))

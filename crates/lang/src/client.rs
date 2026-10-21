@@ -121,8 +121,15 @@ mod abi {
     ) -> u64 {
         HOOK.call_once(|| {
             std::panic::set_hook(alloc::boxed::Box::new(|info| {
+                // Not `payload_as_str`: only stable from 1.91, and 1.89 is supported.
+                let payload = info.payload();
+                let msg = payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "panic".into());
                 if let Ok(mut p) = PANIC.lock() {
-                    *p = Some(info.payload_as_str().unwrap_or("panic").to_string());
+                    *p = Some(msg);
                 }
             }))
         });
