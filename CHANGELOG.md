@@ -98,6 +98,10 @@ gadgets now check more:
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
   `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
   writes beside the client (`cube.schema.json`), which the client imports.
+- **Typed errors.** A refused input is an `InputError` with the input's `path`
+  (`"id.document"`; `xark_schema::InputError` in Rust), and inputs that fail a check
+  a `CheckFailed` with the statement's `site` (`file`, `line`, `col`, `text`,
+  `chain`). Generated clients export both. xark-wasm names its errors the same way.
 - **Bytes are little-endian wherever they're an integer.** A wide integer (a
   limbed number: a scalar, a bignum) given as a list of byte values is read
   little-endian, like `Field::from_le_bytes` and `new Field(bytes)`; it was

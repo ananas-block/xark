@@ -10,9 +10,9 @@
 // schema, `zk_kyc.schema.json` (written with this file), exactly as `xark prove --inputs`
 // does.
 
-import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./zk_kyc.schema.json" with { type: "json" };
-export { Field };
+export { CheckFailed, Field, InputError };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */
 export const Country = {

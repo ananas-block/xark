@@ -469,7 +469,7 @@ pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
     let out = out.trim_end().to_string() + "\n";
 
     // Import what the body uses from the runtime, and re-export `Field`.
-    let mut values = vec!["Circuit", "Field"];
+    let mut values = vec!["CheckFailed", "Circuit", "Field", "InputError"];
     if out.contains("fromHex(") {
         values.push("fromHex");
     }
@@ -486,7 +486,7 @@ pub fn generate(m: &Model, schema_file: &str) -> Result<String> {
         "{head}\
          import {{ {} }} from \"{RUNTIME}\";\n\
          import schema from \"./{schema_file}\" with {{ type: \"json\" }};\n\
-         export {{ Field }};\n\n\
+         export {{ CheckFailed, Field, InputError }};\n\n\
          {out}",
         imports.join(", ")
     ))
@@ -552,7 +552,7 @@ mod tests {
             "export interface KycCheckPublicValues {\n  bornBefore: Date;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "import { Circuit, Field, type Bytes, type Json, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.json\" with { type: \"json\" };\nexport { Field };",
+            "import { CheckFailed, Circuit, Field, InputError, type Bytes, type Json, type Proof, type Prover, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.json\" with { type: \"json\" };\nexport { CheckFailed, Field, InputError };",
             "  name: \"kyc_check\",\n  schema,\n",
             "export interface KycCheckStructs {\n  Identity: Identity;\n}",
             "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",

@@ -251,7 +251,7 @@ fn unsatisfied(
         return js_error("the inputs don't satisfy the circuit (a constraint fails)");
     };
     match sources.and_then(|s| s.at(row)) {
-        Some(site) => js_error(&format!("the inputs fail the check at {}", site.describe())),
+        Some(site) => crate::check_failed(site),
         None => js_error(&format!(
             "the inputs don't satisfy the circuit: constraint #{row} fails (pass the build's \
              sources.json to name its source line)"

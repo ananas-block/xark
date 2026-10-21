@@ -54,6 +54,42 @@ pub struct InputSummary {
 
 type Leaves = BTreeMap<String, Fr>;
 
+/// An input value the schema refuses: where (`id.document`; empty for the inputs as
+/// a whole, such as an unknown or missing input) and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InputError {
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for InputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.path.is_empty() {
+            f.write_str(&self.message)
+        } else {
+            write!(f, "input `{}`: {}", self.path, self.message)
+        }
+    }
+}
+
+impl std::error::Error for InputError {}
+
+/// An error about the inputs as a whole.
+impl From<String> for InputError {
+    fn from(message: String) -> InputError {
+        InputError {
+            path: String::new(),
+            message,
+        }
+    }
+}
+
+impl From<&str> for InputError {
+    fn from(message: &str) -> InputError {
+        message.to_string().into()
+    }
+}
+
 impl Schema {
     pub fn parse(text: &str) -> Result<Schema, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| format!("schema.json: {e}"))?;
@@ -90,13 +126,13 @@ impl Schema {
     /// natural forms) as every input leaf's value. A key may also be a leaf or a
     /// nested path (`msg[0]`, `id.born`), so flat inputs still work. Every leaf must be
     /// given exactly once.
-    pub fn leaves(&self, inputs: &Value) -> Result<Leaves, String> {
+    pub fn leaves(&self, inputs: &Value) -> Result<Leaves, InputError> {
         self.leaves_where(inputs, |_| true)
     }
 
     /// The public inputs' values, in proof order, from `inputs` (only the public ones
     /// need be given).
-    pub fn public_inputs(&self, inputs: &Value) -> Result<Vec<Fr>, String> {
+    pub fn public_inputs(&self, inputs: &Value) -> Result<Vec<Fr>, InputError> {
         let leaves = self.leaves_where(inputs, |i| i["visibility"] == "public")?;
         self.0["public_inputs"]
             .as_array()
@@ -107,7 +143,7 @@ impl Schema {
                 leaves
                     .get(l)
                     .copied()
-                    .ok_or_else(|| format!("missing public input `{l}`"))
+                    .ok_or_else(|| format!("missing public input `{l}`").into())
             })
             .collect()
     }
@@ -116,7 +152,7 @@ impl Schema {
         &self,
         inputs: &Value,
         keep: impl Fn(&Value) -> bool,
-    ) -> Result<Leaves, String> {
+    ) -> Result<Leaves, InputError> {
         let obj = inputs.as_object().ok_or("inputs must be a JSON object")?;
         let wanted: Vec<&Value> = self.inputs().filter(|i| keep(i)).collect();
         let mut out = Leaves::new();
@@ -152,7 +188,8 @@ impl Schema {
                     format!("missing input `{name}`")
                 } else {
                     format!("missing input `{name}` (no value for `{l}`)")
-                });
+                }
+                .into());
             }
         }
         Ok(out)
@@ -217,8 +254,11 @@ impl Schema {
     }
 
     /// Encode `v`, a value of `ty`, into its leaves under `at`.
-    fn encode(&self, ty: &Value, v: &Value, at: &str, out: &mut Leaves) -> Result<(), String> {
-        let err = |e: String| format!("input `{at}`: {e}");
+    fn encode(&self, ty: &Value, v: &Value, at: &str, out: &mut Leaves) -> Result<(), InputError> {
+        let err = |message: String| InputError {
+            path: at.to_string(),
+            message,
+        };
         if ty == "field" {
             out.insert(at.into(), field(v).map_err(err)?);
         } else if ty == "bool" {
@@ -412,9 +452,9 @@ impl Schema {
     /// A value of the named type `name` (a struct, `Date`, …), in its natural form, as
     /// its field elements in input order: what `to_fields()` gives in Rust, so a client
     /// can hash a value as the circuit does.
-    pub fn fields(&self, name: &str, value: &Value) -> Result<Vec<Fr>, String> {
+    pub fn fields(&self, name: &str, value: &Value) -> Result<Vec<Fr>, InputError> {
         if self.def(name).is_null() {
-            return Err(format!("no type `{name}` in this circuit's inputs"));
+            return Err(format!("no type `{name}` in this circuit's inputs").into());
         }
         let ty = json!({ "ref": name });
         let mut leaves = Leaves::new();
@@ -427,7 +467,7 @@ impl Schema {
                 leaves
                     .get(n)
                     .copied()
-                    .ok_or_else(|| format!("missing `{}`", &n[6..]))
+                    .ok_or_else(|| format!("missing `{}`", &n[6..]).into())
             })
             .collect()
     }
@@ -1051,16 +1091,38 @@ mod tests {
             i[k] = v;
             s.leaves(&i).unwrap_err()
         };
-        assert!(with("bornBefore", json!("2023-02-29")).contains("not a calendar day"));
-        assert!(with("allowed", json!(["XX"])).contains("\"XX\" is not a Country"));
-        assert!(with("home", json!("XX")).contains("\"XX\" is not a Country"));
-        assert!(with("home", json!(3)).contains("3 is not a Country (there are 3)"));
-        assert!(with("msg", json!("0x61")).contains("expected 2 elements"));
-        assert!(with("typo", json!(1)).contains("unknown input `typo`"));
-        assert!(with("ok", json!("yes")).contains("expected true or false"));
+        // Each names the input at fault (empty: the inputs as a whole) and why.
+        for (key, value, path, why) in [
+            (
+                "bornBefore",
+                json!("2023-02-29"),
+                "born_before",
+                "not a calendar day",
+            ),
+            (
+                "allowed",
+                json!(["XX"]),
+                "allowed",
+                "\"XX\" is not a Country",
+            ),
+            ("home", json!("XX"), "home", "\"XX\" is not a Country"),
+            ("home", json!(3), "home", "3 is not a Country (there are 3)"),
+            ("msg", json!("0x61"), "msg", "expected 2 elements"),
+            ("typo", json!(1), "", "unknown input `typo`"),
+            ("ok", json!("yes"), "ok", "expected true or false"),
+        ] {
+            let e = with(key, value);
+            assert_eq!(e.path, path, "{e}");
+            assert!(e.message.contains(why), "{e}");
+        }
         let mut i = inputs();
         i["id"].as_object_mut().unwrap().remove("born");
-        assert!(s.leaves(&i).unwrap_err().contains("missing field `born`"));
+        let e = s.leaves(&i).unwrap_err();
+        assert_eq!(
+            (e.path.as_str(), e.message.as_str()),
+            ("id", "missing field `born`")
+        );
+        assert_eq!(e.to_string(), "input `id`: missing field `born`");
     }
 
     #[test]

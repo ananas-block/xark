@@ -33,6 +33,31 @@ export type Json<T> = T extends Field | bigint | Date | Uint8Array
       ? { [K in keyof T as T[K] extends (...args: never[]) => unknown ? never : K]: Json<T[K]> }
       : T;
 
+/** An input value the circuit's types refuse. */
+export class InputError extends Error {
+  /** The input at fault (`id.document`), or empty for the inputs as a whole. */
+  readonly path: string;
+  constructor(message: string, path: string);
+}
+
+/** Where a check is in the circuit's source. */
+export interface Site {
+  /** `src/lib.rs`. */
+  file: string;
+  line: number;
+  col: number;
+  /** The statement, trimmed. */
+  text: string;
+  /** The functions it called into, outermost first. */
+  chain: string[];
+}
+
+/** Inputs that fail one of the circuit's checks (when the prover has `sources`). */
+export class CheckFailed extends Error {
+  readonly site: Site;
+  constructor(message: string, site: Site);
+}
+
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
 
@@ -126,8 +151,9 @@ export class Session<PublicInputs, PublicValues, Structs> {
 export class Prover<Inputs, PublicInputs, PublicValues, Structs = {}> extends Session<PublicInputs, PublicValues, Structs> {
   private constructor();
   /**
-   * Prove `inputs`. Throws if one is malformed (naming it), or if they fail a
-   * check (naming its source line when `sources` was given).
+   * Prove `inputs`. Throws an `InputError` if one is malformed (its `path` naming
+   * it), or a `CheckFailed` if they fail a check (its `site` the statement, when
+   * `sources` was given).
    */
   prove(inputs: Inputs): Proof<PublicValues>;
 }

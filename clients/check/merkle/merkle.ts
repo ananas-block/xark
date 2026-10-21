@@ -10,9 +10,9 @@
 // schema, `merkle.schema.json` (written with this file), exactly as `xark prove --inputs`
 // does.
 
-import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./merkle.schema.json" with { type: "json" };
-export { Field };
+export { CheckFailed, Field, InputError };
 
 /** Every input of `merkle`. */
 export interface MerkleInputs {

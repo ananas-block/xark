@@ -394,7 +394,7 @@ fn encode_inputs_with(
 ) -> Result<JsValue, js_sys::Error> {
     let leaves = schema
         .leaves(&json(inputs_json, "inputs")?)
-        .map_err(|e| js_error(&e))?;
+        .map_err(|e| input_error(&e))?;
     let out = js_sys::Object::new();
     for (k, v) in leaves {
         js_sys::Reflect::set(&out, &k.into(), &v.to_string().into())?;
@@ -418,7 +418,7 @@ fn encode_public_inputs_with(
 ) -> Result<Vec<u8>, js_sys::Error> {
     let values = schema
         .public_inputs(&json(public_json, "public inputs")?)
-        .map_err(|e| js_error(&e))?;
+        .map_err(|e| input_error(&e))?;
     let mut out = Vec::new();
     values
         .serialize_compressed(&mut out)
@@ -468,7 +468,7 @@ fn value_fields_with(
 ) -> Result<Vec<String>, js_sys::Error> {
     let fields = schema
         .fields(type_name, &json(value_json, "value")?)
-        .map_err(|e| js_error(&e))?;
+        .map_err(|e| input_error(&e))?;
     Ok(fields.iter().map(|f| f.to_string()).collect())
 }
 
@@ -519,6 +519,38 @@ fn to_bytes(v: &Bytes, what: &'static str) -> Result<Vec<u8>, js_sys::Error> {
 
 fn js_error(msg: &str) -> js_sys::Error {
     js_sys::Error::new(msg)
+}
+
+/// A refused input value, as an `Error` named `InputError` whose `path` is the input
+/// at fault (`id.document`; empty for the inputs as a whole).
+fn input_error(e: &xark_schema::InputError) -> js_sys::Error {
+    let err = js_error(&e.to_string());
+    err.set_name("InputError");
+    let _ = js_sys::Reflect::set(&err, &"path".into(), &e.path.as_str().into());
+    err
+}
+
+/// Inputs that fail a check, as an `Error` named `CheckFailed` whose `site` is the
+/// statement that emitted it: `{ file, line, col, text, chain }`.
+pub(crate) fn check_failed(site: &xark_ir::Site) -> js_sys::Error {
+    let err = js_error(&format!("the inputs fail the check at {}", site.describe()));
+    err.set_name("CheckFailed");
+    let s = js_sys::Object::new();
+    let set = |k: &str, v: JsValue| {
+        let _ = js_sys::Reflect::set(&s, &k.into(), &v);
+    };
+    set("file", site.file.as_str().into());
+    set("line", site.line.into());
+    set("col", site.col.into());
+    set("text", site.text.as_str().into());
+    let chain: js_sys::Array = site
+        .chain
+        .iter()
+        .map(|f| JsValue::from(f.as_str()))
+        .collect();
+    set("chain", chain.into());
+    let _ = js_sys::Reflect::set(&err, &"site".into(), &s.into());
+    err
 }
 
 /// Deserialize canonical compressed bytes (the form `xark setup` / `xark prove`

@@ -1,7 +1,7 @@
 // The generated `zk_kyc` client (`xark client`) through xark-wasm. `npm test` runs it,
 // after setup.ts builds the example and its keys.
 import { artifacts } from "../artifacts";
-import { Country, Field, Identity, Policy, PolicyValue, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
+import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
 
 // Made from the build output, the prover also loads `client.wasm`: the Rust
 // functions (`Policy.on`, `Identity.commitment`) work from then on.
@@ -92,6 +92,21 @@ test("names the check a holder fails", () => {
   expect(() => prover.prove({ id, commitment: new Field(1), policy })).toThrow(
     /`require_eq\(id\.commitment\(\), commitment\);`/,
   );
+  // A `CheckFailed`, whose `site` a UI can point at.
+  const failure = (() => {
+    try {
+      fails({ allowed: ["GB", "FR"] })();
+    } catch (e) {
+      return e;
+    }
+  })();
+  expect(failure).toBeInstanceOf(CheckFailed);
+  expect((failure as CheckFailed).site).toMatchObject({
+    file: "src/lib.rs",
+    text: "id.nationality.require_in(policy.allowed);",
+    chain: ["require_in"],
+  });
+  expect((failure as CheckFailed).site.line).toBeGreaterThan(0);
 });
 
 test("computes the issuer's commitment as the circuit does", () => {
@@ -106,6 +121,20 @@ test("computes the issuer's commitment as the circuit does", () => {
 test("names the input at fault", () => {
   const long = { ...id, document: "a document number past 31 bytes" + "!" };
   expect(() => prover.prove({ id: long, commitment, policy })).toThrow(/id\.document.*longer than 31 bytes/);
+  // An `InputError`, whose `path` names the input.
+  for (const [inputs, path] of [
+    [{ id: long, commitment, policy }, "id.document"],
+    [{ id, commitment, policy: { ...policy, allowed: ["XX" as Country] } }, "policy.allowed"],
+    [{ id, commitment: -1, policy }, "commitment"],
+  ] as const) {
+    try {
+      prover.prove(inputs);
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(InputError);
+      expect((e as InputError).path).toBe(path);
+    }
+  }
   expect(() => prover.prove({ id, commitment, policy: { ...policy, today: new Date("not a day") } })).toThrow(
     /today: invalid Date/,
   );

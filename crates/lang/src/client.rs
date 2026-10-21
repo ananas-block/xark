@@ -31,7 +31,15 @@ fn schema(ty: Type) -> Result<xark_schema::Schema, String> {
 /// A `T` from its natural JSON form, as a client gives it (and as `--inputs` takes
 /// a circuit input of that type).
 pub fn from_json<T: Input>(value: &Value) -> Result<T, String> {
-    let leaves = schema(T::TYPE)?.leaves(&json!({ "v": value }))?;
+    let leaves = schema(T::TYPE)?
+        .leaves(&json!({ "v": value }))
+        .map_err(|e| {
+            // Paths are under the one input `v`: name what's inside the value.
+            match e.path.strip_prefix('v').map(|p| p.trim_start_matches('.')) {
+                Some("") | None => e.message,
+                Some(p) => alloc::format!("`{p}`: {}", e.message),
+            }
+        })?;
     let fields: Vec<Field> = leaf_names(&T::TYPE, "v")
         .iter()
         .map(|n| {

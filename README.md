@@ -280,6 +280,9 @@ warns, so you can rename it.
 The client holds no encoding logic of its own: xark-wasm encodes values against
 the schema with the same Rust code as `xark prove --inputs`, so the two can't
 drift, and a mistake names its input (`id.document: "…" is longer than 31 bytes`).
+Errors are typed for a UI to act on: an `InputError` carries the input's `path`
+(`"id.document"`), and a `CheckFailed` the failing statement's `site` (`file`,
+`line`, `col`, `text`, the functions it called into).
 `clients/check/{zk_kyc,cube,sha256,merkle}/` hold those examples' generated clients
 and their vitest tests. `npm test` there (run in CI) builds xark, xark-wasm and each
 example, fails if a committed client is stale (`npm run update` rewrites it),

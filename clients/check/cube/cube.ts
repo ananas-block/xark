@@ -10,9 +10,9 @@
 // schema, `cube.schema.json` (written with this file), exactly as `xark prove --inputs`
 // does.
 
-import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./cube.schema.json" with { type: "json" };
-export { Field };
+export { CheckFailed, Field, InputError };
 
 /** Every input of `cube`. */
 export interface CubeInputs {

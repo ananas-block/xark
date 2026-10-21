@@ -10,9 +10,9 @@
 // schema, `sha256.schema.json` (written with this file), exactly as `xark prove --inputs`
 // does.
 
-import { Circuit, Field, fromHex, type Bytes, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { CheckFailed, Circuit, Field, InputError, fromHex, type Bytes, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 import schema from "./sha256.schema.json" with { type: "json" };
-export { Field };
+export { CheckFailed, Field, InputError };
 
 /** Every input of `sha256`. */
 export interface Sha256Inputs {

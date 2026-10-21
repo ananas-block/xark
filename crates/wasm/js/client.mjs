@@ -79,6 +79,35 @@ function fieldValue(x) {
   throw new TypeError(`Field: can't make a field element from ${x === null ? "null" : typeof x}`);
 }
 
+/** An input value the circuit's types refuse; `path` names it (`id.document`). */
+export class InputError extends Error {
+  constructor(message, path) {
+    super(message);
+    this.name = "InputError";
+    this.path = path;
+  }
+}
+
+/** Inputs that fail one of the circuit's checks; `site` is the statement. */
+export class CheckFailed extends Error {
+  constructor(message, site) {
+    super(message);
+    this.name = "CheckFailed";
+    this.site = site;
+  }
+}
+
+/** Run `f`, turning xark-wasm's named errors into the classes above. */
+function typed(f) {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof Error && e.name === "InputError") throw new InputError(e.message, e.path ?? "");
+    if (e instanceof Error && e.name === "CheckFailed") throw new CheckFailed(e.message, e.site);
+    throw e;
+  }
+}
+
 /**
  * A proof and the public inputs it proves, decoded and as their canonical bytes.
  * `toBytes()` is the one blob to send; a verifier reads it back.
@@ -279,7 +308,7 @@ class Session {
   }
 
   encodePublicInputs(publicInputs) {
-    return this.codec.encodePublicInputs(toJson(publicInputs));
+    return typed(() => this.codec.encodePublicInputs(toJson(publicInputs)));
   }
 
   decodePublicInputs(bytes) {
@@ -293,7 +322,7 @@ class Session {
   }
 
   fields(type, value) {
-    return this.codec.valueFields(type, toJson(value)).map((f) => new Field(f));
+    return typed(() => this.codec.valueFields(type, toJson(value))).map((f) => new Field(f));
   }
 
   poseidon2(fields) {
@@ -309,8 +338,9 @@ export class Prover extends Session {
 
   prove(inputs) {
     const { circuit, provingKey, sources } = this.parts;
-    const leaves = this.codec.encodeInputs(toJson(inputs));
-    const { proof, publicInputs } = this.wasm.prove(circuit, provingKey, leaves, sources);
+    const { proof, publicInputs } = typed(() =>
+      this.wasm.prove(circuit, provingKey, this.codec.encodeInputs(toJson(inputs)), sources),
+    );
     return new Proof(proof.slice(), this.decodePublicInputs(publicInputs), publicInputs.slice());
   }
 }
