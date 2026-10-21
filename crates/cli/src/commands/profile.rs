@@ -38,31 +38,23 @@ pub struct ProfileArgs {
 }
 
 pub fn run(args: ProfileArgs) -> Result<()> {
-    // 1. Build with `--profile` so `profile.json` is (re)generated.
-    let mut build_argv = vec![args.crate_dir.clone()];
-    if let Some(out) = &args.out {
-        build_argv.push("--out".into());
-        build_argv.push(out.clone());
-    }
-    build_argv.push("--field".into());
-    build_argv.push(args.field.clone());
-    let code = crate::cli::cmd_build_profile(&build_argv);
-    if code != 0 {
-        bail!("build failed (exit {code}); fix the circuit before `xark profile`");
-    }
-
-    // 2. Locate + read profile.json from the resolved output dir.
     let base = args.out.clone().unwrap_or_else(|| args.crate_dir.clone());
+    // 1. The last `profile.json` when it's current, else a profile build (`--profile`)
+    //    and the one it writes.
+    let profile = match current_profile(&base, &args.field) {
+        Some(p) => {
+            eprintln!(
+                "{} profile.json is current (no source changed since): not rebuilding",
+                crate::style::tag()
+            );
+            p
+        }
+        None => {
+            build(&args)?;
+            read_profile(&XarkProject::resolve(Some(base.clone().into()))?.xark_dir)?
+        }
+    };
     let project = XarkProject::resolve(Some(base.into()))?;
-    let profile_path = project.xark_dir.join("profile.json");
-    let text = std::fs::read_to_string(&profile_path).with_context(|| {
-        format!(
-            "reading {} (did the build emit it?)",
-            profile_path.display()
-        )
-    })?;
-    let profile: ProfileProgram = xark_ir::profile::from_json(&text)
-        .with_context(|| format!("parsing {}", profile_path.display()))?;
 
     // 3. Aggregate + render.
     let agg = aggregate(&profile);
@@ -250,6 +242,50 @@ fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// The profile build (`xark build` with constraint attribution).
+fn build(args: &ProfileArgs) -> Result<()> {
+    let mut build_argv = vec![args.crate_dir.clone()];
+    if let Some(out) = &args.out {
+        build_argv.push("--out".into());
+        build_argv.push(out.clone());
+    }
+    build_argv.push("--field".into());
+    build_argv.push(args.field.clone());
+    let code = crate::cli::cmd_build_profile(&build_argv);
+    if code != 0 {
+        bail!("build failed (exit {code}); fix the circuit before `xark profile`");
+    }
+    Ok(())
+}
+
+/// The build directory's `profile.json`, when it's current: for `field`, written by
+/// this `xark` (not an older one), after every source the circuit came from (`deps`)
+/// last changed.
+fn current_profile(base: &str, field: &str) -> Option<ProfileProgram> {
+    let dir = XarkProject::resolve(Some(base.into())).ok()?.xark_dir;
+    let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let made = modified(&dir.join("profile.json"))?;
+    // Without `deps` there's no list of sources to compare with.
+    modified(&dir.join("deps"))?;
+    let exe = std::env::current_exe().ok().and_then(|e| modified(&e));
+    if exe.is_none_or(|t| t > made)
+        || xark_prover::newer_source_than(&dir, "profile.json").is_some()
+    {
+        return None;
+    }
+    read_profile(&dir)
+        .ok()
+        .filter(|p| p.field.as_ref() == Some(&xark_ir::FieldSpec::named(field)))
+}
+
+/// `profile.json` from the build directory `dir`.
+fn read_profile(dir: &Path) -> Result<ProfileProgram> {
+    let path = dir.join("profile.json");
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {} (did the build emit it?)", path.display()))?;
+    xark_ir::profile::from_json(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// The aggregated drill-down: per user line, per function chain, per kind.
@@ -711,6 +747,7 @@ mod tests {
         };
         let profile = ProfileProgram {
             source_root: dir.display().to_string(),
+            field: None,
             constraints: vec![
                 c(0, ConstraintKind::Comparison),
                 c(1, ConstraintKind::RangeCheck),

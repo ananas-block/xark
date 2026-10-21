@@ -504,11 +504,18 @@ fn major_minor(v: &str) -> (String, String) {
 
 /// A source the circuit came from changed since `circuit.xbc` in
 /// `<crate>/target/xark/<name>/` was built — `cargo test` after an edit, without
-/// `xark test` or `xark build`: a file `xark build` listed in `deps` (the crate's
-/// own and its path dependencies', gadgets included), the crate's `Cargo.toml`, or
-/// anything under its `src/`.
+/// `xark test` or `xark build`.
 fn newer_source(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let built = std::fs::metadata(dir.join("circuit.xbc"))
+    newer_source_than(dir, "circuit.xbc")
+}
+
+/// A source the circuit came from that changed since `artifact` (`circuit.xbc`,
+/// `profile.json`) in the build directory `dir` was written: a file `xark build`
+/// listed in `deps` (the crate's own and its path dependencies', gadgets included),
+/// the crate's `Cargo.toml`, or anything under its `src/`. `None` also when
+/// `artifact` is missing: check it exists first.
+pub fn newer_source_than(dir: &std::path::Path, artifact: &str) -> Option<std::path::PathBuf> {
+    let built = std::fs::metadata(dir.join(artifact))
         .and_then(|m| m.modified())
         .ok()?;
     let changed = |p: &std::path::Path| {

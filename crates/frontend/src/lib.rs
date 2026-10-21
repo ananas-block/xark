@@ -221,6 +221,7 @@ pub fn write_outputs_in(
     if profile {
         let prof = xark_ir::ProfileProgram {
             source_root: source_root.display().to_string(),
+            field: Some(out.r1cs.field.clone()),
             constraints: out.profile.clone(),
         };
         std::fs::write(
