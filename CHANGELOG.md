@@ -98,6 +98,12 @@ gadgets now check more:
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:
   `cube.ts` went from 248 lines to 60. The schema is a JSON file `xark client`
   writes beside the client (`cube.schema.json`), which the client imports.
+- **Bytes are little-endian wherever they're an integer.** A wide integer (a
+  limbed number: a scalar, a bignum) given as a list of byte values is read
+  little-endian, like `Field::from_le_bytes` and `new Field(bytes)`; it was
+  big-endian. A hex string is still a number, most significant digit first. A
+  client sends a `Uint8Array` as its list of bytes. `Field.fromBeBytes` remains the
+  explicit way in for big-endian data.
 - **Field elements are a `Field` class in TypeScript.** Generated clients return
   `Field` (replacing `bigint`), and a field input takes a `Field` or a plain integer
   (replacing `FieldLike`), checked the same way. `new Field(x)` takes a `bigint`, a

@@ -148,7 +148,7 @@ fn note(ty: &Ty) -> Option<String> {
             len: None,
         } => format!("`{r}`: its bytes."),
         Ty::Bytes { .. } => return None,
-        Ty::Number { of } => format!("`{of}`: the number, or its big-endian bytes."),
+        Ty::Number { of } => format!("`{of}`: the number, or its little-endian bytes."),
         Ty::Date => "A calendar day: the `Date`'s UTC day, as `toISOString()` shows it \
              (`new Date(\"1990-01-01\")`)."
             .into(),

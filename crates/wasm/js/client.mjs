@@ -108,7 +108,10 @@ function splitProof(bytes) {
   return { proofBytes: bytes.slice(4, 4 + n), publicInputBytes: bytes.slice(4 + n) };
 }
 
-/** JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day, bytes as hex. */
+/**
+ * JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day,
+ * a `Uint8Array` as its list of bytes (little-endian, where it's an integer).
+ */
 export function toJson(value) {
   return JSON.stringify(value, function (key, v) {
     const raw = this[key];
@@ -121,7 +124,7 @@ export function toJson(value) {
     if (typeof raw === "number" && !Number.isSafeInteger(raw)) {
       throw new RangeError(`${key || "value"}: ${raw} is not a safe integer (pass a bigint)`);
     }
-    if (raw instanceof Uint8Array) return "0x" + Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
+    if (raw instanceof Uint8Array) return Array.from(raw);
     return v;
   });
 }

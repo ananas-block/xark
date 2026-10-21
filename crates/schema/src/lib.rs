@@ -25,7 +25,7 @@
 //! | `{"text": 31}`                   | a string, at most 31 UTF-8 bytes                |
 //! | `{"choice": E}`                  | a variant name of enum `E`, or its position     |
 //! | `{"set": E}`                     | a variant name, a list of them, or the raw mask |
-//! | `{"bytes": K, "limbs": B}`       | a number (or `K` big-endian bytes) split into `B`-bit limbs |
+//! | `{"bytes": K, "limbs": B}`       | a number, or a list of its little-endian bytes, split into `B`-bit limbs |
 //! | `{"concat": [k…] \| "fields"}`   | `0x`-hex bytes, the fields' encodings back to back (`"sec1": true`: a leading `0x04` too) |
 //! | `{"bytes": 32, "ed25519": true}` | a compressed Ed25519 point                      |
 //!
@@ -309,8 +309,11 @@ impl Schema {
             };
             out.insert(at.into(), Fr::from(n));
         } else if enc.get("limbs").is_some() {
+            // A list of bytes is little-endian, as every integer's bytes are here
+            // (`Field::from_le_bytes`, a client's `Uint8Array`); a hex string is a
+            // number, written most significant digit first.
             let n = match v {
-                Value::Array(_) => BigUint::from_bytes_be(&bytes(v)?),
+                Value::Array(_) => BigUint::from_bytes_le(&bytes(v)?),
                 _ => integer(v)?,
             };
             self.encode_number(r, &n, at, out)?;
@@ -980,6 +983,26 @@ mod tests {
         assert_eq!((d("k.limbs[0]"), d("k.limbs[1]")), ("0".into(), "1".into())); // 2^86
         assert_eq!((d("h.hi"), d("h.lo")), ("2".into(), "3".into()));
         assert_eq!((d("msg[0]"), d("msg[1]")), ("97".into(), "98".into()));
+    }
+
+    #[test]
+    fn a_number_as_bytes_is_little_endian() {
+        // 2^86, as its little-endian bytes: byte 10 holds bit 86 (0x40).
+        let mut le = vec![0u64; 32];
+        le[10] = 0x40;
+        let mut v = inputs();
+        v["k"] = json!(le);
+        let l = schema().leaves(&v).unwrap();
+        let d = |k: &str| l[k].into_bigint().to_string();
+        assert_eq!((d("k.limbs[0]"), d("k.limbs[1]")), ("0".into(), "1".into()));
+        // A hex string is a number, most significant digit first.
+        v["k"] = json!(format!("0x{:x}", 1u128 << 86));
+        assert_eq!(
+            schema().leaves(&v).unwrap()["k.limbs[1]"]
+                .into_bigint()
+                .to_string(),
+            "1"
+        );
     }
 
     #[test]
