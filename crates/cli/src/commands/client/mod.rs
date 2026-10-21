@@ -167,5 +167,30 @@ pub fn run(args: ClientArgs) -> Result<()> {
             out.display()
         ))
     );
+    // What using it takes: the runtime it imports (this release's), the settings its
+    // schema import needs, and where to start.
+    let full = env!("CARGO_PKG_VERSION");
+    let release = full.rsplit_once('.').map_or(full, |(mm, _)| mm);
+    let name = ts::pascal(&model.circuit);
+    eprintln!(
+        "{}",
+        crate::style::next_steps(&[
+            (
+                format!("npm install @blueshift-gg/xark-wasm@{release}"),
+                "the runtime the client imports",
+            ),
+            (
+                "tsconfig: \"resolveJsonModule\": true".to_string(),
+                "it imports its schema; `module` esnext, nodenext or preserve",
+            ),
+            (
+                format!(
+                    "await {name}.prover(\"<url of target/xark/{}/>\")",
+                    model.circuit
+                ),
+                "then .prove(inputs); `.verifier(…)` to verify",
+            ),
+        ])
+    );
     Ok(())
 }

@@ -192,6 +192,11 @@ xark check examples/cube
 
 ### Typed clients
 
+```sh
+xark client                                  # writes <circuit>.ts and <circuit>.schema.json
+npm install @blueshift-gg/xark-wasm@0.3      # the runtime they import
+```
+
 `xark build` also writes `schema.json`: every input's name, visibility and
 `Input::TYPE`, plus the public inputs in proof order. `xark client` resolves it
 into the standard types and writes one `.ts` file: constants and a type per enum,
