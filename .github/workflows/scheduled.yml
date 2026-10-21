@@ -61,6 +61,4 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Compare circuit digests
-        env:
-          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
-        run: scripts/stable-digests.sh --check
+        run: cargo xtask digests --check --toolchain ${{ matrix.toolchain }}

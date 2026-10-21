@@ -84,7 +84,7 @@ jobs:
   example-sweep:
     # Every example on its own test inputs, plus single-leaf mutations of them,
     # each decided by exhaustive witness search: exactly one witness where the
-    # test accepts, none where it rejects (scripts/difftest-examples.sh). Split
+    # test accepts, none where it rejects (`cargo xtask difftest`). Split
     # into four shards that run side by side; a failure names the example and the
     # input. A whole-ed25519 search peaks near 7 GB.
     name: adversarial example sweep (shard ${{ matrix.shard }}/4)
@@ -104,10 +104,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Sweep this shard's examples
-        env:
-          XARK_SWEEP_SHARD: ${{ matrix.shard }}/4
-          XARK_SWEEP_JOBS: "2"
-        run: scripts/difftest-examples.sh
+        run: cargo xtask difftest --shard ${{ matrix.shard }}/4 --jobs 2
 
   host-examples:
     # The two examples that aren't circuits, so the sweep skips them: the Nova
@@ -137,7 +134,7 @@ jobs:
 
   publish-dry:
     # A crates.io release rehearsal: every publishable crate is packaged and built
-    # from its own `.crate`, as crates.io will see it (scripts/publish-dry.sh).
+    # from its own `.crate`, as crates.io will see it (`cargo xtask publish --dry-run`).
     # Catches a packaging break (a file left out, missing metadata, a path-only
     # dependency) before release day rather than halfway through a publish.
     name: publish dry run (crates.io)
@@ -151,4 +148,4 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Package and build every crate
-        run: make -f Makefile.publish publish-dry
+        run: cargo xtask publish --dry-run

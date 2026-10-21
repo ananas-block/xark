@@ -374,7 +374,7 @@ Requires a Powers-of-Tau transcript plus a phase-2 contribution. Both **implemen
   fuzzer whose every verdict is an exhaustive witness search
   (`crates/lang/tests/semantics_fuzz.rs`, `xark_ir::witness_search`), and the same
   search over every example's own test inputs and mutations of them
-  (`scripts/difftest-examples.sh`, on every pull request in `slow.yml`). That includes the
+  (`cargo xtask difftest`, on every pull request in `slow.yml`). That includes the
   AES-CTR/GCM circuits and the whole **EdDSA** circuit (2.4M rows, scalar
   multiplication included: every valid signature has exactly one witness, every
   mutated input none), since none of them needs a non-native inverse. The

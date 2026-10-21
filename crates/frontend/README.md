@@ -136,7 +136,7 @@ adversary, not the honest hint program. The circuit must have exactly one witnes
 Rust's result, none for result + 1, and none for any output where Rust panics; the
 honest solver must find that witness too. Over 3,000 programs / 48,000 searches have
 run clean with none undecided (`XARK_FUZZ_CASES`, `XARK_FUZZ_SEED`; CI runs 200 per
-push and 5,000 weekly on a fresh seed). `scripts/difftest-examples.sh` runs the same
+push and 5,000 weekly on a fresh seed). `cargo xtask difftest` runs the same
 search on every example under 200k rows, on its own test inputs and mutations; all
 are decided except the non-native EC examples (`ec_incomplete*`), whose 256-bit
 modular-inverse relations the search can't reason about. Those gadgets are checked at
@@ -189,5 +189,5 @@ cargo run -p xark-frontend --release --example stablec -- examples/ed25519 \
 XARK_FRONTEND_TIME=1 …                     # phase timings
 cargo test --release --test snapshot                 # (in crates/lang) the snapshot suite
 cargo run -p xark-frontend --release --example xbcstat -- a.xbc b.xbc   # sizes
-scripts/difftest-examples.sh                         # examples' inputs, adversarially
+cargo xtask difftest                                 # examples' inputs, adversarially
 ```

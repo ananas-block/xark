@@ -883,7 +883,7 @@ pub fn solve_and_check(
 /// `XARK_DUMP_INPUTS=<dir>` is set: one JSON file per call, `{"circuit",
 /// "inputs": [[leaf, decimal]…], "ok"}` — a corpus of real test inputs for
 /// differential testing and witness search over two builds of the same circuit
-/// (`crates/frontend/examples/difftest.rs`, `scripts/difftest-examples.sh`).
+/// (`crates/frontend/examples/difftest.rs`, `cargo xtask difftest`).
 /// Every circuit test should solve through this (directly, or via
 /// `xark_prover::Circuit`) so its inputs are checked too.
 pub fn solve_and_check_recorded(

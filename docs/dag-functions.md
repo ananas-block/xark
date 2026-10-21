@@ -116,7 +116,7 @@ variables, so the big win is crossing below a domain-size boundary.
 - **Artifact ≡ flat.** `function_decode::verify_blob_matches` decodes the artifact
   independently and checks it equals the flat lowering (rows, witness program, variable roles).
   `crates/frontend/tests/examples.rs` runs it on every example, and so does
-  `scripts/stable-digests.sh` (via `stablec`).
+  `cargo xtask digests`.
 - **The keyed (reduced) circuit is as sound as the full one.** `crates/ir/tests/reduced_soundness.rs`:
   a forged public output is rejected by both, and every public input stays constrained.
 - **The minimizer preserves satisfiability** by construction, and end to end by producing

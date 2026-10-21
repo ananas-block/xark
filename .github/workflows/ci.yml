@@ -38,10 +38,10 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --all -- --check
 
-      - name: Publish order up to date
-        # Every publishable crate is in Makefile.publish, dependencies first, and
-        # none depends on an unpublished one.
-        run: scripts/gen-publish-makefile.py --check
+      - name: Every crate can publish
+        # No publishable crate depends on an unpublished one or on a path alone, and
+        # their dependencies have an order.
+        run: cargo xtask publish --plan
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -85,16 +85,14 @@ jobs:
       - name: Install workspace toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Install toolchain under test
-        # Installed, not made the default: the dev tool (`stablec`) builds with the
-        # workspace toolchain (its dependencies need 1.89); only the circuits are
-        # built with the toolchain under test, via RUSTUP_TOOLCHAIN below.
+        # Installed, not made the default: `cargo xtask` builds with the workspace
+        # toolchain (its dependencies need 1.89); only the circuits are built with
+        # the toolchain under test (`--toolchain`).
         run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --target wasm32-unknown-unknown
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
       - name: Compare circuit digests
-        env:
-          RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
-        run: scripts/stable-digests.sh --check
+        run: cargo xtask digests --check --toolchain ${{ matrix.toolchain }}
 
   msrv:
     # The minimum Rust (`rust-version`, 1.89) builds the CLI and every crate, not

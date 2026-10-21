@@ -110,6 +110,13 @@ gadgets now check more:
   method named like a field stays `Policy.method(value, …)`, and `xark client`
   warns. zk_kyc's `Policy::min_net_worth` is now `worth_at_least`.
   `await ZkKyc.ready(url)` loads `client.wasm` without a prover or verifier.
+- **Repository tasks are `cargo xtask`.** The shell and Python scripts are one Rust
+  tool (`xtask/`): `cargo xtask digests [--check|--update] [--toolchain 1.89]`
+  (circuits built in parallel, the toolchain under test a flag rather than
+  `RUSTUP_TOOLCHAIN`), `cargo xtask difftest [examples] [--shard k/n] [--jobs N]`
+  (flags instead of `XARK_SWEEP_*` variables), and `cargo xtask publish --plan |
+  --dry-run | --execute`, which orders the crates itself, so `Makefile.publish` and
+  its generator are gone.
 - **`xark-schema`: the input codec as its own crate.** `schema.json` and the
   encoding of values (`xark_prover::schema` until now) need only the BN254 scalar
   field and JSON. The CLI, xark-wasm and `client.wasm` use it directly, and the

@@ -420,7 +420,7 @@ cd crates/lang && cargo test --release
 cd crates/lang && cargo test --release --test snapshot -- --include-ignored  # + heavy KATs
 XARK_FUZZ_CASES=400 cargo test --release --test semantics_fuzz  # wider fuzzing
 
-scripts/stable-digests.sh --check   # every example's circuit, unchanged
+cargo xtask digests --check         # every example's circuit, unchanged
 ```
 
 Toolchains and circuit reproducibility: [`docs/toolchain.md`](docs/toolchain.md).

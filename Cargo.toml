@@ -20,6 +20,7 @@ members = [
     "crates/cli",
     "crates/prover",
     "crates/schema",
+    "xtask",
     "gadgets/xark-merkle",
     "gadgets/xark-mimc",
     "gadgets/xark-pedersen",
