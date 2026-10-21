@@ -49,7 +49,8 @@ impl<P: ark_ec::short_weierstrass::SWCurveConfig<ScalarField = Fr>> SwCurve
 }
 
 /// Accumulate buckets in affine coordinates with batched inversions (default
-/// on); exposed so benchmarks can compare against XYZZ accumulation.
+/// on); a switch so `examples/bench_kernels.rs` and `bench_prove.rs` can compare
+/// against XYZZ accumulation.
 pub static BATCH_AFFINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// Additions per shared inversion.

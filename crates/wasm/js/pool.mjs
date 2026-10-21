@@ -154,11 +154,6 @@ export class WorkerPool {
     return new Uint8Array(out, 0, ranges.length * outSz).slice();
   }
 
-  /** Apply a benchmark setting on every worker (bench builds only). */
-  configure(opts) {
-    this._run(this.workers.map(() => ({ kind: "config", ...opts })));
-  }
-
   async terminate() {
     await Promise.all(this.workers.map((w) => w.terminate()));
   }

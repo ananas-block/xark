@@ -439,67 +439,20 @@ pub(crate) fn prove_auto(p: &mut Prepared, inputs: JsValue) -> Result<ProofBundl
     prove_prepared(p, inputs, &JsValue::UNDEFINED)
 }
 
-/// Phase timings of the last proof (ms since the previous mark), for profiling.
-struct Timings {
-    t: f64,
-    marks: Vec<(&'static str, f64)>,
-}
-
-impl Timings {
-    fn new() -> Self {
-        Timings {
-            t: js_sys::Date::now(),
-            marks: Vec::new(),
-        }
-    }
-}
-
-impl xark_groth16::Probe for Timings {
-    fn mark(&mut self, phase: &'static str) {
-        let now = js_sys::Date::now();
-        if phase != "start" {
-            match self.marks.iter_mut().find(|m| m.0 == phase) {
-                Some(m) => m.1 += now - self.t,
-                None => self.marks.push((phase, now - self.t)),
-            }
-        }
-        self.t = now;
-    }
-}
-
-thread_local! {
-    static LAST_TIMINGS: RefCell<Vec<(&'static str, f64)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Per-phase wall-clock (ms) of the last `proveStreaming*` call:
-/// `{ solve, msm_a, …, qap_h, … }`.
-#[wasm_bindgen(js_name = lastTimings)]
-pub fn last_timings() -> JsValue {
-    let o = js_sys::Object::new();
-    LAST_TIMINGS.with(|t| {
-        for (k, v) in t.borrow().iter() {
-            let _ = js_sys::Reflect::set(&o, &JsValue::from_str(k), &JsValue::from_f64(*v));
-        }
-    });
-    o.into()
-}
-
 fn prove_prepared(
     p: &mut Prepared,
     inputs: JsValue,
     options: &JsValue,
 ) -> Result<ProofBundle, js_sys::Error> {
-    let mut timings = Timings::new();
     let ids = resolve_inputs(&p.vars, inputs).map_err(|e| js_error(&e))?;
     let z = witness(&p.xbc, &ids, p.src.layout())?;
-    xark_groth16::Probe::mark(&mut timings, "solve");
     let ninst = p.src.layout().num_instance();
 
     let (cfg, r, s) = config(options);
     let accel = &mut Host::from_options(options);
     let res = match &mut p.key {
         Key::Streamed(pk) => {
-            xark_groth16::prove_accelerated(&*p.src, &z, pk, r, s, &cfg, &mut timings, accel)
+            xark_groth16::prove_accelerated(&*p.src, &z, pk, r, s, &cfg, &mut (), accel)
         }
         Key::Resident(pk) => xark_groth16::prove_accelerated(
             &*p.src,
@@ -508,11 +461,10 @@ fn prove_prepared(
             r,
             s,
             &cfg,
-            &mut timings,
+            &mut (),
             accel,
         ),
     };
-    LAST_TIMINGS.with(|t| *t.borrow_mut() = std::mem::take(&mut timings.marks));
     let proof = res.map_err(|e| match e {
         xark_groth16::ProveError::Unsatisfied { .. } => {
             unsatisfied(&p.xbc, &ids, p.sources.as_ref())
@@ -666,73 +618,6 @@ pub fn kernel_msm(g2: bool, points: &[u8], compressed: bool, scalars: &[u8]) -> 
     accel::kernel_msm(g2, points, compressed, scalars)
 }
 
-// ---- benchmarks (feature `bench`; not in the published bundle) --------------------
-
-#[cfg(feature = "bench")]
-thread_local! {
-    static BENCH: RefCell<Vec<Fr>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Fill the bench buffer with `2^log_n` pseudo-random elements (untimed).
-#[cfg(feature = "bench")]
-#[wasm_bindgen(js_name = benchPrepare)]
-pub fn bench_prepare(log_n: u32) {
-    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(log_n as u64);
-    BENCH.with(|b| *b.borrow_mut() = (0..1usize << log_n).map(|_| Fr::rand(&mut rng)).collect());
-}
-
-/// One coset transform (the QAP's `to_coset`) of the bench buffer: blocked
-/// four-step with `tile`, or (`tile == 0`) a single plain radix-2 FFT chain.
-#[cfg(feature = "bench")]
-#[wasm_bindgen(js_name = benchToCoset)]
-pub fn bench_to_coset(tile: u32) {
-    BENCH.with(|b| {
-        let mut v = b.borrow_mut();
-        let cfg = if tile == 0 {
-            FftConfig {
-                tile: 1,
-                min_blocked_log: 64,
-            }
-        } else {
-            FftConfig {
-                tile: tile as usize,
-                min_blocked_log: 0,
-            }
-        };
-        let d = Domain::new(v.len(), cfg).unwrap();
-        d.to_coset(&mut v, accel::coset_gen());
-    })
-}
-
-/// arkworks' radix-2 `ifft` + coset `fft` of the bench buffer (reference).
-#[cfg(feature = "bench")]
-#[wasm_bindgen(js_name = benchArkToCoset)]
-pub fn bench_ark_to_coset() {
-    use ark_poly::{EvaluationDomain, Radix2EvaluationDomain};
-    BENCH.with(|b| {
-        let mut v = b.borrow_mut();
-        let d = Radix2EvaluationDomain::<Fr>::new(v.len()).unwrap();
-        d.ifft_in_place(&mut v);
-        d.get_coset(accel::coset_gen())
-            .unwrap()
-            .fft_in_place(&mut v);
-    })
-}
-
-/// Out-of-place tiled transpose of the bench buffer viewed as `N1 × N2`.
-#[cfg(feature = "bench")]
-#[wasm_bindgen(js_name = benchTranspose)]
-pub fn bench_transpose(tile: u32) -> u32 {
-    BENCH.with(|b| {
-        let v = b.borrow();
-        let log = v.len().trailing_zeros();
-        let (n1, n2) = (1usize << (log / 2), 1usize << (log - log / 2));
-        let mut out = vec![Fr::zero(); v.len()];
-        xark_groth16::fft::transpose_map(&v, &mut out, n1, n2, tile as usize, |x| *x);
-        out.len() as u32
-    })
-}
-
 // ---- push-driven proving (key from a ReadableStream) -------------------------------
 
 /// A proof waiting for proving-key bytes: created by [`begin_streaming_proof`],
@@ -848,11 +733,4 @@ impl KeyTranscoder {
 #[wasm_bindgen]
 pub fn kernel_decompress(g2: bool, points: &[u8]) -> Result<Vec<u8>, js_sys::Error> {
     xark_groth16::transcode::decompress_points(g2, points).map_err(|e| js_error(&e))
-}
-
-/// Benchmarking: switch batch-affine bucket accumulation (this instance only).
-#[cfg(feature = "bench")]
-#[wasm_bindgen(js_name = setBatchAffine)]
-pub fn set_batch_affine(on: bool) {
-    xark_groth16::msm::BATCH_AFFINE.store(on, std::sync::atomic::Ordering::Relaxed);
 }

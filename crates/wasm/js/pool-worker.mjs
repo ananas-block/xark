@@ -41,12 +41,7 @@ function decompress(job) {
   new Uint8Array(job.dst, job.dstOff, out.length).set(out);
 }
 
-// Benchmarking hook: apply a setting (bench builds export the setters).
-function config(job) {
-  if (job.batchAffine !== undefined && wasm.setBatchAffine) wasm.setBatchAffine(job.batchAffine);
-}
-
-const KERNELS = { cols, rows, msm, decompress, config };
+const KERNELS = { cols, rows, msm, decompress };
 
 function handle(job) {
   const ctl = new Int32Array(job.ctl);

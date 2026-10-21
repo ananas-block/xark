@@ -4960,7 +4960,6 @@ version = "0.3.0"
 dependencies = [
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
- "ark-poly 0.6.0",
  "ark-serialize 0.6.0",
  "console_error_panic_hook",
  "getrandom 0.2.17",
