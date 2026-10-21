@@ -133,7 +133,7 @@ export interface ZkKycKeys {
   provingKey?: Uint8Array;
   verifyingKey?: Uint8Array;
   sources?: string;
-  /** `client.wasm`: the circuit's `#[xark::input]` functions (`load` runs `initClient`). */
+  /** `client.wasm`: the Rust functions (`load` runs `initClient`). */
   client?: Uint8Array;
 }
 
@@ -245,7 +245,7 @@ export class ZkKyc {
   }
 }
 
-// The circuit crate's `#[xark::input]` Rust functions, compiled to `client.wasm`.
+// The Rust functions (`#[input]` on an `impl`, here or in a dependency), compiled to `client.wasm`.
 let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
 
 /**
@@ -287,7 +287,7 @@ function take(x: any, packed: bigint): string {
   return s;
 }
 
-/** `Policy`'s Rust functions (`#[xark::input]`), run from `client.wasm`. */
+/** `Policy`'s Rust functions (`#[input] impl Policy`), run from `client.wasm`. */
 export const Policy = {
   /**
    * A check on `today` that any holder with a valid document passes: tighten it
@@ -339,7 +339,7 @@ function withPolicyMethods<T extends object>(value: T): T & PolicyMethods {
 }
 
 
-/** `Identity`'s Rust functions (`#[xark::input]`), run from `client.wasm`. */
+/** `Identity`'s Rust functions (`#[input] impl Identity`), run from `client.wasm`. */
 export const Identity = {
   /**
    * The issuer's commitment: Poseidon2 over every field, so adding one extends it.

@@ -245,6 +245,15 @@ pub(crate) fn to_bits_record<const N: usize>(x: &Field, bits: &[Field; N]) {
     unsafe { ffi::xark_to_bits_record(x, N as u32, bits.as_ptr()) }
 }
 
+/// [`to_bits_lookup`] for a width known as a value: on a hit, fills `out[..n]`.
+pub(crate) fn to_bits_lookup_n(x: &Field, n: usize, out: &mut [Field; 253]) -> bool {
+    // SAFETY: on `true` the host wrote `n ≤ 253` fields to `out`.
+    unsafe { ffi::xark_to_bits_lookup(x, n as u32, out.as_mut_ptr()) }
+}
+pub(crate) fn to_bits_record_n(x: &Field, n: usize, bits: &[Field; 253]) {
+    unsafe { ffi::xark_to_bits_record(x, n as u32, bits.as_ptr()) }
+}
+
 // --- inputs ------------------------------------------------------------------
 
 /// Bind the input leaf `name` (a field element). See [`crate::input::bind`].

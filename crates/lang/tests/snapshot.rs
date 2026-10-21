@@ -5115,9 +5115,9 @@ fn bool_inputs() {
 }
 
 /// `Choice::require_in` accepts exactly a declared variant that the set allows: not
-/// one outside it, not a position past the enum, and not the forged
-/// `i − 2⁶⁴ (mod p)` that would zero a disallowed variant's factor without the
-/// 64-bit check.
+/// one outside it, not a position past the enum, not a set with a bit past it, and
+/// not the forged `i − 2ʷ (mod p)` that would zero a disallowed variant's factor
+/// without the `w`-bit check.
 #[test]
 fn choice_require_in_is_sound() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
@@ -5133,13 +5133,18 @@ fn choice_require_in_is_sound() {
     assert!(ok("0", "1") && ok("2", "5") && ok("1", "7"));
     assert!(!ok("1", "1"), "B is not in the set of A alone");
     assert!(!ok("3", "7"), "position 3 is past the enum");
-    // p − 2⁶⁴ + 1: the factor of disallowed B (position 1) would be 0 mod p.
-    let forged = "21888242871839275222246405745257275088548364400416034343679757442502098944002";
+    // Three variants: the choice is checked to 2 bits, and a disallowed variant's
+    // factor is offset by 2² = 4. p − 4 + 1 = p − 3 would zero B's (position 1)
+    // factor mod p without that check.
+    let forged = "21888242871839275222246405745257275088548364400416034343698204186575808495614";
     assert!(
         !ok(forged, "1"),
-        "a forged choice must fail the 64-bit check"
+        "a forged choice must fail the 2-bit check"
     );
+    assert!(!ok("4", "7"), "4 needs 3 bits");
     assert!(!ok("18446744073709551616", "7"), "2⁶⁴ is not a variant");
+    // The set has one bit per variant: a bit past them isn't a set.
+    assert!(!ok("0", "9"), "bit 3 names no variant");
 }
 
 /// Equality on the standard types and on derived structs: one equality constraint

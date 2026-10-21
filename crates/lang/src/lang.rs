@@ -342,6 +342,45 @@ impl Field {
         bits
     }
 
+    /// [`Field::to_bits`] for a width known as a value, `n ≤ 253`: the low `n` bits
+    /// (the rest of the array zero), proving `self < 2^n` with `n` booleanity rows and
+    /// one recomposition. For a width that comes from a type, such as an enum's
+    /// variant count, which a const generic can't take.
+    #[cfg_attr(not(xark), track_caller)]
+    pub fn to_bits_n(self, n: usize) -> [Field; 253] {
+        assert!(
+            n <= 253,
+            "to_bits_n: n must be <= 253 (BN254 field capacity)"
+        );
+        let mut bits = [Field::from(0u8); 253];
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        if crate::wasm::to_bits_lookup_n(&self, n, &mut bits) {
+            return bits;
+        }
+        let mut i = 0usize;
+        while i < n {
+            bits[i] = Field::hint_bit(self, i);
+            i += 1;
+        }
+        let mut i = 0usize;
+        while i < n {
+            bits[i].require_bool();
+            i += 1;
+        }
+        let mut acc = Field::from(0u8);
+        let mut pow = Field::from(1u8);
+        let mut i = 0usize;
+        while i < n {
+            acc = acc + bits[i] * pow;
+            pow = pow + pow;
+            i += 1;
+        }
+        __xark_require_eq_scalar(acc, self); // ⇒ self < 2^n
+        #[cfg(all(xark, target_arch = "wasm32"))]
+        crate::wasm::to_bits_record_n(&self, n, &bits);
+        bits
+    }
+
     /// Recompose `N` little-endian bits into a field element (`Σ bitᵢ·2ⁱ`). Only
     /// forms the linear combination; the caller must have pinned the bits boolean
     /// (e.g. via [`Field::to_bits`]).

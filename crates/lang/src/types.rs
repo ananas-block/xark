@@ -187,18 +187,24 @@ impl<E: Enum> Choice<E> {
 
     /// Constrain this to be in `allowed` (so a valid variant too).
     ///
-    /// `∏ᵢ (self − i + (1 − allowedᵢ)·2⁶⁴) = 0`: a factor vanishes only where `self`
-    /// is variant `i` and `i` is allowed, since with `self < 2⁶⁴` (checked) a
-    /// disallowed variant's factor lies in `(2⁶⁴ − 253, 2⁶⁵)`. About 570 constraints
-    /// over [`Country`](crate::Country): the set's 253 bits, the 64-bit check, one
-    /// product per variant.
+    /// `∏ᵢ (self − i + (1 − allowedᵢ)·2ʷ) = 0` with `self < 2ʷ` checked, `2ʷ` the
+    /// least power of two at or above the variant count: a factor vanishes only where
+    /// `self` is variant `i` and `i` is allowed, since a disallowed one's lies in
+    /// `(2ʷ − n, 2ʷ⁺¹)`. About `2n + w` constraints for `n` variants (510 over
+    /// [`Country`](crate::Country), 10 for three).
     pub fn require_in(self, allowed: Bitfield<E>) {
+        let n = E::VARIANTS.names.len();
         let a = allowed.bits();
-        let _ = self.0.to_bits::<64>();
-        let k = Field::from_u128(1 << 64);
+        let w = if n <= 1 {
+            0
+        } else {
+            (usize::BITS - (n - 1).leading_zeros()) as usize
+        };
+        let _ = self.0.to_bits_n(w);
+        let k = Field::from_u64(1 << w);
         let mut product = Field::from_u8(1);
         let mut i = 0;
-        while i < E::VARIANTS.names.len() {
+        while i < n {
             product *= self.0 - Field::from_u64(i as u64) + (Field::from_u8(1) - a[i]) * k;
             i += 1;
         }
@@ -275,16 +281,12 @@ impl<E: Enum> Bitfield<E> {
         "a Bitfield holds at most 253 variants"
     );
 
-    /// The value's bits, with every bit past the declared variants constrained to zero.
+    /// The value's bits, one per variant: decomposing it into exactly that many
+    /// proves no bit past the declared variants is set (one constraint per variant,
+    /// plus one).
     fn bits(self) -> [Field; 253] {
         let () = Self::FITS;
-        let bits = self.0.to_bits::<253>();
-        let mut i = E::VARIANTS.names.len();
-        while i < 253 {
-            require_eq(bits[i], Field::from_u8(0));
-            i += 1;
-        }
-        bits
+        self.0.to_bits_n(E::VARIANTS.names.len())
     }
 
     /// Constrain exactly one variant to be set (a one-hot value: one nationality).

@@ -61,7 +61,10 @@ gadgets now check more:
   ships the ISO 3166 `Country` enum. Each compares with `require_eq` and `==`
   (`choice == Country::US`), as does a derived struct (every field element), and
   `Bitfield::of([US, GB])` builds a constant set inside a circuit too.
-  `Choice::require_in(set)` costs about 570 constraints over `Country`.
+  Checks are sized to the enum: a set splits into one bit per variant (not
+  all 253), and `Choice::require_in(set)` range-checks the choice to just the
+  bits that number the variants, so a three-variant enum's checks cost under 10
+  constraints each, and `require_in` over `Country` about 510.
   `examples/zk_kyc` uses them: a private `Identity` (document number, birth
   date, nationality, net worth) checked against a public `Policy`, built with
   `Policy::on(today).min_age(18).min_net_worth(500_000).nationalities([US, GB])`
