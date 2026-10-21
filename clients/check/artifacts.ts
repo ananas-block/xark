@@ -1,5 +1,5 @@
 // Test harness only: an example's build output (`xark build` + `xark setup`, run by
-// scripts/client-check.sh). An app gets these bytes however it ships them — a
+// setup.ts, before the tests). An app gets these bytes however it ships them — a
 // bundler asset, `fetch`, a CDN — so the example tests take them from here.
 import { readFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";

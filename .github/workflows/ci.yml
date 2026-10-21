@@ -180,8 +180,8 @@ jobs:
 
   clients:
     # `xark client` for the representative examples must match the committed
-    # clients, typecheck, and prove + verify through xark-wasm
-    # (scripts/client-check.sh).
+    # clients, typecheck, and prove + verify through xark-wasm (clients/check:
+    # `npm test`, whose vitest setup builds xark, xark-wasm and each example).
     name: generated clients
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -196,5 +196,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Generated clients (cube, zk_kyc, sha256, merkle)
-        run: scripts/client-check.sh
+        working-directory: clients/check
+        run: npm ci && npm test

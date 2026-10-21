@@ -1,5 +1,5 @@
-// The generated `cube` client (`xark client`) through xark-wasm. Run by
-// scripts/client-check.sh, which regenerates `cube.ts` and builds the keys.
+// The generated `cube` client (`xark client`) through xark-wasm. `npm test` runs it,
+// after setup.ts builds the example and its keys.
 import { artifacts, serve } from "../artifacts";
 import { Cube, CubeProver, CubeVerifier, Field } from "./cube";
 import { Field as KycField } from "../zk_kyc/zk_kyc";

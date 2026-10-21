@@ -282,8 +282,9 @@ gadgets now check more:
 - `xark_prover::Circuit::check_constrained(inputs)`: `check`, plus a search for
   witness variables the inputs leave free (the "forgot to constrain a hint" bug).
 - Generated clients for `cube`, `zk_kyc`, `sha256` and `merkle` are committed in
-  `clients/check/<name>/` (the examples stay plain Rust crates) with tests that prove and verify through xark-wasm;
-  `scripts/client-check.sh` (in CI) keeps them current.
+  `clients/check/<name>/` (the examples stay plain Rust crates) with tests that
+  prove and verify through xark-wasm; `npm test` there (in CI) checks they're
+  current and typecheck, and runs them (`npm run update` rewrites stale ones).
 - Exhaustive witness search (`xark_ir::witness_search`) and
   `scripts/difftest-examples.sh` (on every pull request), which check that each example
   accepts exactly the inputs it should, with exactly one witness. It covers every

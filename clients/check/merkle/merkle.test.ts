@@ -1,5 +1,5 @@
-// The generated `merkle` client (`xark client`) through xark-wasm. Run by
-// scripts/client-check.sh, which regenerates `merkle.ts` and builds the keys.
+// The generated `merkle` client (`xark client`) through xark-wasm. `npm test` runs it,
+// after setup.ts builds the example and its keys.
 import { artifacts } from "../artifacts";
 import { Field, Merkle, MerkleProver, MerkleVerifier } from "./merkle";
 

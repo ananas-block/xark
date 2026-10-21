@@ -10,5 +10,5 @@
     "typeRoots": ["./node_modules/@types", "./node_modules"],
     "types": ["node", "vitest/globals"]
   },
-  "include": ["artifacts.ts", "*/*.ts"]
+  "include": ["*.ts", "*/*.ts"]
 }

@@ -1,5 +1,5 @@
-// The generated `sha256` client (`xark client`) through xark-wasm. Run by
-// scripts/client-check.sh, which regenerates `sha256.ts` and builds the keys.
+// The generated `sha256` client (`xark client`) through xark-wasm. `npm test` runs it,
+// after setup.ts builds the example and its keys.
 import { artifacts } from "../artifacts";
 import { Sha256, Sha256Prover, Sha256Verifier } from "./sha256";
 
