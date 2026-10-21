@@ -193,7 +193,7 @@ xark check examples/cube
 ### Typed clients
 
 ```sh
-xark client                                  # writes <circuit>.ts and <circuit>.schema.json
+xark client                                  # writes <circuit>.ts and <circuit>.schema.ts
 npm install @blueshift-gg/xark-wasm@0.3      # the runtime they import
 ```
 
@@ -204,11 +204,10 @@ an interface per struct, the inputs, the public inputs as given and as decoded, 
 the circuit, which makes its provers and verifiers. What every client shares
 (`Field`, `Proof`, loading xark-wasm and the build output) is xark-wasm's
 `@blueshift-gg/xark-wasm/client`, so the file holds only the circuit, and an app
-imports only the file. Beside it, `xark client` writes the schema the file imports
-(`zk_kyc.schema.json`, `import schema from "./zk_kyc.schema.json" with { type: "json" }`):
-the two are written together, so they always agree, and a bundler packs the JSON
-in. TypeScript needs `"resolveJsonModule": true` and `module` `esnext`, `nodenext`
-or `preserve`. Each type is the one you'd write by hand:
+imports only the file. Beside it, `xark client` writes the schema the file imports,
+`zk_kyc.schema.ts` (the circuit's `schema.json` as a module's default export, so no
+project settings are needed): the two are written together, so they always agree.
+Each type is the one you'd write by hand:
 
 ```ts
 export const Country = { AD: "AD", AE: "AE", /* … */ US: "US", ZW: "ZW" } as const;

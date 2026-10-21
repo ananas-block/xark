@@ -7,11 +7,11 @@
 // and `xark client` turns them into the types below. Don't edit this file: change
 // the circuit, then rebuild and rerun `xark client`. Values go in their natural
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
-// schema, `zk_kyc.schema.json` (written with this file), exactly as `xark prove --inputs`
-// does.
+// schema (in `zk_kyc.schema.ts`, written with this file), exactly as `xark prove
+// --inputs` does.
 
 import { CheckFailed, Circuit, Field, InputError, type Day, type Json, type Proof, type Prover, type Text, type U16, type U64, type Verifier } from "@blueshift-gg/xark-wasm/client";
-import schema from "./zk_kyc.schema.json" with { type: "json" };
+import schema from "./zk_kyc.schema.js";
 export { CheckFailed, Field, InputError };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */

@@ -65,12 +65,38 @@ impl Lang {
             Lang::Ts => "ts",
         }
     }
-    /// The client, importing the schema from `schema_file` (a sibling's name).
-    fn generate(self, m: &model::Model, schema_file: &str) -> Result<String> {
+    /// The client, importing its schema module (`schema_stem`, a sibling).
+    fn generate(self, m: &model::Model, schema_stem: &str) -> Result<String> {
         match self {
-            Lang::Ts => ts::generate(m, schema_file),
+            Lang::Ts => ts::generate(m, &format!("{schema_stem}.js")),
         }
     }
+    /// The schema as a module of the language, and its file's extension.
+    fn schema_module(self, m: &model::Model, schema: &Value) -> Result<(String, &'static str)> {
+        match self {
+            Lang::Ts => Ok((ts::schema_module(&m.circuit, schema)?, "ts")),
+        }
+    }
+}
+
+/// Whether the nearest `package.json` above `file` lists the client runtime.
+fn lists_runtime(file: &std::path::Path) -> bool {
+    let start = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
+    let Some(json) = start
+        .ancestors()
+        .skip(1)
+        .map(|d| d.join("package.json"))
+        .find(|p| p.is_file())
+    else {
+        return false;
+    };
+    let pkg: Value = std::fs::read_to_string(json)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    ["dependencies", "devDependencies", "peerDependencies"]
+        .iter()
+        .any(|k| pkg[k].get("@blueshift-gg/xark-wasm").is_some())
 }
 
 /// The crate a `target/xark/<name>/` directory belongs to.
@@ -146,17 +172,18 @@ pub fn run(args: ClientArgs) -> Result<()> {
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-    // The schema beside the client (`zk_kyc.schema.json`), which the client imports:
+    // The schema beside the client (`zk_kyc.schema.ts`), which the client imports:
     // written together, so the two always agree.
     let stem = out
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(&model.circuit);
-    let schema_file = format!("{stem}.schema.json");
-    let schema_out = out.with_file_name(&schema_file);
-    std::fs::write(&schema_out, serde_json::to_string_pretty(&schema)? + "\n")
+    let schema_stem = format!("{stem}.schema");
+    let (module, ext) = args.lang.schema_module(&model, &schema)?;
+    let schema_out = out.with_file_name(format!("{schema_stem}.{ext}"));
+    std::fs::write(&schema_out, module)
         .with_context(|| format!("writing {}", schema_out.display()))?;
-    std::fs::write(&out, args.lang.generate(&model, &schema_file)?)
+    std::fs::write(&out, args.lang.generate(&model, &schema_stem)?)
         .with_context(|| format!("writing {}", out.display()))?;
     println!(
         "{}",
@@ -167,30 +194,25 @@ pub fn run(args: ClientArgs) -> Result<()> {
             out.display()
         ))
     );
-    // What using it takes: the runtime it imports (this release's), the settings its
-    // schema import needs, and where to start.
+    // What using it takes: the runtime it imports (this release's), unless the project
+    // beside it already lists it, and where to start.
     let full = env!("CARGO_PKG_VERSION");
     let release = full.rsplit_once('.').map_or(full, |(mm, _)| mm);
     let name = ts::pascal(&model.circuit);
-    eprintln!(
-        "{}",
-        crate::style::next_steps(&[
-            (
-                format!("npm install @blueshift-gg/xark-wasm@{release}"),
-                "the runtime the client imports",
-            ),
-            (
-                "tsconfig: \"resolveJsonModule\": true".to_string(),
-                "it imports its schema; `module` esnext, nodenext or preserve",
-            ),
-            (
-                format!(
-                    "await {name}.prover(\"<url of target/xark/{}/>\")",
-                    model.circuit
-                ),
-                "then .prove(inputs); `.verifier(…)` to verify",
-            ),
-        ])
-    );
+    let mut steps = Vec::new();
+    if !lists_runtime(&out) {
+        steps.push((
+            format!("npm install @blueshift-gg/xark-wasm@{release}"),
+            "the runtime the client imports",
+        ));
+    }
+    steps.push((
+        format!(
+            "await {name}.prover(\"<url of target/xark/{}/>\")",
+            model.circuit
+        ),
+        "then .prove(inputs); `.verifier(…)` to verify",
+    ));
+    eprintln!("{}", crate::style::next_steps(&steps));
     Ok(())
 }

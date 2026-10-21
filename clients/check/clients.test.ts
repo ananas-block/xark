@@ -6,7 +6,7 @@ import { inject } from "vitest";
 import { examples } from "./setup";
 
 for (const name of examples) {
-  for (const file of [`${name}.ts`, `${name}.schema.json`]) {
+  for (const file of [`${name}.ts`, `${name}.schema.ts`]) {
     test(`${name}/${file} is current`, async () => {
       const generated = readFileSync(join(inject("generated"), file), "utf8");
       await expect(generated).toMatchFileSnapshot(`./${name}/${file}`);

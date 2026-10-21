@@ -475,7 +475,7 @@ mod tests {
         let clash: Vec<_> = m.exports.iter().map(|e| m.shares_field_name(e)).collect();
         assert_eq!(clash, [true, false]);
         // In TypeScript, `day` is only `P.day(value, d)`; `next` is a method too.
-        let ts = super::super::ts::generate(&m, "c.schema.json").unwrap();
+        let ts = super::super::ts::generate(&m, "c.schema.js").unwrap();
         assert!(ts.contains("export class PValue {"), "{ts}");
         assert!(
             ts.contains("  next(): PValue {\n    return P.next(this);"),
