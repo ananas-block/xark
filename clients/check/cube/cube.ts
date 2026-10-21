@@ -9,7 +9,7 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-import { Circuit, Field, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 export { Field };
 
 /** Every input of `cube`. */
@@ -53,7 +53,7 @@ export type CubeProver = Prover<CubeInputs, CubePublicInputs, CubePublicValues, 
 export type CubeVerifier = Verifier<CubePublicInputs, CubePublicValues, {}>;
 export type CubeProof = Proof<CubePublicValues>;
 
-function decodePublic(v: any): CubePublicValues {
+function decodePublic(v: Json<CubePublicValues>): CubePublicValues {
   return {
     result: new Field(v.result),
   };

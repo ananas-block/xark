@@ -9,7 +9,7 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-import { Circuit, Field, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 export { Field };
 
 /** Every input of `merkle`. */
@@ -57,7 +57,7 @@ export type MerkleProver = Prover<MerkleInputs, MerklePublicInputs, MerklePublic
 export type MerkleVerifier = Verifier<MerklePublicInputs, MerklePublicValues, {}>;
 export type MerkleProof = Proof<MerklePublicValues>;
 
-function decodePublic(v: any): MerklePublicValues {
+function decodePublic(v: Json<MerklePublicValues>): MerklePublicValues {
   return {
     root: new Field(v.root),
   };

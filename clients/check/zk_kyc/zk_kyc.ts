@@ -9,7 +9,7 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-import { Circuit, Field, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { Circuit, Field, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 export { Field };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */
@@ -141,25 +141,25 @@ export const Policy = {
    * with the other constructors.
    */
   on(today: Date): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.on", [today])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [today])));
   },
   /**
    * At least `years` old on `today`.
    */
   minAge(policy: Policy, years: number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.min_age", [policy, years])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_age", [policy, years])));
   },
   /**
    * Worth at least `amount`, in the attestor's unit.
    */
   minNetWorth(policy: Policy, amount: bigint | number): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.min_net_worth", [policy, amount])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_net_worth", [policy, amount])));
   },
   /**
    * A national of one of `allowed` (a country, or a list of them).
    */
   nationalities(policy: Policy, allowed: Country | readonly Country[]): PolicyValue & PolicyMethods {
-    return withPolicyMethods(decodePolicy(ZkKyc.call("Policy.nationalities", [policy, allowed])));
+    return withPolicyMethods(decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.nationalities", [policy, allowed])));
   },
 };
 
@@ -191,18 +191,18 @@ export const Identity = {
    * The issuer's commitment: Poseidon2 over every field, so adding one extends it.
    */
   commitment(identity: Identity): Field {
-    return new Field(ZkKyc.call("Identity.commitment", [identity]));
+    return new Field(ZkKyc.call<Json<Field>>("Identity.commitment", [identity]));
   },
 };
 
-function decodePublic(v: any): ZkKycPublicValues {
+function decodePublic(v: Json<ZkKycPublicValues>): ZkKycPublicValues {
   return {
     commitment: new Field(v.commitment),
     policy: decodePolicy(v.policy),
   };
 }
 
-function decodePolicy(v: any): PolicyValue {
+function decodePolicy(v: Json<PolicyValue>): PolicyValue {
   return {
     today: new Date(v.today),
     bornBy: new Date(v.bornBy),

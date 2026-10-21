@@ -21,6 +21,16 @@ export class Field {
   toJSON(): string;
 }
 
+/**
+ * A value as JSON from xark-wasm or `client.wasm`: a `Field`, `bigint`, `Date` or
+ * bytes as a string (decimal, `YYYY-MM-DD`, `0x`-hex), the rest as they are.
+ */
+export type Json<T> = T extends Field | bigint | Date | Uint8Array
+  ? string
+  : T extends object
+    ? { [K in keyof T]: Json<T[K]> }
+    : T;
+
 /** Bytes: a `Uint8Array`, byte values, or a `0x`-hex string. */
 export type Bytes = Uint8Array | readonly number[] | string;
 
@@ -124,7 +134,7 @@ export interface CircuitSpec<PublicValues> {
   /** Its `schema.json`. */
   schema: string;
   /** Revives decoded public inputs (dates, fields, bytes) from xark-wasm's JSON. */
-  decodePublic(json: any): PublicValues;
+  decodePublic(json: Json<PublicValues>): PublicValues;
   /** Whether it has Rust functions (`client.wasm`). */
   client: boolean;
 }
@@ -154,8 +164,11 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
   ): Promise<Verifier<PublicInputs, PublicValues, Structs>>;
   /** Load `client.wasm` yourself (a prover or verifier made from a URL does). */
   initClient(wasm: ClientWasm): Promise<void>;
-  /** Run one of the circuit's Rust functions (the generated client calls it). */
-  call(name: string, args: unknown[]): any;
+  /**
+   * Run one of the circuit's Rust functions (the generated client calls it): its
+   * result as JSON, `R` being the `Json<…>` of the function's return type.
+   */
+  call<R>(name: string, args: unknown[]): R;
 }
 
 /** JSON for xark-wasm (the generated client calls it). */

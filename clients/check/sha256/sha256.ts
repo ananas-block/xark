@@ -9,7 +9,7 @@
 // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the
 // schema, exactly as `xark prove --inputs` does.
 
-import { Circuit, Field, fromHex, type Bytes, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
+import { Circuit, Field, fromHex, type Bytes, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
 export { Field };
 
 /** Every input of `sha256`. */
@@ -56,7 +56,7 @@ export type Sha256Prover = Prover<Sha256Inputs, Sha256PublicInputs, Sha256Public
 export type Sha256Verifier = Verifier<Sha256PublicInputs, Sha256PublicValues, {}>;
 export type Sha256Proof = Proof<Sha256PublicValues>;
 
-function decodePublic(v: any): Sha256PublicValues {
+function decodePublic(v: Json<Sha256PublicValues>): Sha256PublicValues {
   return {
     digest: fromHex(v.digest),
   };
