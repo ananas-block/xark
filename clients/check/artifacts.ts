@@ -2,7 +2,7 @@
 // scripts/client-check.sh). An app gets these bytes however it ships them — a
 // bundler asset, `fetch`, a CDN — so the example tests take them from here.
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -17,6 +17,8 @@ export function artifacts(example: string) {
     provingKey: read("pk.bin"),
     verifyingKey: read("vk.bin"),
     sources: readFileSync(join(dir, "sources.json"), "utf8"),
+    /** `client.wasm`: the crate's `#[xark::export]` functions, when it has some. */
+    client: existsSync(join(dir, "client.wasm")) ? read("client.wasm") : undefined,
   };
 }
 

@@ -18,13 +18,17 @@
 //!
 //! `#[derive(Input)]` — see [`derive_input`] — implements `xark::Input` for a struct
 //! (its fields in order) and `xark::Enum` for a fieldless enum.
+//!
+//! `#[xark::export]` — see [`export`] — makes an `impl` block's methods callable from
+//! generated clients.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, ExprLit, FnArg, GenericArgument,
-    ItemFn, Lit, LitInt, LitStr, Pat, PathArguments, Type, parse_macro_input,
+    ImplItem, ItemFn, ItemImpl, Lit, LitInt, LitStr, Pat, PathArguments, ReturnType, Type,
+    TypeImplTrait, TypeParamBound, parse_macro_input,
 };
 
 #[proc_macro_attribute]
@@ -754,4 +758,225 @@ fn eval_usize_lit(e: &Expr) -> syn::Result<usize> {
             "array lengths must be integer literals",
         )),
     }
+}
+
+/// `#[xark::export]` on an inherent `impl` block: its `pub fn`s become functions a
+/// generated client (`xark client`) calls, running this Rust code. Write a
+/// constructor or helper once, here:
+///
+/// ```ignore
+/// #[xark::export]
+/// impl Policy {
+///     /// A check on `today` that any holder passes.
+///     pub fn on(today: impl Into<Date>) -> Policy { … }
+///     /// At least `years` old on `today`.
+///     pub fn min_age(self, years: u16) -> Policy { … }
+/// }
+/// ```
+///
+/// and TypeScript gets `Policy.on(new Date()).minAge(18)`, typed from the signature,
+/// its docs from these comments. Each parameter and the result must be an
+/// `xark::Input` type (`Field`, `uN`, `bool`, `Date`, a derived struct, …; `impl
+/// Into<T>` takes a `T`); the receiver may be `self` or `&self`.
+///
+/// The block itself compiles as written. In a client build (`--cfg xark_client`) each
+/// method also gets a wasm export taking and returning JSON (see `xark::client`), and a
+/// description in the module's `xark.exports` section for the client generator.
+#[proc_macro_attribute]
+pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new_spanned(TokenStream2::from(attr), "`#[export]` takes no arguments")
+            .to_compile_error()
+            .into();
+    }
+    let block = parse_macro_input!(item as ItemImpl);
+    match export_impl(&block) {
+        Ok(ts) => ts.into(),
+        Err(e) => {
+            let e = e.to_compile_error();
+            quote! { #block #e }.into()
+        }
+    }
+}
+
+fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
+    if block.trait_.is_some() || !block.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &block.self_ty,
+            "#[xark::export] goes on a plain inherent `impl Type { .. }` block",
+        ));
+    }
+    let self_ty = &block.self_ty;
+    let type_name = type_string(self_ty);
+    let mut items = Vec::new();
+    for item in &block.items {
+        let ImplItem::Fn(f) = item else { continue };
+        if !matches!(f.vis, syn::Visibility::Public(_)) {
+            continue;
+        }
+        let name = &f.sig.ident;
+        let cfgs: Vec<&Attribute> = f
+            .attrs
+            .iter()
+            .filter(|a| a.path().is_ident("cfg"))
+            .collect();
+        let doc = f
+            .attrs
+            .iter()
+            .filter_map(|a| match &a.meta {
+                syn::Meta::NameValue(nv) if nv.path.is_ident("doc") => match &nv.value {
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Str(s), ..
+                    }) => Some(s.value().trim().to_string()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut receiver = None;
+        let mut decode = Vec::new();
+        let mut call_args = Vec::new();
+        let mut params = Vec::new();
+        for input in &f.sig.inputs {
+            let i = decode.len();
+            match input {
+                FnArg::Receiver(r) => {
+                    if r.mutability.is_some() && r.reference.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            r,
+                            "an exported method takes `self` or `&self`, not `&mut self`",
+                        ));
+                    }
+                    receiver = Some(if r.reference.is_some() {
+                        "ref"
+                    } else {
+                        "value"
+                    });
+                    decode
+                        .push(quote! { let __self: #self_ty = ::xark::client::arg(__args, #i)?; });
+                    call_args.push(if r.reference.is_some() {
+                        quote! { &__self }
+                    } else {
+                        quote! { __self }
+                    });
+                }
+                FnArg::Typed(pt) => {
+                    let Pat::Ident(pi) = &*pt.pat else {
+                        return Err(syn::Error::new_spanned(
+                            &pt.pat,
+                            "an exported method's parameters are plain names",
+                        ));
+                    };
+                    let ty = into_target(&pt.ty).unwrap_or(&pt.ty);
+                    let v = format_ident!("__a{i}");
+                    decode.push(quote! { let #v: #ty = ::xark::client::arg(__args, #i)?; });
+                    call_args.push(quote! { #v });
+                    params.push(format!(
+                        "{{\"name\":{},\"type\":{}}}",
+                        json_str(&pi.ident.to_string()),
+                        json_str(&type_string(ty)),
+                    ));
+                }
+            }
+        }
+        let returns = match &f.sig.output {
+            ReturnType::Type(_, t) if !is_ident(t, "Self") => type_string(t),
+            ReturnType::Type(..) => type_name.clone(),
+            ReturnType::Default => {
+                return Err(syn::Error::new_spanned(
+                    &f.sig,
+                    "an exported method returns a value (an `xark::Input` type)",
+                ));
+            }
+        };
+        let export = format!("{type_name}.{name}");
+        let desc = format!(
+            "{{\"export\":{},\"type\":{},\"name\":{},\"self\":{},\"params\":[{}],\"returns\":{},\"doc\":{}}}\n",
+            json_str(&export),
+            json_str(&type_name),
+            json_str(&name.to_string()),
+            receiver.map_or("null".to_string(), json_str),
+            params.join(","),
+            json_str(&returns),
+            json_str(&doc),
+        );
+        let bytes = syn::LitByteStr::new(desc.as_bytes(), name.span());
+        let len = desc.len();
+        let shim = format_ident!("__xark_export_{}_{}", ident_part(&type_name), name);
+        let stat = format_ident!("__XARK_EXPORT_{}_{}", ident_part(&type_name), name);
+        let export_lit = LitStr::new(&export, name.span());
+        items.push(quote! {
+            #(#cfgs)*
+            #[doc(hidden)]
+            #[allow(non_snake_case)]
+            #[unsafe(export_name = #export_lit)]
+            pub extern "C" fn #shim(__ptr: *const u8, __len: usize) -> u64 {
+                ::xark::client::call(__ptr, __len, |__args| {
+                    #(#decode)*
+                    ::xark::client::to_json(&<#self_ty>::#name(#(#call_args),*))
+                })
+            }
+            #(#cfgs)*
+            #[unsafe(link_section = "xark.exports")]
+            #[used]
+            #[allow(non_upper_case_globals)]
+            static #stat: [u8; #len] = *#bytes;
+        });
+    }
+    Ok(quote! {
+        #block
+        ::xark::__client_export! {
+            #(#items)*
+        }
+    })
+}
+
+/// `T` of an `impl Into<T>` parameter.
+fn into_target(ty: &Type) -> Option<&Type> {
+    let Type::ImplTrait(TypeImplTrait { bounds, .. }) = ty else {
+        return None;
+    };
+    bounds.iter().find_map(|b| match b {
+        TypeParamBound::Trait(t) => {
+            let seg = t.path.segments.last()?;
+            if seg.ident != "Into" {
+                return None;
+            }
+            match &seg.arguments {
+                PathArguments::AngleBracketed(ab) => match ab.args.first()? {
+                    GenericArgument::Type(t) => Some(t),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => None,
+    })
+}
+
+/// A type as written, without spaces: `Date`, `Choice<Country>`, `[u8;4]`.
+fn type_string(ty: &Type) -> String {
+    quote!(#ty).to_string().replace(' ', "")
+}
+
+/// A type name as an identifier fragment (`Choice<Country>` → `Choice_Country_`).
+fn ident_part(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }

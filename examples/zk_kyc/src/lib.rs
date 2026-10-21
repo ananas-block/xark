@@ -22,6 +22,7 @@ pub struct Identity {
     pub salt: Field,
 }
 
+#[xark::export]
 impl Identity {
     /// The issuer's commitment: Poseidon2 over every field, so adding one extends it.
     pub fn commitment(&self) -> Field {
@@ -47,13 +48,14 @@ pub struct Policy {
     pub allowed: Bitfield<Country>,
 }
 
+#[xark::export]
 impl Policy {
     /// A check on `today` that any holder with a valid document passes: tighten it
     /// with the other constructors.
     pub fn on(today: impl Into<Date>) -> Policy {
         Policy {
             today: today.into(),
-            born_by: Date::from_raw(99_999_999), // after every date
+            born_by: Date::MAX,
             min_net_worth: 0,
             allowed: Bitfield::all(),
         }

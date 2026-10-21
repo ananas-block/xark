@@ -29,6 +29,8 @@ ark-bn254 = { version = "0.6", default-features = false, features = ["scalar_fie
 ark-ff = { version = "0.6", default-features = false }
 # Host-only: big-integer hints (bignum mul/inverse) computed natively.
 num-bigint = "0.4"
+# Host-only: values in their natural JSON forms, for `#[xark::export]` (`client.rs`).
+serde_json = "1"
 
 # The host-side prover (`xark::prover`): what `#[circuit]`'s validator and the
 # input traits use, so a circuit crate needs no other xark dependency. Parallel
@@ -38,6 +40,13 @@ num-bigint = "0.4"
 xark-prover = { path = "../prover", version = "0.3.0" }
 [target.'cfg(all(not(xark), target_arch = "wasm32"))'.dependencies]
 xark-prover = { path = "../prover", version = "0.3.0", default-features = false }
+
+# The client build (`--cfg xark_client`: the crate's host code as a plain wasm module
+# for `xark client`'s generated clients) never proves, but the prover's `rand` still
+# links `getrandom`, which needs a source on `wasm32-unknown-unknown`: a custom one
+# that refuses (see `client.rs`).
+[target.'cfg(xark_client)'.dependencies]
+getrandom = { version = "0.2", features = ["custom"] }
 
 [dev-dependencies]
 xark-test-harness = { path = "../test-harness", version = "0.3.0" }
@@ -49,7 +58,7 @@ num-bigint = "0.4"
 # `xark` is set only by the circuit build; declare it so rustc's `unexpected_cfgs`
 # lint (1.80+) stays quiet.
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xark)', 'cfg(xark_client)'] }
 
 # The frontend runs inside the test process: optimize it even in test builds.
 [profile.dev.package.xark-frontend]

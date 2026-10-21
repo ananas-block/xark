@@ -336,6 +336,65 @@ impl Default for BuildOptions {
     }
 }
 
+/// Build `crate_dir`'s host code as a plain wasm module for generated clients (the
+/// "client build": `--cfg xark_client`, so `#[xark::export]` methods become exports;
+/// see `xark::client`), into `target_dir`. Its wasm bytes.
+pub fn build_client(
+    crate_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<Vec<u8>, String> {
+    let name = package_name(crate_dir)?;
+    ensure_wasm_target(crate_dir)?;
+    let status = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()))
+        .current_dir(crate_dir)
+        .env("RUSTFLAGS", "--cfg xark_client")
+        .env("CARGO_TARGET_DIR", target_dir)
+        .args([
+            "rustc",
+            "--quiet",
+            "--release",
+            "--lib",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--crate-type",
+            "cdylib",
+            "--config",
+            "profile.release.panic=\"abort\"",
+            // Small: a client downloads it (zk_kyc's: 250 KB, 100 KB gzipped). A call
+            // is a few microseconds at any level.
+            "--config",
+            "profile.release.opt-level=\"z\"",
+            "--config",
+            "profile.release.lto=true",
+            "--config",
+            "profile.release.codegen-units=1",
+            "--config",
+            "profile.release.strip=true",
+        ])
+        .status()
+        .map_err(|e| format!("running cargo: {e}"))?;
+    if !status.success() {
+        return Err("cargo build of the client module failed".into());
+    }
+    let wasm = target_dir
+        .join("wasm32-unknown-unknown/release")
+        .join(format!("{}.wasm", name.replace('-', "_")));
+    std::fs::read(&wasm).map_err(|e| format!("reading {}: {e}", wasm.display()))
+}
+
+/// The contents of `wasm`'s custom sections named `name`, back to back.
+pub fn custom_section(wasm: &[u8], name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for payload in wasmparser::Parser::new(0).parse_all(wasm).flatten() {
+        if let wasmparser::Payload::CustomSection(c) = payload
+            && c.name() == name
+        {
+            out.extend_from_slice(c.data());
+        }
+    }
+    out
+}
+
 /// The `[package]` name in `crate_dir/Cargo.toml`.
 fn package_name(crate_dir: &std::path::Path) -> Result<String, String> {
     let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml"))

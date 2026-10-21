@@ -65,6 +65,14 @@ gadgets now check more:
   date, nationality, net worth) checked against a public `Policy`, built with
   `Policy::on(today).min_age(18).min_net_worth(500_000).nationalities([US, GB])`
   (`Date::years_before` gives the birth-date cutoff).
+- **Rust constructors and helpers in generated clients.** `#[xark::export]` on an
+  `impl` block makes its methods client functions: `xark client` builds the
+  crate's host code as `client.wasm` (no JS glue; zk_kyc's is 250 KB, 100 KB
+  gzipped) and types each from its signature and doc comment, so
+  `Policy.on(day).minAge(18)` and `Identity.commitment(id)` in TypeScript run the
+  crate's Rust. Values cross as JSON in their natural forms (`xark::client`), a
+  panic is an exception with its message. `Date::MIN`/`Date::MAX` give "any date"
+  limits a client can read back (a raw `99999999` isn't a day).
 - **Packing narrow values into a word is free.** An `|` (or `^`) of values whose
   bits can't overlap (`c << 16 | b << 8 | a`) is now their sum, and reading a piece
   back (`>>`, a mask, `/` or `%` by a power of two, `as u8`, a byte through

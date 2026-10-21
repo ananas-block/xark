@@ -51,6 +51,26 @@ pub mod types;
 pub use types::InvalidValue;
 pub use types::{Bitfield, Choice, Date, Text};
 
+/// Rust functions a generated client calls (`#[xark::export]`). Host builds only.
+#[cfg(not(xark))]
+pub mod client;
+
+/// The client build's exported items, or nothing in any other build (so a circuit
+/// crate never names the `xark_client` cfg itself). Used by `#[xark::export]`.
+#[cfg(xark_client)]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __client_export {
+    ($($item:item)*) => { $($item)* };
+}
+
+#[cfg(not(xark_client))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __client_export {
+    ($($item:item)*) => {};
+}
+
 /// ISO 3166-1 [`Country`] codes.
 pub mod country;
 pub use country::Country;
@@ -78,7 +98,7 @@ pub mod prelude {
     pub use crate::country::Country;
     pub use crate::input::{Enum, Input};
     pub use crate::types::{Bitfield, Choice, Date, Text};
-    pub use xark_macros::{Input, circuit};
+    pub use xark_macros::{Input, circuit, export};
 }
 
 // Same surface as `prelude`, re-exported at the crate root so both
@@ -120,4 +140,4 @@ pub use crate::lang::__xark_require_eq_scalar;
 // `#[derive(Input)]`: `xark::Input` for a struct (its fields in order; with
 // `#[input(number(bits = B))]` or `#[input(bytes)]` a standard encoding and its host
 // conversions), `xark::Enum` for a fieldless enum.
-pub use xark_macros::{Input, circuit};
+pub use xark_macros::{Input, circuit, export};

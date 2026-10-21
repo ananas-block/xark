@@ -259,3 +259,45 @@ fn host_schema_is_the_built_schema() {
     let host: serde_json::Value = serde_json::from_str(&case::SchemaMatchInputs::schema()).unwrap();
     assert_eq!(built, host);
 }
+
+/// `#[xark::export]` leaves the block as written outside a client build, and its
+/// values cross in their natural JSON forms (`xark::client`), as a client sees them.
+mod exported {
+    use xark::prelude::*;
+
+    #[derive(Clone, Copy, Debug, Input)]
+    pub struct Window {
+        pub from: Date,
+        pub to: Date,
+    }
+
+    #[xark::export]
+    impl Window {
+        /// From `from` on, with no end.
+        pub fn starting(from: impl Into<Date>) -> Window {
+            Window {
+                from: from.into(),
+                to: Date::MAX,
+            }
+        }
+        pub fn until(self, to: Date) -> Self {
+            Window { to, ..self }
+        }
+        fn private_helper(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn exported_blocks_are_plain_rust() {
+        let w = Window::starting("2026-10-20").until(Date::new(2027, 1, 1));
+        assert!(w.private_helper());
+        let json = xark::client::to_json(&w).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "from": "2026-10-20", "to": "2027-01-01" })
+        );
+        let back: Window = xark::client::from_json(&json).unwrap();
+        assert_eq!(xark::client::to_json(&back).unwrap(), json);
+    }
+}

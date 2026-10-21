@@ -68,6 +68,24 @@ pub struct Model {
     pub enums: BTreeMap<String, Vec<String>>,
     /// The `schema.json` text, for xark-wasm.
     pub schema: String,
+    /// The crate's `#[xark::export]` methods, run from `client.wasm`.
+    pub exports: Vec<Export>,
+}
+
+/// A Rust method a client calls (`#[xark::export]`).
+#[derive(Clone, Debug)]
+pub struct Export {
+    /// The wasm export (`Policy.min_age`).
+    pub export: String,
+    /// The type it's defined on, and its own name (`Policy`, `min_age`).
+    pub ty: String,
+    pub name: String,
+    /// `self` (`Some(false)`), `&self` (`Some(true)`), or none.
+    pub receiver: Option<bool>,
+    pub params: Vec<Field>,
+    pub returns: Ty,
+    /// Its doc comment.
+    pub doc: String,
 }
 
 impl Model {
@@ -87,6 +105,7 @@ impl Model {
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             schema: serde_json::to_string(schema)?,
+            exports: Vec::new(),
         };
         for i in schema["inputs"].as_array().into_iter().flatten() {
             let f = m.field(schema, i)?;
@@ -178,10 +197,116 @@ impl Model {
         })
     }
 
+    /// Add the exported methods described by `lines` (the client module's
+    /// `xark.exports` section: one JSON object per line), resolving each type written
+    /// in Rust against the circuit's input types.
+    pub fn add_exports(&mut self, schema: &Value, lines: &str) -> Result<()> {
+        for line in lines.lines().filter(|l| !l.trim().is_empty()) {
+            let d: Value = serde_json::from_str(line).context("an `xark.exports` entry")?;
+            let s = |k: &str| d[k].as_str().unwrap_or_default().to_string();
+            let what = format!("`{}::{}`", s("type"), s("name"));
+            let params = d["params"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    let rust = p["type"].as_str().unwrap_or_default().to_string();
+                    Ok(Field {
+                        name: p["name"].as_str().unwrap_or_default().to_string(),
+                        ty: self.rust_ty(schema, &rust).with_context(|| what.clone())?,
+                        rust,
+                    })
+                })
+                .collect::<Result<_>>()?;
+            let returns = self
+                .rust_ty(schema, &s("returns"))
+                .with_context(|| what.clone())?;
+            // The receiver's type resolves too (an input struct, so its interface exists).
+            if !d["self"].is_null() {
+                self.rust_ty(schema, &s("type"))
+                    .with_context(|| what.clone())?;
+            }
+            self.exports.push(Export {
+                export: s("export"),
+                ty: s("type"),
+                name: s("name"),
+                receiver: d["self"].as_str().map(|r| r == "ref"),
+                params,
+                returns,
+                doc: s("doc"),
+            });
+        }
+        Ok(())
+    }
+
+    /// A type as written in Rust (`u16`, `[u8;4]`, `Choice<Country>`), as a standard
+    /// type: a primitive, or one of the circuit's input types by name.
+    fn rust_ty(&mut self, schema: &Value, rust: &str) -> Result<Ty> {
+        let ty = match rust {
+            "Field" => serde_json::json!("field"),
+            "bool" => serde_json::json!("bool"),
+            r if r.starts_with('u') && r[1..].parse::<u64>().is_ok() => {
+                serde_json::json!({ "uint": r[1..].parse::<u64>()? })
+            }
+            r if r.starts_with('[') && r.ends_with(']') => {
+                let (of, len) = r[1..r.len() - 1]
+                    .rsplit_once(';')
+                    .with_context(|| format!("`{r}`"))?;
+                return Ok(match self.rust_ty(schema, of)? {
+                    Ty::Uint(8) => Ty::Bytes {
+                        of: None,
+                        len: Some(len.parse()?),
+                    },
+                    t => Ty::Array(Box::new(t), len.parse()?),
+                });
+            }
+            r if r.starts_with('(') && r.ends_with(')') => {
+                let inner = &r[1..r.len() - 1];
+                return Ok(Ty::Tuple(
+                    split_top(inner)
+                        .into_iter()
+                        .map(|t| self.rust_ty(schema, t))
+                        .collect::<Result<_>>()?,
+                ));
+            }
+            r if schema["types"]
+                .get(r)
+                .is_some_and(|d| d.get("enum").is_none()) =>
+            {
+                serde_json::json!({ "ref": r })
+            }
+            r => bail!(
+                "`{r}` isn't one of the circuit's input types: an exported method takes and \
+                 returns those (or `Field`, `uN`, `bool`, arrays and tuples of them)"
+            ),
+        };
+        self.ty(schema, &ty)
+    }
+
     /// The public inputs, in declaration order.
     pub fn public(&self) -> impl Iterator<Item = &Field> {
         self.inputs.iter().filter(|(_, p)| *p).map(|(f, _)| f)
     }
+}
+
+/// `A,B<C,D>,[E;2]` split at its top-level commas.
+fn split_top(s: &str) -> Vec<&str> {
+    let (mut out, mut depth, mut start) = (Vec::new(), 0i32, 0);
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' | '[' => depth += 1,
+            '>' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
 }
 
 /// A byte-encoded named type's length, when fixed.
@@ -259,5 +384,47 @@ mod tests {
             }
         );
         assert!(!m.structs.contains_key("Fp"));
+    }
+
+    #[test]
+    fn resolves_exported_signatures() {
+        let schema: Value = serde_json::from_str(
+            r#"{"version": 2, "circuit": "c",
+              "inputs": [{"name": "p", "visibility": "public", "type": {"ref": "P"}}],
+              "types": {
+                "P": {"struct": [{"name": "day", "type": {"ref": "Date"}}]},
+                "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}}},
+              "public_inputs": ["p.day"]}"#,
+        )
+        .unwrap();
+        let mut m = Model::new(&schema).unwrap();
+        m.add_exports(
+            &schema,
+            r#"{"export":"P.on","type":"P","name":"on","self":null,"params":[{"name":"d","type":"Date"},{"name":"k","type":"(u8,[u8;2])"}],"returns":"P","doc":"x"}
+{"export":"P.f","type":"P","name":"f","self":"ref","params":[],"returns":"Field","doc":""}"#,
+        )
+        .unwrap();
+        let on = &m.exports[0];
+        assert_eq!(on.params[0].ty, Ty::Date);
+        assert_eq!(
+            on.params[1].ty,
+            Ty::Tuple(vec![
+                Ty::Uint(8),
+                Ty::Bytes {
+                    of: None,
+                    len: Some(2)
+                }
+            ])
+        );
+        assert_eq!(
+            (&on.returns, m.exports[1].receiver),
+            (&Ty::Struct("P".into()), Some(true))
+        );
+        let bad = r#"{"export":"P.g","type":"P","name":"g","self":null,"params":[{"name":"x","type":"Nope"}],"returns":"P","doc":""}"#;
+        let err = format!("{:#}", m.add_exports(&schema, bad).unwrap_err());
+        assert!(
+            err.contains("`P::g`") && err.contains("`Nope` isn't one of the circuit's input types"),
+            "{err}"
+        );
     }
 }

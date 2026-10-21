@@ -214,18 +214,39 @@ export interface Identity {
 
 ```ts
 import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
-import { Country, ZkKyc } from "./zk_kyc";
+import { Country, Identity, Policy, ZkKyc } from "./zk_kyc";
 
 const kyc = await ZkKyc.load(wasm, "/circuits/zk_kyc/"); // a copy of target/xark/zk_kyc/
 // (or `new ZkKyc(wasm, { circuit, provingKey, verifyingKey, sources })` with bytes you have)
 const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt };
-// The issuer's commitment, hashed as the circuit hashes it (`id.commitment()`).
-const commitment = wasm.poseidon2(kyc.fields("Identity", id).map(String));
-const policy = { today: new Date(), bornBy: new Date("2008-10-20"), minNetWorth: 500_000, allowed: [Country.US, Country.GB, "FR", "DE"] };
+const commitment = Identity.commitment(id); // the circuit's own Rust (below)
+const policy = Policy.on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
 const { proof, publicInputs } = kyc.prove({ id, commitment, policy });
 publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
 kyc.verify(proof, publicInputs); // true
 ```
+
+`Policy.on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
+not a TypeScript copy of it: `#[xark::export]` on an `impl` block makes its methods
+client functions, typed from their signatures and documented with their doc
+comments.
+
+```rust
+#[xark::export]
+impl Policy {
+    /// A check on `today` that any holder with a valid document passes.
+    pub fn on(today: impl Into<Date>) -> Policy { … }
+    /// At least `years` old on `today`.
+    pub fn min_age(self, years: u16) -> Policy { … }
+}
+```
+
+`xark client` builds the crate's host code once more as `client.wasm` (beside
+`circuit.xbc`; `load` fetches it, or call `initClient(bytes)`), with no JS glue, and
+each call runs it: values cross in their natural forms, a Rust panic arrives as an
+exception with its message. Parameters and results are any `Input` type. A method
+that takes `self` also chains on the values these functions return, unless it shares
+a field's name (`Policy.minNetWorth(policy, 500_000)` then).
 
 The client holds no encoding logic of its own: xark-wasm encodes values against
 the embedded schema with the same Rust code as `xark prove --inputs`, so the two

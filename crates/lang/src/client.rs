@@ -1,0 +1,169 @@
+//! Rust functions a generated client calls: `#[xark::export]` on an `impl` block
+//! makes its methods (constructors such as `Policy::on`, helpers such as
+//! `Identity::commitment`) callable from a client, running this same code.
+//!
+//! `xark client` builds the circuit crate's host code a second time, as a plain wasm
+//! module (`--cfg xark_client`, no JS glue), and generates typed wrappers that call
+//! it. Values cross as JSON in their natural forms (a date as `"YYYY-MM-DD"`, a
+//! country as `"US"`), converted here with the same codec as circuit inputs
+//! ([`from_json`], [`to_json`]), so any [`Input`] type can be a parameter or result.
+//!
+//! The wasm ABI (client builds only): `xark_alloc(len) -> ptr`, `xark_free(ptr, len)`,
+//! and per exported method `"<Type>.<method>"(ptr, len) -> u64`, taking the arguments
+//! as a JSON array and returning `ptr << 32 | len` of `{"ok": value}` or
+//! `{"err": message}`. A panic traps; `xark_panic()` then returns its message the
+//! same way.
+
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use serde_json::{Value, json};
+
+use crate::input::{Input, Type, from_fields, leaf_names, schema_json, write_fields};
+use crate::lang::Field;
+
+/// The one-input schema describing a `ty` value named `v`.
+fn schema(ty: Type) -> Result<xark_prover::schema::Schema, String> {
+    xark_prover::schema::Schema::parse(&schema_json("value", &[("v", true, ty)]))
+}
+
+/// A `T` from its natural JSON form, as a client gives it (and as `--inputs` takes
+/// a circuit input of that type).
+pub fn from_json<T: Input>(value: &Value) -> Result<T, String> {
+    let leaves = schema(T::TYPE)?.leaves(&json!({ "v": value }))?;
+    let fields: Vec<Field> = leaf_names(&T::TYPE, "v")
+        .iter()
+        .map(|n| {
+            leaves
+                .get(n)
+                .copied()
+                .map(Field::from)
+                .ok_or_else(|| format!("missing `{n}`"))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(from_fields(&fields))
+}
+
+/// `value` in its natural JSON form, as a client reads it back (struct fields
+/// `camelCase`, as generated clients name them; [`from_json`] takes either case).
+pub fn to_json<T: Input>(value: &T) -> Result<Value, String> {
+    let mut fields = alloc::vec![Field::zero(); T::LEN];
+    write_fields(value, &mut fields);
+    let frs: Vec<ark_bn254::Fr> = fields.into_iter().map(Into::into).collect();
+    let mut out = schema(T::TYPE)?.decode_public(&frs, true)?;
+    Ok(out["v"].take())
+}
+
+/// Argument `i` of an exported call, as a `T`.
+#[doc(hidden)]
+pub fn arg<T: Input>(args: &[Value], i: usize) -> Result<T, String> {
+    let v = args
+        .get(i)
+        .ok_or_else(|| format!("expected at least {} arguments, got {}", i + 1, args.len()))?;
+    from_json(v).map_err(|e| format!("argument {}: {e}", i + 1))
+}
+
+#[cfg(xark_client)]
+pub use abi::call;
+
+#[cfg(xark_client)]
+mod abi {
+    extern crate std;
+
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+    use std::sync::{Mutex, Once};
+
+    use serde_json::{Value, json};
+
+    static PANIC: Mutex<Option<String>> = Mutex::new(None);
+    static HOOK: Once = Once::new();
+
+    /// `bytes`, leaked, as `ptr << 32 | len` for the host to read and `xark_free`.
+    fn hand_over(bytes: Vec<u8>) -> u64 {
+        let bytes = bytes.into_boxed_slice();
+        let len = bytes.len();
+        let ptr = alloc::boxed::Box::into_raw(bytes) as *mut u8 as usize;
+        (ptr as u64) << 32 | len as u64
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn xark_alloc(len: usize) -> *mut u8 {
+        alloc::boxed::Box::into_raw(alloc::vec![0u8; len].into_boxed_slice()) as *mut u8
+    }
+
+    /// # Safety
+    /// `ptr` and `len` are a buffer from `xark_alloc` or a call's result.
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn xark_free(ptr: *mut u8, len: usize) {
+        drop(unsafe { alloc::boxed::Box::from_raw(core::ptr::slice_from_raw_parts_mut(ptr, len)) });
+    }
+
+    /// The last panic's message (after a call trapped).
+    #[unsafe(no_mangle)]
+    pub extern "C" fn xark_panic() -> u64 {
+        let msg = PANIC
+            .lock()
+            .ok()
+            .and_then(|mut p| p.take())
+            .unwrap_or_default();
+        hand_over(msg.into_bytes())
+    }
+
+    /// Run an exported method: decode the JSON argument array at `ptr`, call `f`,
+    /// and hand back `{"ok": result}` or `{"err": message}`.
+    #[doc(hidden)]
+    pub fn call(
+        ptr: *const u8,
+        len: usize,
+        f: impl FnOnce(&[Value]) -> Result<Value, String>,
+    ) -> u64 {
+        HOOK.call_once(|| {
+            std::panic::set_hook(alloc::boxed::Box::new(|info| {
+                if let Ok(mut p) = PANIC.lock() {
+                    *p = Some(info.payload_as_str().unwrap_or("panic").to_string());
+                }
+            }))
+        });
+        // SAFETY: the host wrote `len` bytes at `ptr` (from `xark_alloc`).
+        let input = unsafe { core::slice::from_raw_parts(ptr, len) };
+        let out = match serde_json::from_slice::<Vec<Value>>(input) {
+            Ok(args) => match f(&args) {
+                Ok(v) => json!({ "ok": v }),
+                Err(e) => json!({ "err": e }),
+            },
+            Err(e) => json!({ "err": alloc::format!("arguments: {e}") }),
+        };
+        hand_over(serde_json::to_vec(&out).unwrap_or_default())
+    }
+
+    // `rand` (through the prover) links `getrandom`, which needs a source here; a
+    // client never proves, so any use is refused.
+    fn refuse(_: &mut [u8]) -> Result<(), getrandom::Error> {
+        Err(getrandom::Error::UNSUPPORTED)
+    }
+    getrandom::register_custom_getrandom!(refuse);
+}
+
+#[cfg(all(test, not(xark)))]
+mod tests {
+    use super::*;
+    use crate::{Bitfield, Country, Date};
+
+    #[test]
+    fn values_round_trip_through_json() {
+        let d: Date = from_json(&json!("2026-10-20")).unwrap();
+        assert_eq!(to_json(&d).unwrap(), json!("2026-10-20"));
+        let set: Bitfield<Country> = from_json(&json!(["US", "GB"])).unwrap();
+        assert_eq!(to_json(&set).unwrap(), json!(["GB", "US"]));
+        let pair: (u16, Field) = from_json(&json!([7, "9"])).unwrap();
+        assert_eq!(to_json(&pair).unwrap(), json!([7, "9"]));
+        assert!(from_json::<Date>(&json!("2023-02-29")).is_err());
+        assert!(
+            arg::<u8>(&[json!(1)], 1)
+                .unwrap_err()
+                .contains("at least 2 arguments")
+        );
+    }
+}

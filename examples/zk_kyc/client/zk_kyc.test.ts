@@ -2,9 +2,10 @@
 // scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
 import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts } from "../../../clients/check/artifacts";
-import { Country, type Identity, type Policy, ZkKyc } from "./zk_kyc";
+import { Country, Identity, initClient, Policy, ZkKyc } from "./zk_kyc";
 
 const kyc = new ZkKyc(wasm, artifacts("zk_kyc"));
+beforeAll(() => initClient(artifacts("zk_kyc").client!));
 
 // The holder's credential, in the circuit's own types: `Text`, `Date`, a `Country`.
 // A `Date` is read as its UTC day: `new Date("1990-01-01")` is 1990-01-01 anywhere.
@@ -19,13 +20,31 @@ const id: Identity = {
 // The issuer's Poseidon2 commitment over `id` (the Rust `id.commitment()`; see the
 // test below, which computes it here).
 const commitment = 14027122776066679586866430602253390234316410519759139985776472857287265910584n;
-// 18 or older on 2026-10-20, worth ≥ 500k, a document valid that day, from US/GB/FR/DE.
+// 18 or older on 2026-10-20, worth ≥ 500k, a document valid that day, from US/GB/FR/DE
+// (as data; the test below builds it with the Rust constructors).
 const policy: Policy = {
   today: new Date("2026-10-20"),
   bornBy: new Date("2008-10-20"),
   minNetWorth: 500_000,
   allowed: [Country.US, Country.GB, "FR", "DE"], // constants or names
 };
+
+test("builds the policy and the commitment with the circuit's Rust code", () => {
+  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[xark::export]`.
+  // (`minNetWorth` is also a field, so it isn't a method on the value: `Policy.minNetWorth(…)`.)
+  const adult = Policy.on(new Date("2026-10-20")).minAge(18);
+  const built = Policy.minNetWorth(adult, 500_000).nationalities(["US", "GB", "FR", "DE"]);
+  expect(built).toEqual({ ...policy, minNetWorth: 500_000n, allowed: ["DE", "FR", "GB", "US"] });
+  expect(Policy.minAge(policy, 21).bornBy).toEqual(new Date("2005-10-20"));
+  expect(Identity.commitment(id)).toBe(commitment);
+  const { proof, publicInputs } = kyc.prove({ id, commitment: Identity.commitment(id), policy: built });
+  expect(kyc.verify(proof, publicInputs)).toBe(true);
+  // A Rust panic is an exception with its message, and the module keeps working.
+  expect(() => built.minAge(3000)).toThrow(/a date before year 0/);
+  expect(Policy.on(new Date("2024-02-29")).minAge(1).bornBy).toEqual(new Date("2023-02-28"));
+  // Values are checked on the way in, as for `prove`.
+  expect(() => Policy.on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(/"XX" is not a Country/);
+});
 
 test("countries are typed", () => {
   expect(Country.US).toBe("US");

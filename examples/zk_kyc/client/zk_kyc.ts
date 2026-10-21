@@ -133,6 +133,8 @@ export interface ZkKycKeys {
   provingKey?: Uint8Array;
   verifyingKey?: Uint8Array;
   sources?: string;
+  /** `client.wasm`: the circuit's `#[xark::export]` functions (`load` runs `initClient`). */
+  client?: Uint8Array;
 }
 
 /** Each part of `ZkKycKeys` as `xark build` and `xark setup` name its file. */
@@ -141,6 +143,7 @@ const FILES = {
   provingKey: "pk.bin",
   verifyingKey: "vk.bin",
   sources: "sources.json",
+  client: "client.wasm",
 } as const;
 
 /**
@@ -167,11 +170,12 @@ export class ZkKyc {
    * `target/xark/zk_kyc/` (relative to the page in a browser):
    * `await ZkKyc.load(wasm, "/circuits/zk_kyc/")`. `only` fetches less
    * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
+   * `client.wasm` is loaded with `initClient`, for the Rust functions.
    */
   static async load(
     wasm: XarkWasm,
     base: string | URL,
-    only: readonly (keyof ZkKycKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
+    only: readonly (keyof ZkKycKeys)[] = ["circuit", "provingKey", "verifyingKey", "sources", "client"],
     init?: RequestInit,
   ): Promise<ZkKyc> {
     const page = (globalThis as { location?: { href: string } }).location?.href;
@@ -189,6 +193,7 @@ export class ZkKyc {
           if (part === "sources" && res.status === 404) return;
           throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
         }
+        if (part === "client") return initClient(await res.arrayBuffer());
         keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
       }),
     );
@@ -239,6 +244,110 @@ export class ZkKyc {
     return this.wasm.valueFields(ZkKyc.schema, type, toJson(value)).map(BigInt);
   }
 }
+
+// The circuit crate's `#[xark::export]` Rust functions, compiled to `client.wasm`.
+let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
+
+/**
+ * Load `client.wasm` (`xark client` writes it beside `circuit.xbc`; `load` fetches
+ * it): the circuit's Rust functions. Once, before calling them.
+ */
+export async function initClient(wasm: BufferSource | WebAssembly.Module): Promise<void> {
+  const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+  rust = { module, instance: await WebAssembly.instantiate(module, {}) };
+}
+
+/** Call an exported Rust function with JSON arguments; its result, as JSON. */
+function callRust(name: string, args: unknown[]): any {
+  if (!rust) throw new Error("call `initClient(client.wasm)` before the circuit's Rust functions");
+  const x = rust.instance.exports as any;
+  const input = new TextEncoder().encode(toJson(args));
+  const ptr = x.xark_alloc(input.length);
+  new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
+  let packed: bigint;
+  try {
+    packed = x[name](ptr, input.length);
+  } catch (e) {
+    const message = take(x, x.xark_panic());
+    rust.instance = new WebAssembly.Instance(rust.module, {}); // a panic may leave the heap mid-update
+    throw new Error(message || String(e));
+  }
+  x.xark_free(ptr, input.length);
+  const out = JSON.parse(take(x, packed));
+  if ("err" in out) throw new Error(out.err);
+  return out.ok;
+}
+
+/** The string a Rust function handed over (`ptr << 32 | len`), freed. */
+function take(x: any, packed: bigint): string {
+  const ptr = Number(packed >> 32n);
+  const len = Number(packed & 0xffffffffn);
+  const s = new TextDecoder().decode(new Uint8Array(x.memory.buffer, ptr, len));
+  x.xark_free(ptr, len);
+  return s;
+}
+
+/** `Policy`'s Rust functions (`#[xark::export]`), run from `client.wasm`. */
+export const Policy = {
+  /**
+   * A check on `today` that any holder with a valid document passes: tighten it
+   * with the other constructors.
+   */
+  on(today: Date): PolicyValue & PolicyMethods {
+    return withPolicyMethods(decodePolicy(callRust("Policy.on", [today])));
+  },
+  /**
+   * At least `years` old on `today`.
+   */
+  minAge(policy: Policy, years: number): PolicyValue & PolicyMethods {
+    return withPolicyMethods(decodePolicy(callRust("Policy.min_age", [policy, years])));
+  },
+  /**
+   * Worth at least `usd`.
+   */
+  minNetWorth(policy: Policy, usd: bigint | number): PolicyValue & PolicyMethods {
+    return withPolicyMethods(decodePolicy(callRust("Policy.min_net_worth", [policy, usd])));
+  },
+  /**
+   * A national of one of `allowed` (a country, or a list of them).
+   */
+  nationalities(policy: Policy, allowed: Country | readonly Country[]): PolicyValue & PolicyMethods {
+    return withPolicyMethods(decodePolicy(callRust("Policy.nationalities", [policy, allowed])));
+  },
+};
+
+/**
+ * `Policy`'s Rust methods, on a value its functions return: `Policy.…(…).method(…)`.
+ * A method named like a field is only `Policy.method(value, …)`.
+ */
+export interface PolicyMethods {
+  /**
+   * At least `years` old on `today`.
+   */
+  minAge(years: number): PolicyValue & PolicyMethods;
+  /**
+   * A national of one of `allowed` (a country, or a list of them).
+   */
+  nationalities(allowed: Country | readonly Country[]): PolicyValue & PolicyMethods;
+}
+
+function withPolicyMethods<T extends object>(value: T): T & PolicyMethods {
+  return Object.defineProperties(value, {
+    minAge: { value(this: Policy, years: number) { return Policy.minAge(this, years); } },
+    nationalities: { value(this: Policy, allowed: Country | readonly Country[]) { return Policy.nationalities(this, allowed); } },
+  }) as T & PolicyMethods;
+}
+
+
+/** `Identity`'s Rust functions (`#[xark::export]`), run from `client.wasm`. */
+export const Identity = {
+  /**
+   * The issuer's commitment: Poseidon2 over every field, so adding one extends it.
+   */
+  commitment(identity: Identity): bigint {
+    return BigInt(callRust("Identity.commitment", [identity]));
+  },
+};
 
 function decodePublic(v: any): ZkKycPublicValues {
   return {

@@ -21,8 +21,8 @@ const DATE_BITS: usize = 27;
 ///
 /// Built off-circuit from calendar parts, checked ([`Date::new`] refuses 30 February),
 /// or from `"YYYY-MM-DD"`. Validity isn't re-checked in the circuit: a date input is
-/// one a trusted party fixed (an issuer's commitment, a verifier's public input). The
-/// unchecked [`Date::from_raw`] is for sentinels such as "any date of birth".
+/// one a trusted party fixed (an issuer's commitment, a verifier's public input).
+/// [`Date::MIN`] and [`Date::MAX`] bound every date ("any date of birth").
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Date(Field);
@@ -40,6 +40,12 @@ const fn days_in_month(year: u16, month: u8) -> u8 {
 }
 
 impl Date {
+    /// The last day a `Date` holds, 9999-12-31: after every other. A policy with no
+    /// upper limit uses it (and every client can read it back, unlike a raw sentinel).
+    pub const MAX: Date = Date::new(9999, 12, 31);
+    /// The first day a `Date` holds, 0000-01-01: before every other.
+    pub const MIN: Date = Date::new(0, 1, 1);
+
     /// A real calendar day, checked: a bad literal in a `const` is a compile error,
     /// at run time a panic.
     pub const fn new(year: u16, month: u8, day: u8) -> Date {
@@ -64,8 +70,8 @@ impl Date {
         )))
     }
 
-    /// The raw integer `YYYYMMDD`, unchecked: for sentinels that aren't calendar days
-    /// (`Date::from_raw(99_999_999)`: after every date).
+    /// The raw integer `YYYYMMDD`, unchecked. Prefer [`Date::MIN`]/[`Date::MAX`] for
+    /// "any date": a value that isn't a calendar day can't be read back by a client.
     pub const fn from_raw(yyyymmdd: u32) -> Date {
         Date(Field::from_u64(yyyymmdd as u64))
     }

@@ -156,6 +156,119 @@ fn note(ty: &Ty) -> Option<String> {
     })
 }
 
+/// The `#[xark::export]` functions: per type, an object of typed functions running
+/// the Rust code in `client.wasm` (`Policy.on(day)`), and on values they return, the
+/// type's `self` methods (`Policy.on(day).minAge(18)`). Plus the loader they share.
+fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
+    if m.exports.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(CLIENT);
+    let mut types: Vec<&str> = Vec::new();
+    for e in &m.exports {
+        if !types.contains(&e.ty.as_str()) {
+            types.push(&e.ty);
+        }
+    }
+    let field_named = |t: &str, name: &str| {
+        m.structs
+            .get(t)
+            .is_some_and(|fs| fs.iter().any(|f| ts_key(&f.name) == camel(name)))
+    };
+    // Methods ride on values a function returns, so only a type something returns
+    // gets them.
+    let with_methods = |t: &str| {
+        m.exports
+            .iter()
+            .any(|e| e.returns == Ty::Struct(t.to_string()))
+            && m.exports
+                .iter()
+                .any(|e| e.ty == t && e.receiver.is_some() && !field_named(t, &e.name))
+    };
+    // A result, typed and revived (with its type's methods when it has some).
+    let result = |ty: &Ty, call: String, value_structs: &mut BTreeSet<String>| match ty {
+        Ty::Struct(r) if with_methods(r) => (
+            format!("{} & {r}Methods", value(ty, value_structs)),
+            format!("with{r}Methods({})", revive(ty, &call)),
+        ),
+        _ => (value(ty, value_structs), revive(ty, &call)),
+    };
+    let jsdoc = |doc: &str, indent: &str| {
+        if doc.is_empty() {
+            return String::new();
+        }
+        let mut d = format!("{indent}/**\n");
+        for line in doc.lines() {
+            let _ = writeln!(d, "{indent} * {line}");
+        }
+        let _ = writeln!(d, "{indent} */");
+        d
+    };
+    for t in types {
+        let fns: Vec<_> = m.exports.iter().filter(|e| e.ty == t).collect();
+        let this = camel(&t.to_lowercase());
+        let _ = writeln!(
+            out,
+            "/** `{t}`'s Rust functions (`#[xark::export]`), run from `client.wasm`. */\nexport const {t} = {{"
+        );
+        let mut methods = String::new();
+        let mut binds = String::new();
+        for e in &fns {
+            let params: Vec<String> = e
+                .params
+                .iter()
+                .map(|p| format!("{}: {}", ts_key(&p.name), input(&p.ty)))
+                .collect();
+            let names: Vec<String> = e.params.iter().map(|p| ts_key(&p.name)).collect();
+            let mut all_params = params.clone();
+            let mut all_names = names.clone();
+            if e.receiver.is_some() {
+                all_params.insert(0, format!("{this}: {t}"));
+                all_names.insert(0, this.clone());
+            }
+            let call = format!("callRust({:?}, [{}])", e.export, all_names.join(", "));
+            let (ret, body) = result(&e.returns, call, value_structs);
+            out.push_str(&jsdoc(&e.doc, "  "));
+            let _ = writeln!(
+                out,
+                "  {}({}): {ret} {{\n    return {body};\n  }},",
+                camel(&e.name),
+                all_params.join(", ")
+            );
+            // A method named like one of the type's fields can't sit on a value beside
+            // it (in Rust they don't clash): it stays `Type.method(value, …)` only.
+            if e.receiver.is_some() && !field_named(t, &e.name) {
+                methods.push_str(&jsdoc(&e.doc, "  "));
+                let _ = writeln!(
+                    methods,
+                    "  {}({}): {ret};",
+                    camel(&e.name),
+                    params.join(", ")
+                );
+                let _ = writeln!(
+                    binds,
+                    "    {n}: {{ value(this: {t}, {p}) {{ return {t}.{n}(this{a}); }} }},",
+                    n = camel(&e.name),
+                    p = params.join(", "),
+                    a = names.iter().map(|n| format!(", {n}")).collect::<String>(),
+                );
+            }
+        }
+        out.push_str("};\n\n");
+        if with_methods(t) {
+            let _ = writeln!(
+                out,
+                "/**\n * `{t}`'s Rust methods, on a value its functions return: `{t}.…(…).method(…)`.\n * \
+                 A method named like a field is only `{t}.method(value, …)`.\n */\n\
+                 export interface {t}Methods {{\n{methods}}}\n\n\
+                 function with{t}Methods<T extends object>(value: T): T & {t}Methods {{\n  \
+                 return Object.defineProperties(value, {{\n{binds}  }}) as T & {t}Methods;\n}}\n\n"
+            );
+        }
+    }
+    out
+}
+
 /// `a | b` → `(a | b)` where it needs the parentheses (an array element).
 fn paren(t: &str) -> String {
     if t.contains(' ') {
@@ -285,7 +398,10 @@ pub fn generate(m: &Model) -> Result<String> {
     }
     body.push_str("}\n\n");
     decode.push_str("  };\n}\n\n");
-    // Decoded structs (closed over what the public inputs reach).
+    // The crate's `#[xark::export]` functions (their decoders join the ones below).
+    let exports = exports_ts(m, &mut value_structs);
+
+    // Decoded structs (closed over what the public inputs and exports reach).
     let mut done = BTreeSet::new();
     let mut structs = String::new();
     while let Some(r) = value_structs.iter().find(|r| !done.contains(*r)).cloned() {
@@ -325,13 +441,21 @@ pub fn generate(m: &Model) -> Result<String> {
     }
 
     // The class.
+    let has = !m.exports.is_empty();
+    let pick = |yes: &'static str| if has { yes } else { "" };
     out.push_str(
         &CLASS
             .replace("__FIELDS__", &fields)
+            .replace("__CLIENT_KEY__", pick("\n  /** `client.wasm`: the circuit's `#[xark::export]` functions (`load` runs `initClient`). */\n  client?: Uint8Array;"))
+            .replace("__CLIENT_FILE__", pick("\n  client: \"client.wasm\","))
+            .replace("__CLIENT_PART__", pick(", \"client\""))
+            .replace("__LOAD_DOC__", pick("\n   * `client.wasm` is loaded with `initClient`, for the Rust functions."))
+            .replace("__LOAD_CLIENT__", pick("        if (part === \"client\") return initClient(await res.arrayBuffer());\n"))
             .replace("__NAME__", &name)
             .replace("__CIRCUIT__", circuit)
             .replace("__SCHEMA__", &format!("{:?}", m.schema)),
     );
+    out.push_str(&exports);
     out.push_str(&decode);
     out.push_str(HELPERS);
     Ok(out)
@@ -364,7 +488,7 @@ export interface __NAME__Keys {
   circuit?: Uint8Array;
   provingKey?: Uint8Array;
   verifyingKey?: Uint8Array;
-  sources?: string;
+  sources?: string;__CLIENT_KEY__
 }
 
 /** Each part of `__NAME__Keys` as `xark build` and `xark setup` name its file. */
@@ -372,7 +496,7 @@ const FILES = {
   circuit: "circuit.xbc",
   provingKey: "pk.bin",
   verifyingKey: "vk.bin",
-  sources: "sources.json",
+  sources: "sources.json",__CLIENT_FILE__
 } as const;
 
 /**
@@ -398,12 +522,12 @@ export class __NAME__ {
    * Fetch the build output from `base`, a URL serving a copy of
    * `target/xark/__CIRCUIT__/` (relative to the page in a browser):
    * `await __NAME__.load(wasm, "/circuits/__CIRCUIT__/")`. `only` fetches less
-   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.
+   * (`["verifyingKey"]` for a verifier); a missing `sources.json` is skipped.__LOAD_DOC__
    */
   static async load(
     wasm: XarkWasm,
     base: string | URL,
-    only: readonly (keyof __NAME__Keys)[] = ["circuit", "provingKey", "verifyingKey", "sources"],
+    only: readonly (keyof __NAME__Keys)[] = ["circuit", "provingKey", "verifyingKey", "sources"__CLIENT_PART__],
     init?: RequestInit,
   ): Promise<__NAME__> {
     const page = (globalThis as { location?: { href: string } }).location?.href;
@@ -421,7 +545,7 @@ export class __NAME__ {
           if (part === "sources" && res.status === 404) return;
           throw new Error(`fetching ${url}: ${res.status} ${res.statusText}`);
         }
-        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
+__LOAD_CLIENT__        keys[part] = part === "sources" ? await res.text() : new Uint8Array(await res.arrayBuffer());
       }),
     );
     return new __NAME__(wasm, keys as __NAME__Keys);
@@ -461,6 +585,50 @@ export class __NAME__ {
     return decodePublic(JSON.parse(this.wasm.decodePublicValues(__NAME__.schema, bytes)));
   }
 __FIELDS__}
+
+"#;
+
+const CLIENT: &str = r#"// The circuit crate's `#[xark::export]` Rust functions, compiled to `client.wasm`.
+let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
+
+/**
+ * Load `client.wasm` (`xark client` writes it beside `circuit.xbc`; `load` fetches
+ * it): the circuit's Rust functions. Once, before calling them.
+ */
+export async function initClient(wasm: BufferSource | WebAssembly.Module): Promise<void> {
+  const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
+  rust = { module, instance: await WebAssembly.instantiate(module, {}) };
+}
+
+/** Call an exported Rust function with JSON arguments; its result, as JSON. */
+function callRust(name: string, args: unknown[]): any {
+  if (!rust) throw new Error("call `initClient(client.wasm)` before the circuit's Rust functions");
+  const x = rust.instance.exports as any;
+  const input = new TextEncoder().encode(toJson(args));
+  const ptr = x.xark_alloc(input.length);
+  new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
+  let packed: bigint;
+  try {
+    packed = x[name](ptr, input.length);
+  } catch (e) {
+    const message = take(x, x.xark_panic());
+    rust.instance = new WebAssembly.Instance(rust.module, {}); // a panic may leave the heap mid-update
+    throw new Error(message || String(e));
+  }
+  x.xark_free(ptr, input.length);
+  const out = JSON.parse(take(x, packed));
+  if ("err" in out) throw new Error(out.err);
+  return out.ok;
+}
+
+/** The string a Rust function handed over (`ptr << 32 | len`), freed. */
+function take(x: any, packed: bigint): string {
+  const ptr = Number(packed >> 32n);
+  const len = Number(packed & 0xffffffffn);
+  const s = new TextDecoder().decode(new Uint8Array(x.memory.buffer, ptr, len));
+  x.xark_free(ptr, len);
+  return s;
+}
 
 "#;
 

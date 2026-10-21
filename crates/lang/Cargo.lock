@@ -1067,6 +1067,7 @@ version = "0.3.0"
 dependencies = [
  "ark-bn254",
  "ark-ff",
+ "getrandom",
  "num-bigint",
  "serde_json",
  "xark-ir",
