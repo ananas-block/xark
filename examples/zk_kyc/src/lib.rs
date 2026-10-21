@@ -12,7 +12,7 @@ pub struct Identity {
     pub born: Date,
     /// An ISO 3166 code.
     pub nationality: Choice<Country>,
-    /// Attested net worth, in whole USD.
+    /// Attested net worth, in the attestor's unit (its currency and scale).
     pub net_worth: u64,
     /// The ID document's expiry.
     pub expires: Date,
@@ -40,7 +40,7 @@ pub struct Policy {
     pub today: Date,
     /// The latest birth date allowed (a minimum age on `today`).
     pub born_by: Date,
-    /// The least attested net worth allowed, in whole USD.
+    /// The least attested net worth allowed, in the attestor's unit.
     pub min_net_worth: u64,
     /// The nationalities allowed.
     pub allowed: Bitfield<Country>,
@@ -68,10 +68,10 @@ impl Policy {
         }
     }
 
-    /// Worth at least `usd`.
-    pub fn min_net_worth(self, usd: u64) -> Policy {
+    /// Worth at least `amount`, in the attestor's unit.
+    pub fn min_net_worth(self, amount: u64) -> Policy {
         Policy {
-            min_net_worth: usd,
+            min_net_worth: amount,
             ..self
         }
     }
