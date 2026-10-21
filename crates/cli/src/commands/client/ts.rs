@@ -156,7 +156,7 @@ fn note(ty: &Ty) -> Option<String> {
     })
 }
 
-/// The `#[xark::export]` functions: per type, an object of typed functions running
+/// The client functions (`#[input]` on an `impl`): per type, an object of typed functions running
 /// the Rust code in `client.wasm` (`Policy.on(day)`), and on values they return, the
 /// type's `self` methods (`Policy.on(day).minAge(18)`). Plus the loader they share.
 fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
@@ -209,7 +209,7 @@ fn exports_ts(m: &Model, value_structs: &mut BTreeSet<String>) -> String {
         let this = camel(&t.to_lowercase());
         let _ = writeln!(
             out,
-            "/** `{t}`'s Rust functions (`#[xark::export]`), run from `client.wasm`. */\nexport const {t} = {{"
+            "/** `{t}`'s Rust functions (`#[input] impl {t}`), run from `client.wasm`. */\nexport const {t} = {{"
         );
         let mut methods = String::new();
         let mut binds = String::new();
@@ -398,7 +398,7 @@ pub fn generate(m: &Model) -> Result<String> {
     }
     body.push_str("}\n\n");
     decode.push_str("  };\n}\n\n");
-    // The crate's `#[xark::export]` functions (their decoders join the ones below).
+    // The client functions (their decoders join the ones below).
     let exports = exports_ts(m, &mut value_structs);
 
     // Decoded structs (closed over what the public inputs and exports reach).
@@ -446,7 +446,7 @@ pub fn generate(m: &Model) -> Result<String> {
     out.push_str(
         &CLASS
             .replace("__FIELDS__", &fields)
-            .replace("__CLIENT_KEY__", pick("\n  /** `client.wasm`: the circuit's `#[xark::export]` functions (`load` runs `initClient`). */\n  client?: Uint8Array;"))
+            .replace("__CLIENT_KEY__", pick("\n  /** `client.wasm`: the Rust functions (`load` runs `initClient`). */\n  client?: Uint8Array;"))
             .replace("__CLIENT_FILE__", pick("\n  client: \"client.wasm\","))
             .replace("__CLIENT_PART__", pick(", \"client\""))
             .replace("__LOAD_DOC__", pick("\n   * `client.wasm` is loaded with `initClient`, for the Rust functions."))
@@ -588,7 +588,7 @@ __FIELDS__}
 
 "#;
 
-const CLIENT: &str = r#"// The circuit crate's `#[xark::export]` Rust functions, compiled to `client.wasm`.
+const CLIENT: &str = r#"// The Rust functions (`#[input]` on an `impl`, here or in a dependency), compiled to `client.wasm`.
 let rust: { module: WebAssembly.Module; instance: WebAssembly.Instance } | undefined;
 
 /**

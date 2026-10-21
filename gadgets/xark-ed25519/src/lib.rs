@@ -18,7 +18,7 @@
 // rejected `+=` on `Field`; the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
-use xark::{Field, Input, require_eq};
+use xark::{Field, input, require_eq};
 
 // The Ed25519 curve: base field p = 2^255 − 19, scalar order L, constant d.
 xark_curve::edwards! {
@@ -296,11 +296,11 @@ pub mod blocks {
 /// limbs; scalars are 256 caller-decomposed bits.
 #[allow(clippy::too_many_arguments)]
 /// An Ed25519 signature `(R, S)` — a curve point `R` (compressed `[u8; 32]` on the
-/// host) and a scalar `S`. Its `#[derive(Input)]` with `#[input(bytes)]` takes
+/// host) and a scalar `S`. Its `#[input]` with `#[input(bytes)]` takes
 /// `R`'s (decompressing) bytes then `S`'s, so on the host it comes from a `[u8; 64]`:
 /// compressed `R ‖ big-endian S`. Pass it to [`PointL::verify`].
-#[derive(Clone, Copy, Debug, Input)]
 #[input(bytes)]
+#[derive(Clone, Copy, Debug)]
 pub struct Signature {
     pub r: PointL,
     pub s: Scalar,

@@ -337,7 +337,7 @@ impl Default for BuildOptions {
 }
 
 /// Build `crate_dir`'s host code as a plain wasm module for generated clients (the
-/// "client build": `--cfg xark_client`, so `#[xark::export]` methods become exports;
+/// "client build": `--cfg xark_client`, so `#[input]` methods become exports;
 /// see `xark::client`), into `target_dir`. Its wasm bytes.
 pub fn build_client(
     crate_dir: &std::path::Path,

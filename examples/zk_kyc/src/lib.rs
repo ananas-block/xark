@@ -7,7 +7,8 @@
 use xark::prelude::*;
 
 /// What an issuer attests about a holder, committed to as a whole with Poseidon2.
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Identity {
     /// The ID document's number.
     pub document: Text,
@@ -22,7 +23,7 @@ pub struct Identity {
     pub salt: Field,
 }
 
-#[xark::export]
+#[xark::input]
 impl Identity {
     /// The issuer's commitment: Poseidon2 over every field, so adding one extends it.
     pub fn commitment(&self) -> Field {
@@ -36,7 +37,8 @@ impl Identity {
 /// ```ignore
 /// Policy::on("2026-10-20").min_age(18).min_net_worth(500_000).nationalities([US, GB, FR, DE])
 /// ```
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Policy {
     /// The day of the check: the document mustn't have expired by then.
     pub today: Date,
@@ -48,7 +50,7 @@ pub struct Policy {
     pub allowed: Bitfield<Country>,
 }
 
-#[xark::export]
+#[xark::input]
 impl Policy {
     /// A check on `today` that any holder with a valid document passes: tighten it
     /// with the other constructors.

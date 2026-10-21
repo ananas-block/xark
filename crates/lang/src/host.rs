@@ -8,7 +8,7 @@ use crate::Field;
 
 /// An input type with a natural big-endian byte encoding of `BYTES` bytes (a
 /// scalar's 32 bytes, a point's coordinates back to back, an Ed25519 key's
-/// compressed form): what `#[derive(Input)]`'s `number`/`bytes` encodings build `From<[u8; BYTES]>`
+/// compressed form): what `#[input]`'s `number`/`bytes` encodings build `From<[u8; BYTES]>`
 /// from.
 pub trait FromBeBytes: Sized {
     /// The encoding's length.

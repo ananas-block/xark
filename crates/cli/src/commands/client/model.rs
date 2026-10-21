@@ -68,11 +68,11 @@ pub struct Model {
     pub enums: BTreeMap<String, Vec<String>>,
     /// The `schema.json` text, for xark-wasm.
     pub schema: String,
-    /// The crate's `#[xark::export]` methods, run from `client.wasm`.
+    /// The client functions (`#[input]` on an `impl`), run from `client.wasm`.
     pub exports: Vec<Export>,
 }
 
-/// A Rust method a client calls (`#[xark::export]`).
+/// A Rust method a client calls (`#[input]` on an `impl`).
 #[derive(Clone, Debug)]
 pub struct Export {
     /// The wasm export (`Policy.min_age`).
@@ -200,11 +200,42 @@ impl Model {
     /// Add the exported methods described by `lines` (the client module's
     /// `xark.exports` section: one JSON object per line), resolving each type written
     /// in Rust against the circuit's input types.
-    pub fn add_exports(&mut self, schema: &Value, lines: &str) -> Result<()> {
+    ///
+    /// A function whose types aren't all among them (a gadget's helper for a type this
+    /// circuit doesn't take) is skipped: its `Type::name` is returned.
+    pub fn add_exports(&mut self, schema: &Value, lines: &str) -> Result<Vec<String>> {
+        let mut skipped = Vec::new();
         for line in lines.lines().filter(|l| !l.trim().is_empty()) {
             let d: Value = serde_json::from_str(line).context("an `xark.exports` entry")?;
             let s = |k: &str| d[k].as_str().unwrap_or_default().to_string();
-            let what = format!("`{}::{}`", s("type"), s("name"));
+            if self.exports.iter().any(|e| e.export == s("export")) {
+                continue; // described twice
+            }
+            // Every type it names must be the circuit's: checked on a copy first, so a
+            // skipped function leaves no structs or enums behind.
+            let mut names = vec![s("returns")];
+            names.extend(
+                d["params"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|p| p["type"].as_str().unwrap_or_default().to_string()),
+            );
+            if !d["self"].is_null() {
+                names.push(s("type"));
+            }
+            let mut probe = Model {
+                circuit: String::new(),
+                inputs: Vec::new(),
+                structs: self.structs.clone(),
+                enums: self.enums.clone(),
+                schema: String::new(),
+                exports: Vec::new(),
+            };
+            if names.iter().any(|n| probe.rust_ty(schema, n).is_err()) {
+                skipped.push(format!("{}::{}", s("type"), s("name")));
+                continue;
+            }
             let params = d["params"]
                 .as_array()
                 .into_iter()
@@ -213,19 +244,12 @@ impl Model {
                     let rust = p["type"].as_str().unwrap_or_default().to_string();
                     Ok(Field {
                         name: p["name"].as_str().unwrap_or_default().to_string(),
-                        ty: self.rust_ty(schema, &rust).with_context(|| what.clone())?,
+                        ty: self.rust_ty(schema, &rust)?,
                         rust,
                     })
                 })
                 .collect::<Result<_>>()?;
-            let returns = self
-                .rust_ty(schema, &s("returns"))
-                .with_context(|| what.clone())?;
-            // The receiver's type resolves too (an input struct, so its interface exists).
-            if !d["self"].is_null() {
-                self.rust_ty(schema, &s("type"))
-                    .with_context(|| what.clone())?;
-            }
+            let returns = self.rust_ty(schema, &s("returns"))?;
             self.exports.push(Export {
                 export: s("export"),
                 ty: s("type"),
@@ -236,7 +260,7 @@ impl Model {
                 doc: s("doc"),
             });
         }
-        Ok(())
+        Ok(skipped)
     }
 
     /// A type as written in Rust (`u16`, `[u8;4]`, `Choice<Country>`), as a standard
@@ -420,11 +444,9 @@ mod tests {
             (&on.returns, m.exports[1].receiver),
             (&Ty::Struct("P".into()), Some(true))
         );
-        let bad = r#"{"export":"P.g","type":"P","name":"g","self":null,"params":[{"name":"x","type":"Nope"}],"returns":"P","doc":""}"#;
-        let err = format!("{:#}", m.add_exports(&schema, bad).unwrap_err());
-        assert!(
-            err.contains("`P::g`") && err.contains("`Nope` isn't one of the circuit's input types"),
-            "{err}"
-        );
+        // A gadget's function for a type this circuit doesn't take: skipped.
+        let other = r#"{"export":"Q.g","type":"Q","name":"g","self":null,"params":[{"name":"x","type":"Nope"}],"returns":"P","doc":""}"#;
+        assert_eq!(m.add_exports(&schema, other).unwrap(), ["Q::g"]);
+        assert_eq!(m.exports.len(), 2);
     }
 }

@@ -121,7 +121,8 @@ fn inv_sq_mul(inv: WideScalar, p: Affine) -> [Field; 2] {
 }
 
 /// One IPA round's transcript points: the cross commitments `L` and `R`.
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Round {
     pub l: Affine,
     pub r: Affine,
@@ -146,7 +147,10 @@ pub fn grumpkin_ipa_fold(
     // --- round 0: seed with P.x, fold P ---
     let [r0, r1] = rounds;
     let x0 = challenge(p.x, pt(r0.l), pt(r0.r));
-    let p1 = ec_add(ec_add(sq_mul(x0, pt(r0.l)), pt(p)), inv_sq_mul(x_inv[0], r0.r));
+    let p1 = ec_add(
+        ec_add(sq_mul(x0, pt(r0.l)), pt(p)),
+        inv_sq_mul(x_inv[0], r0.r),
+    );
 
     // --- round 1: seed with x0 (as a field element), fold again ---
     let x0_field = Field::from_bits::<128>(x0);
@@ -158,8 +162,14 @@ pub fn grumpkin_ipa_fold(
     let g_final = ec_add(ec_add(pt(t[0]), pt(t[1])), ec_add(pt(t[2]), pt(t[3])));
 
     // --- final IPA relation: P₂ == a*·G* + c·U ---
-    let g_final = Affine { x: g_final[0], y: g_final[1] };
-    let rhs = ec_add(pt(wide_scalar_mul(astar, g_final)), pt(wide_scalar_mul(c, u)));
+    let g_final = Affine {
+        x: g_final[0],
+        y: g_final[1],
+    };
+    let rhs = ec_add(
+        pt(wide_scalar_mul(astar, g_final)),
+        pt(wide_scalar_mul(c, u)),
+    );
     require_eq(p2[0], rhs[0]);
     require_eq(p2[1], rhs[1]);
 }

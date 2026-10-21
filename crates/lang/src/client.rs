@@ -1,4 +1,4 @@
-//! Rust functions a generated client calls: `#[xark::export]` on an `impl` block
+//! Rust functions a generated client calls: `#[input]` on an `impl` block
 //! makes its methods (constructors such as `Policy::on`, helpers such as
 //! `Identity::commitment`) callable from a client, running this same code.
 //!

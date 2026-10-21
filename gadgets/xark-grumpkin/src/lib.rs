@@ -224,7 +224,8 @@ pub fn multi_scalar_mul(scalars: [Field; K], points: [[Field; 2]; K]) -> [Field;
 /// field is exactly BN254's scalar field (the circuit `Field`), so a point needs
 /// no non-native limbs — `x`/`y` are ordinary field elements. Flattens to the
 /// leaves `<name>.x` / `<name>.y`.
-#[derive(Clone, Copy, Debug, xark::Input)]
+#[xark::input]
+#[derive(Clone, Copy, Debug)]
 pub struct Affine {
     pub x: Field,
     pub y: Field,
@@ -254,7 +255,8 @@ mod host {
 /// A committed relaxed-R1CS (Nova) instance: commitments to the witness `W` and
 /// the error `E`, the slack `u` and the public `x`. Flattens (and so hashes, via
 /// `to_fields`) as `[cw.x, cw.y, ce.x, ce.y, u, x]`.
-#[derive(Clone, Copy, Debug, xark::Input)]
+#[xark::input]
+#[derive(Clone, Copy, Debug)]
 pub struct Instance {
     pub cw: Affine,
     pub ce: Affine,
@@ -266,8 +268,8 @@ pub struct Instance {
 /// as two 127-bit limbs, `lo + hi·2^127`, both below the field, so the split is
 /// injective. On the host it comes from the whole number (a decimal / `0x`-hex
 /// string, its 32 big-endian bytes, an integer); see [`wide_scalar_mul`].
-#[derive(Clone, Copy, Debug, xark::Input)]
-#[input(number(bits = 127))]
+#[xark::input(number(bits = 127))]
+#[derive(Clone, Copy, Debug)]
 pub struct WideScalar {
     /// `[lo, hi]`.
     pub limbs: [Field; 2],

@@ -2,13 +2,16 @@
 // `SchemaMatchInputs::schema()`) and built by the compiler (for `schema.json`).
 
 /// A holder's standing.
-#[derive(Clone, Copy, Debug, PartialEq, Input)]
+#[input]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Standing {
     Retail,
     Accredited,
 }
 
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+
+#[derive(Clone, Copy, Debug)]
 pub struct Holder {
     pub doc: Text,
     pub born: Date,

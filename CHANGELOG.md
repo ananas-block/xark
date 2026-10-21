@@ -46,10 +46,11 @@ gadgets now check more:
   set of standard types), and `read`/`write` of its field elements in order. The
   one impl serves the circuit build and the host (the prover's leaves,
   `to_fields()` for hashing, decoding values back), so a hand-written impl is a
-  few lines with no `cfg`s. `#[derive(Input)]` implements it for a struct, and
-  with `#[input(number(bits = B))]` or `#[input(bytes)]` gives one a standard
-  encoding plus its host conversions. On a fieldless enum the same derive
-  implements `xark::Enum`. This replaces `#[derive(CircuitInput)]`,
+  few lines with no `cfg`s. The `#[input]` attribute implements it for a
+  struct, and with `#[input(number(bits = B))]` or `#[input(bytes)]` gives one a
+  standard encoding plus its host conversions; on a fieldless enum it implements
+  `xark::Enum`, and on an `impl` block it makes client functions (below). This
+  replaces `#[derive(CircuitInput)]`,
   `#[derive(Transparent)]`, `xark::flags!`, `ToFields`, `NativeInput` and the
   per-gadget `wasm::Input` impls. `schema.json` is now version 2, written from
   each parameter's `TYPE`; a build fails if one type name would stand for two
@@ -65,8 +66,9 @@ gadgets now check more:
   date, nationality, net worth) checked against a public `Policy`, built with
   `Policy::on(today).min_age(18).min_net_worth(500_000).nationalities([US, GB])`
   (`Date::years_before` gives the birth-date cutoff).
-- **Rust constructors and helpers in generated clients.** `#[xark::export]` on an
-  `impl` block makes its methods client functions: `xark client` builds the
+- **Rust constructors and helpers in generated clients.** `#[input]` on an `impl`
+  block makes its methods client functions, from any crate (a gadget's reach every
+  circuit that takes its types): `xark client` builds the
   crate's host code as `client.wasm` (no JS glue; zk_kyc's is 250 KB, 100 KB
   gzipped) and types each from its signature and doc comment, so
   `Policy.on(day).minAge(18)` and `Identity.commitment(id)` in TypeScript run the

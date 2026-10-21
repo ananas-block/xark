@@ -80,7 +80,7 @@ circuit does. `zk_kyc`'s tests make the issuer's commitment with
 
 Every circuit parameter's type implements `xark::Input`, which says how its value
 maps to field elements and how clients see it. Group inputs into structs with
-`#[derive(Input)]`, including gadget types: `examples/grumpkin_ivc` takes a few
+`#[input]`, including gadget types: `examples/grumpkin_ivc` takes a few
 `Instance { cw, ce, u, x }` values instead of twenty separate parameters, and
 `to_fields()` hashes one in a single call. The generated `<Fn>Inputs` struct
 holds the same values for `xark::prover::circuit(..).check(..)`, `.prove(..)`
@@ -96,15 +96,17 @@ and each with its natural form in tests, `--inputs` and the TypeScript client:
 - `Text`: a short string, up to 31 bytes (a document number, a name).
 - `Choice<E>` and `Bitfield<E>`: one variant of an enum, or a set of them, such
   as a nationality and the allowed countries: `choice == Country::US`,
-  `require_in`, `require_one_of`, `contains`. Any fieldless enum with `#[derive(Input)]` works;
+  `require_in`, `require_one_of`, `contains`. Any fieldless enum with `#[input]` works;
   `xark` ships ISO 3166 `Country`.
 
 ```rust
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Identity { document: Text, born: Date, nationality: Choice<Country>, net_worth: u64, expires: Date, salt: Field }
 
 /// A verifier's rules, a public input: one circuit serves every policy.
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Policy { today: Date, born_by: Date, min_net_worth: u64, allowed: Bitfield<Country> }
 
 #[circuit]
@@ -227,12 +229,12 @@ kyc.verify(proof, publicInputs); // true
 ```
 
 `Policy.on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
-not a TypeScript copy of it: `#[xark::export]` on an `impl` block makes its methods
-client functions, typed from their signatures and documented with their doc
+not a TypeScript copy of it: the same `#[input]`, on an `impl` block, makes its
+methods client functions, typed from their signatures and documented with their doc
 comments.
 
 ```rust
-#[xark::export]
+#[input]
 impl Policy {
     /// A check on `today` that any holder with a valid document passes.
     pub fn on(today: impl Into<Date>) -> Policy { … }
@@ -244,7 +246,10 @@ impl Policy {
 `xark client` builds the crate's host code once more as `client.wasm` (beside
 `circuit.xbc`; `load` fetches it, or call `initClient(bytes)`), with no JS glue, and
 each call runs it: values cross in their natural forms, a Rust panic arrives as an
-exception with its message. Parameters and results are any `Input` type. A method
+exception with its message. Parameters and results are any `Input` type. It
+works from any crate: a gadget that puts `#[input]` on its types and their `impl`s
+brings those functions to the client of every circuit that takes them, with
+nothing added to xark. A method
 that takes `self` also chains on the values these functions return, unless it shares
 a field's name (`Policy.minNetWorth(policy, 500_000)` then).
 

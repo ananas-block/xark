@@ -49,7 +49,7 @@ pub struct Field {
 
 /// Prints the field's **decimal value** (e.g. `Field(19900101)`) rather than the
 /// raw limbs, so you can read the value straight out of a `{:?}` dump — of a bare
-/// `Field`, a `#[derive(Input)]` struct, or a generated `<Fn>Inputs` — and
+/// `Field`, a `#[input]` struct, or a generated `<Fn>Inputs` — and
 /// feed it to `xark prove`. Like [`Field::to_decimal`], the value is meaningful
 /// on the host, or for a constant (in a circuit, a witness is symbolic).
 impl core::fmt::Debug for Field {

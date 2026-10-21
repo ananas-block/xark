@@ -2,10 +2,11 @@
 //! language maps to its own types.
 //!
 //! A type is a circuit input when it implements [`Input`], usually through
-//! `#[derive(Input)]`:
+//! `#[input]`:
 //!
 //! ```ignore
-//! #[derive(Clone, Copy, Debug, Input)]
+//! #[input]
+//! #[derive(Clone, Copy, Debug)]
 //! pub struct Identity { pub born: Date, pub net_worth: u64, pub salt: Field }
 //! ```
 //!
@@ -62,7 +63,7 @@ use alloc::vec::Vec;
 use crate::lang::Field;
 
 /// A circuit input type: how it looks to clients, and how its value maps to field
-/// elements. `#[derive(Input)]` implements it for a struct of inputs.
+/// elements. `#[input]` implements it for a struct of inputs.
 pub trait Input: Sized {
     /// The type as clients see it.
     const TYPE: Type;
@@ -75,7 +76,7 @@ pub trait Input: Sized {
 }
 
 /// A fieldless enum usable as a [`Choice`](crate::Choice) (one variant) or a
-/// [`Bitfield`](crate::Bitfield) (a set of them): `#[derive(Input)]` on the enum
+/// [`Bitfield`](crate::Bitfield) (a set of them): `#[input]` on the enum
 /// implements it. Append variants only, never reorder: a variant's position is its
 /// value.
 ///
@@ -386,7 +387,7 @@ impl<'a> Writer<'a> {
     }
 }
 
-/// `value`'s field elements, in input order (what `#[derive(Input)]`'s `to_fields`
+/// `value`'s field elements, in input order (what `#[input]`'s `to_fields`
 /// returns): `out` must be `T::LEN` long.
 pub fn write_fields<T: Input>(value: &T, out: &mut [Field]) {
     value.write(&mut Writer::new(out))

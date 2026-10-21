@@ -1,5 +1,5 @@
-//! `#[circuit]` — declare a circuit entry — and `#[derive(Input)]` — make a type a
-//! circuit input.
+//! `#[circuit]` — declare a circuit entry — and `#[input]` — make a type a circuit
+//! input, or an `impl` block's methods client functions.
 //!
 //! ```ignore
 //! #[circuit]
@@ -16,11 +16,9 @@
 //! (3) implements `ProveInputs` for it from the same impls; (4) generates
 //! `<Fn>Inputs::schema()`, the circuit's `schema.json`.
 //!
-//! `#[derive(Input)]` — see [`derive_input`] — implements `xark::Input` for a struct
-//! (its fields in order) and `xark::Enum` for a fieldless enum.
-//!
-//! `#[xark::export]` — see [`export`] — makes an `impl` block's methods callable from
-//! generated clients.
+//! `#[input]` — see [`input`] — implements `xark::Input` for a struct (its fields in
+//! order) and `xark::Enum` for a fieldless enum, and on an `impl` block makes its
+//! methods callable from generated clients.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -336,7 +334,7 @@ fn host_arg(ty: &Type) -> syn::Result<HostArg> {
         other => Err(syn::Error::new_spanned(
             other,
             "unsupported #[circuit] parameter type; a parameter is any `xark::Input` type: \
-             `Field`, `u8`..`u128`, `bool`, `[T; N]`, a tuple, a `#[derive(Input)]` struct, a \
+             `Field`, `u8`..`u128`, `bool`, `[T; N]`, a tuple, a struct with `#[input]`, a \
              standard type (`Date`, `Text`, `Choice<E>`, `Bitfield<E>`) or a gadget type",
         )),
     }
@@ -390,17 +388,18 @@ fn to_pascal(s: &str) -> String {
     }
 }
 
-/// `#[derive(Input)]` — make a struct a circuit input, or an enum a set of named
-/// variants.
+/// `#[input]` — make a type a circuit input, or an `impl` block's methods client
+/// functions. One attribute, three places:
 ///
-/// **A struct** implements `xark::Input`: its fields (each an `Input` type) in
+/// **On a struct** it implements `xark::Input`: its fields (each an `Input` type) in
 /// declaration order, named `name.field`, given by clients as an object of its
 /// fields. It also gets `to_fields()`, its field elements in that order (to hash it),
 /// and `require_eq(a, b)` (every field element equal).
 ///
 /// ```ignore
-/// #[derive(Clone, Copy, Debug, Input)]
-/// pub struct Identity { pub born: Date, pub nationality: Bitfield<Country>, pub salt: Field }
+/// #[input]
+/// #[derive(Clone, Copy, Debug)]
+/// pub struct Identity { pub born: Date, pub nationality: Choice<Country>, pub salt: Field }
 /// ```
 ///
 /// A struct can be given in a standard encoding instead, with host conversions to
@@ -412,28 +411,73 @@ fn to_pascal(s: &str) -> String {
 /// * `#[input(bytes)]` on a struct of byte-encoded fields: their bytes back to back
 ///   (a point's `x ‖ y`), from a `[u8; N]` on the host.
 ///
-/// **A fieldless enum** implements `xark::Enum`, so `Choice<E>` holds one variant
-/// and `Bitfield<E>` a set of them. A variant's position is its value: append, never
-/// reorder.
+/// **On a fieldless enum** it implements `xark::Enum`, so `Choice<E>` holds one
+/// variant and `Bitfield<E>` a set of them. A variant's position is its value:
+/// append, never reorder.
 ///
 /// ```ignore
-/// #[derive(Clone, Copy, Debug, PartialEq, Input)]
+/// #[input]
+/// #[derive(Clone, Copy, Debug, PartialEq)]
 /// pub enum Tier { Retail, Accredited, Institutional }
 /// ```
-#[proc_macro_derive(Input, attributes(input))]
-pub fn derive_input(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    let out = match &input.data {
-        Data::Struct(d) => struct_input(&input, d),
-        Data::Enum(d) => enum_input(&input, d),
-        Data::Union(_) => Err(syn::Error::new_spanned(
-            &input.ident,
-            "#[derive(Input)] supports structs and fieldless enums",
+///
+/// **On an inherent `impl` block** its `pub fn`s become functions a generated client
+/// (`xark client`) calls, running this Rust code: write a constructor or helper once.
+///
+/// ```ignore
+/// #[input]
+/// impl Policy {
+///     /// A check on `today` that any holder passes.
+///     pub fn on(today: impl Into<Date>) -> Policy { … }
+///     /// At least `years` old on `today`.
+///     pub fn min_age(self, years: u16) -> Policy { … }
+/// }
+/// ```
+///
+/// TypeScript gets `Policy.on(new Date()).minAge(18)`, typed from the signature, its
+/// docs from these comments. Each parameter and the result must be an `xark::Input`
+/// type (`Field`, `uN`, `bool`, `Date`, a struct with `#[input]`, …; `impl Into<T>`
+/// takes a `T`); the receiver may be `self` or `&self`. The block itself compiles as
+/// written; a client build (`--cfg xark_client`) also gives each method a wasm export
+/// taking and returning JSON (see `xark::client`), described in the module's
+/// `xark.exports` section. That works from any crate, so a gadget's types bring their
+/// functions to every circuit that takes them.
+#[proc_macro_attribute]
+pub fn input(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::Item);
+    let out = match &item {
+        syn::Item::Struct(_) | syn::Item::Enum(_) => {
+            let derive: DeriveInput = match syn::parse2(quote! { #item }) {
+                Ok(d) => d,
+                Err(e) => return e.to_compile_error().into(),
+            };
+            match &derive.data {
+                Data::Struct(d) => {
+                    parse_encoding(attr.into()).and_then(|enc| struct_input(&derive, d, enc))
+                }
+                Data::Enum(d) if attr.is_empty() => enum_input(&derive, d),
+                _ => Err(syn::Error::new_spanned(
+                    TokenStream2::from(attr),
+                    "an enum's `#[input]` takes no arguments",
+                )),
+            }
+        }
+        syn::Item::Impl(block) if attr.is_empty() => export_impl(block),
+        syn::Item::Impl(_) => Err(syn::Error::new_spanned(
+            TokenStream2::from(attr),
+            "an `impl` block's `#[input]` takes no arguments",
+        )),
+        other => Err(syn::Error::new_spanned(
+            other,
+            "#[input] goes on a struct, a fieldless enum or an `impl` block",
         )),
     };
     match out {
-        Ok(ts) => ts.into(),
-        Err(e) => e.to_compile_error().into(),
+        Ok(ts) => quote! { #item #ts }.into(),
+        Err(e) => {
+            let e = e.to_compile_error();
+            quote! { #item #e }.into()
+        }
     }
 }
 
@@ -444,37 +488,40 @@ enum StructEncoding {
     Bytes,
 }
 
-fn parse_encoding(attrs: &[Attribute]) -> syn::Result<StructEncoding> {
+fn parse_encoding(args: TokenStream2) -> syn::Result<StructEncoding> {
     let mut enc = StructEncoding::Fields;
-    for attr in attrs.iter().filter(|a| a.path().is_ident("input")) {
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("bytes") {
-                enc = StructEncoding::Bytes;
-                Ok(())
-            } else if meta.path.is_ident("number") {
-                meta.parse_nested_meta(|m| {
-                    if m.path.is_ident("bits") {
-                        let lit: LitInt = m.value()?.parse()?;
-                        enc = StructEncoding::Number(lit.base10_parse()?);
-                        Ok(())
-                    } else {
-                        Err(m.error("expected `bits = <n>`"))
-                    }
-                })
-            } else {
-                Err(meta.error("expected `number(bits = <n>)` or `bytes`"))
-            }
-        })?;
-    }
+    let parser = syn::meta::parser(|meta| {
+        if meta.path.is_ident("bytes") {
+            enc = StructEncoding::Bytes;
+            Ok(())
+        } else if meta.path.is_ident("number") {
+            meta.parse_nested_meta(|m| {
+                if m.path.is_ident("bits") {
+                    let lit: LitInt = m.value()?.parse()?;
+                    enc = StructEncoding::Number(lit.base10_parse()?);
+                    Ok(())
+                } else {
+                    Err(m.error("expected `bits = <n>`"))
+                }
+            })
+        } else {
+            Err(meta.error("expected `number(bits = <n>)` or `bytes`"))
+        }
+    });
+    syn::parse::Parser::parse2(parser, args)?;
     Ok(enc)
 }
 
-fn struct_input(input: &DeriveInput, data: &DataStruct) -> syn::Result<TokenStream2> {
+fn struct_input(
+    input: &DeriveInput,
+    data: &DataStruct,
+    enc: StructEncoding,
+) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     if !input.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &input.generics,
-            "#[derive(Input)] does not support generic types; implement `xark::Input` by \
+            "#[input] does not support generic types; implement `xark::Input` by \
              hand (a `TYPE`, and `read`/`write` of the fields in order)",
         ));
     }
@@ -508,7 +555,6 @@ fn struct_input(input: &DeriveInput, data: &DataStruct) -> syn::Result<TokenStre
         .iter()
         .map(|(_, acc, _)| quote! { __w.write(&self.#acc); });
 
-    let enc = parse_encoding(&input.attrs)?;
     let encoding = match enc {
         StructEncoding::Fields => quote! { ::xark::input::Encoding::Fields },
         StructEncoding::Number(bits) => {
@@ -708,21 +754,21 @@ fn enum_input(input: &DeriveInput, data: &DataEnum) -> syn::Result<TokenStream2>
     if !input.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &input.generics,
-            "#[derive(Input)] does not support generic enums",
+            "#[input] does not support generic enums",
         ));
     }
     for v in &data.variants {
         if !matches!(v.fields, syn::Fields::Unit) {
             return Err(syn::Error::new_spanned(
                 v,
-                "#[derive(Input)] on an enum needs fieldless variants: each is one value \
+                "#[input] on an enum needs fieldless variants: each is one value \
                  of a `Choice` or one bit of a `Bitfield`",
             ));
         }
         if let Some((_, d)) = &v.discriminant {
             return Err(syn::Error::new_spanned(
                 d,
-                "#[derive(Input)] numbers variants by position; remove the explicit value",
+                "#[input] numbers variants by position; remove the explicit value",
             ));
         }
     }
@@ -760,50 +806,11 @@ fn eval_usize_lit(e: &Expr) -> syn::Result<usize> {
     }
 }
 
-/// `#[xark::export]` on an inherent `impl` block: its `pub fn`s become functions a
-/// generated client (`xark client`) calls, running this Rust code. Write a
-/// constructor or helper once, here:
-///
-/// ```ignore
-/// #[xark::export]
-/// impl Policy {
-///     /// A check on `today` that any holder passes.
-///     pub fn on(today: impl Into<Date>) -> Policy { … }
-///     /// At least `years` old on `today`.
-///     pub fn min_age(self, years: u16) -> Policy { … }
-/// }
-/// ```
-///
-/// and TypeScript gets `Policy.on(new Date()).minAge(18)`, typed from the signature,
-/// its docs from these comments. Each parameter and the result must be an
-/// `xark::Input` type (`Field`, `uN`, `bool`, `Date`, a derived struct, …; `impl
-/// Into<T>` takes a `T`); the receiver may be `self` or `&self`.
-///
-/// The block itself compiles as written. In a client build (`--cfg xark_client`) each
-/// method also gets a wasm export taking and returning JSON (see `xark::client`), and a
-/// description in the module's `xark.exports` section for the client generator.
-#[proc_macro_attribute]
-pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
-    if !attr.is_empty() {
-        return syn::Error::new_spanned(TokenStream2::from(attr), "`#[export]` takes no arguments")
-            .to_compile_error()
-            .into();
-    }
-    let block = parse_macro_input!(item as ItemImpl);
-    match export_impl(&block) {
-        Ok(ts) => ts.into(),
-        Err(e) => {
-            let e = e.to_compile_error();
-            quote! { #block #e }.into()
-        }
-    }
-}
-
 fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
     if block.trait_.is_some() || !block.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &block.self_ty,
-            "#[xark::export] goes on a plain inherent `impl Type { .. }` block",
+            "#[input] goes on a plain inherent `impl Type { .. }` block",
         ));
     }
     let self_ty = &block.self_ty;
@@ -925,7 +932,6 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
         });
     }
     Ok(quote! {
-        #block
         ::xark::__client_export! {
             #(#items)*
         }

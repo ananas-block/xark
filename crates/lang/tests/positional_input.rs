@@ -1,17 +1,17 @@
 //! The positional input path: the host builds its domain struct with `Field` values,
-//! `#[derive(Input)]`'s `to_fields` flattens it, `Field::to_decimal` renders each, and
+//! `#[input]`'s `to_fields` flattens it, `Field::to_decimal` renders each, and
 //! they bind POSITIONALLY to the circuit's inputs (input order = input-var order). No
 //! leaf names, no parallel mirror struct.
 
 use std::collections::BTreeMap;
 
-use xark::{Field, Input};
+use xark::{Field, input};
 use xark_ir::solver;
 
 /// The host-side domain type — real `Field` values, one derive. In a real crate this is
 /// the *same* struct the circuit body uses (cfg-split), here a standalone copy so the
 /// test can build it host-side.
-#[derive(Input)]
+#[input]
 struct ZkId {
     id: Field,
     dob: Field,
@@ -89,7 +89,7 @@ fn const_integer_construction() {
 fn positional_input_flattens_and_solves() {
     // Toy relation over a struct input: the four fields must sum to a public total.
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Input)]\n\
+        #[input]\n\
         struct ZkId { id: Field, dob: Field, country: Field, nonce: Field }\n\
         pub fn circuit(u: Private<ZkId>, total: Public<Field>) {\n\
         require_eq(u.id + u.dob + u.country + u.nonce, total);\n\

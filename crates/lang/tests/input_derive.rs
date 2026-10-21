@@ -1,10 +1,10 @@
-//! `#[derive(Input)]`: one impl gives a struct its leaves (named by the compiler's
+//! `#[input]`: one impl gives a struct its leaves (named by the compiler's
 //! layout, in input order), its host values for the prover, its `to_fields`, and its
 //! `schema.json` description. These tests pin the leaf names, order and values, which
 //! must match the compiler's input-var order exactly.
 
-use xark::input::{self, Type};
-use xark::{Bitfield, Choice, Country, Date, Field, Input, Text};
+use xark::input::Type;
+use xark::{Bitfield, Choice, Country, Date, Field, Input, Text, input};
 
 /// The leaves with decimal values, for comparison.
 fn leaves<T: Input>(v: &T, prefix: &str) -> Vec<(String, String)> {
@@ -16,7 +16,7 @@ fn leaves<T: Input>(v: &T, prefix: &str) -> Vec<(String, String)> {
 
 /// Scalars + a fixed array — `Field`s (host-built) rendered to decimals, `<prefix>.f[i]`
 /// for array elements.
-#[derive(Input)]
+#[input]
 struct Account {
     id: Field,
     tags: [Field; 3],
@@ -48,13 +48,15 @@ fn input_leaves_are_values_in_input_order() {
 /// Native integers, byte arrays, and a nested derived struct: host values stay
 /// native (`u64`, `[u8; 2]`), and the nested struct's leaves appear inline under its
 /// field name.
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 struct Inner {
     a: u64,
     b: Field,
 }
 
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 struct Outer {
     inner: Inner,
     tag: [u8; 2],
@@ -130,7 +132,8 @@ fn a_hand_written_impl() {
 use xark::{Private, Public};
 
 /// A holder's standing.
-#[derive(Clone, Copy, Debug, PartialEq, Input)]
+#[input]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Tier {
     Retail,
     Accredited,
@@ -260,18 +263,19 @@ fn host_schema_is_the_built_schema() {
     assert_eq!(built, host);
 }
 
-/// `#[xark::export]` leaves the block as written outside a client build, and its
+/// `#[xark::input]` leaves the block as written outside a client build, and its
 /// values cross in their natural JSON forms (`xark::client`), as a client sees them.
 mod exported {
     use xark::prelude::*;
 
-    #[derive(Clone, Copy, Debug, Input)]
+    #[input]
+    #[derive(Clone, Copy, Debug)]
     pub struct Window {
         pub from: Date,
         pub to: Date,
     }
 
-    #[xark::export]
+    #[xark::input]
     impl Window {
         /// From `from` on, with no end.
         pub fn starting(from: impl Into<Date>) -> Window {

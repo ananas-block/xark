@@ -28,16 +28,17 @@
 //! `j` at word bit `(3 - idx%4)*8 + j`. [`From<[u8; 32]>`] places bytes there; the
 //! KAT test `sha256("abc")` confirms it.
 
-use xark::{Field, Input, RequireEqCircuit};
+use xark::{Field, Input, RequireEqCircuit, input};
 
 /// A 256-bit SHA-256 digest in `xark_sha256::sha256`'s native output layout:
 /// 8 words × 32 little-endian bits (`[[Field; 32]; 8]`). Build from the gadget
 /// output (`Digest::from(sha256(msg))`) or a known constant (`EXPECTED.into()`),
 /// then pin them with [`Digest::require_eq`].
 ///
-/// `#[derive(Input)]` makes it a circuit input whose 256 bits are leaves
+/// `#[input]` makes it a circuit input whose 256 bits are leaves
 /// `bits[w][j]`, in that order on the host and in the circuit alike.
-#[derive(Clone, Copy, Debug, Input)]
+#[input]
+#[derive(Clone, Copy, Debug)]
 pub struct Digest {
     /// 8 words × 32 little-endian bits, identical to the `sha256` gadget output.
     bits: [[Field; 32]; 8],
@@ -76,7 +77,7 @@ impl RequireEqCircuit<Digest> for [[Field; 32]; 8] {
     }
 }
 
-// `require_eq(a, b)` between two `Digest`s is `#[derive(Input)]`'s: bit for bit.
+// `require_eq(a, b)` between two `Digest`s is `#[input]`'s: bit for bit.
 
 // Pin the derived leaf count at compile time.
 const _: () = assert!(<Digest as Input>::LEN == 256);

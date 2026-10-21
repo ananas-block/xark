@@ -623,7 +623,8 @@ mod host {
 mod tests {
     use super::*;
 
-    #[derive(Clone, Copy, Debug, PartialEq, crate::Input)]
+    #[crate::input]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     enum Color {
         Red,
         Green,

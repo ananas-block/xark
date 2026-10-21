@@ -4941,15 +4941,15 @@ fn byte_array_param_is_range_checked() {
     );
 }
 
-/// `#[derive(Input)]` with native integers, a byte array, and a nested struct:
+/// `#[input]` with native integers, a byte array, and a nested struct:
 /// leaves are named by the structural flatten, each `uN` is range-checked on entry, and
 /// `to_fields()` flattens nested structs inline.
 #[test]
 fn circuit_input_with_uints_and_nesting() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub struct Inner { pub a: u64, pub b: Field }\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub struct Outer { pub inner: Inner, pub tag: [u8; 2], pub c: u32 }\n\
         #[circuit]\n\
         pub fn nested(o: Private<Outer>, h: Public<Field>) {\n\
@@ -4992,7 +4992,7 @@ fn circuit_input_with_uints_and_nesting() {
 #[test]
 fn build_writes_input_schema() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub struct Policy { pub min: u64, pub tags: [u8; 2] }\n\
         #[circuit]\n\
         pub fn gate(secret: Private<Field>, policy: Public<Policy>, out: Public<Field>, b: Private<[u8; 3]>) {\n\
@@ -5086,7 +5086,7 @@ fn packed_words_cost_nothing() {
 #[test]
 fn bool_inputs() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub struct Gate { pub open: bool, pub level: u8 }\n\
         #[circuit]\n\
         pub fn gated(flag: Private<bool>, g: Private<Gate>, x: Private<Field>, out: Public<Field>) {\n\
@@ -5121,7 +5121,7 @@ fn bool_inputs() {
 #[test]
 fn choice_require_in_is_sound() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub enum K { A, B, C }\n\
         #[circuit]\n\
         pub fn pick(c: Private<Choice<K>>, set: Public<Bitfield<K>>) {\n\
@@ -5147,7 +5147,7 @@ fn choice_require_in_is_sound() {
 #[test]
 fn standard_types_compare() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
-        #[derive(Clone, Copy, Input)]\n\
+        #[input] #[derive(Clone, Copy)]\n\
         pub struct Id { pub doc: Text, pub born: Date }\n\
         #[circuit]\n\
         pub fn same(a: Private<Id>, b: Public<Id>, c: Private<Choice<Country>>, s: Public<Bitfield<Country>>) {\n\

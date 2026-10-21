@@ -30,7 +30,7 @@ extern crate alloc;
 #[cfg(not(xark))]
 extern crate std;
 
-// Self-alias so `#[derive(Input)]`'s generated `::xark::…` paths resolve *inside*
+// Self-alias so `#[input]`'s generated `::xark::…` paths resolve *inside*
 // this crate (where it derives `Country`), the same way they resolve in downstream
 // circuit crates. Standard proc-macro pattern.
 extern crate self as xark;
@@ -51,12 +51,12 @@ pub mod types;
 pub use types::InvalidValue;
 pub use types::{Bitfield, Choice, Date, Text};
 
-/// Rust functions a generated client calls (`#[xark::export]`). Host builds only.
+/// Rust functions a generated client calls (`#[input]` on an `impl`). Host builds only.
 #[cfg(not(xark))]
 pub mod client;
 
 /// The client build's exported items, or nothing in any other build (so a circuit
-/// crate never names the `xark_client` cfg itself). Used by `#[xark::export]`.
+/// crate never names the `xark_client` cfg itself). Used by `#[input]` on an `impl`.
 #[cfg(xark_client)]
 #[doc(hidden)]
 #[macro_export]
@@ -93,12 +93,13 @@ pub mod prelude {
         Field, Private, Public, require, require_eq, require_ge, require_gt, require_le,
         require_lt, require_ne, witness_begin, witness_end,
     };
-    // `Input` (the trait and its derive) makes a struct a circuit input and an enum
-    // a `Choice`/`Bitfield` of variants; `circuit` is the entry attribute.
+    // `#[input]` makes a struct a circuit input (`Input`), an enum a
+    // `Choice`/`Bitfield` of variants (`Enum`), and an `impl` block's methods client
+    // functions; `circuit` is the entry attribute.
     pub use crate::country::Country;
     pub use crate::input::{Enum, Input};
     pub use crate::types::{Bitfield, Choice, Date, Text};
-    pub use xark_macros::{Input, circuit, export};
+    pub use xark_macros::{circuit, input};
 }
 
 // Same surface as `prelude`, re-exported at the crate root so both
@@ -137,7 +138,9 @@ pub use crate::lang::bytes_to_fields;
 // name. Authors never touch it; they write `require_eq`.
 #[doc(hidden)]
 pub use crate::lang::__xark_require_eq_scalar;
-// `#[derive(Input)]`: `xark::Input` for a struct (its fields in order; with
+// `#[input]`: `xark::Input` for a struct (its fields in order; with
 // `#[input(number(bits = B))]` or `#[input(bytes)]` a standard encoding and its host
-// conversions), `xark::Enum` for a fieldless enum.
-pub use xark_macros::{Input, circuit, export};
+// conversions), `xark::Enum` for a fieldless enum, client functions for an `impl`.
+// (The attribute shares its name with the `input` module: macros have their own
+// namespace.)
+pub use xark_macros::{circuit, input};

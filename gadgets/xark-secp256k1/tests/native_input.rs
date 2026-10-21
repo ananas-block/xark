@@ -1,4 +1,4 @@
-//! Validate the `#[derive(Input)]`-generated host side for `Scalar` (a number in
+//! Validate the `#[input]`-generated host side for `Scalar` (a number in
 //! 2×128-bit limbs) and `Point`/`Signature` (byte-encoded composites): `From` their
 //! big-endian bytes, then the leaves, against the exact leaf-name / limb contract the
 //! compiler binds.

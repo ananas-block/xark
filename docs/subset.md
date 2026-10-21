@@ -35,7 +35,7 @@ pub fn cube(secret: Private<Field>, result: Public<Field>) {
 - **Types:** `Field`; native `u8`..`u128`; fixed-size arrays (nested too); tuples and structs of
   these. Circuit inputs must be built from `Field` and `uN` with **constant** array lengths; each
   `uN` input is range-checked `< 2^N` on entry, and each `[u8; N]` `#[circuit]` parameter byte-wise.
-  A parameter is any `xark::Input` type: these, `#[derive(Input)]` structs of them, the standard
+  A parameter is any `xark::Input` type: these, `#[input]` structs of them, the standard
   types (`Date`, `Text`, `Choice<E>`, `Bitfield<E>`) and gadget types.
 - **`Field` arithmetic:** `+`, `-`, `*`, `/`, unary `-`, compound assignment (`+=`, …), `.pow(n)`
   (exponentiation by a **constant** `n`). `^` is boolean XOR (`.xor()`), not a power.
