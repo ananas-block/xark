@@ -1,8 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-// `npm test`: builds what the clients need (setup.ts), checks the committed clients
-// are current (clients.test.ts), typechecks everything, and runs each example's
+// `npm test` typechecks everything (tsc, which also fails on an `@ts-expect-error`
+// with nothing to expect), then: builds what the clients need (setup.ts), checks the
+// committed clients are current (clients.test.ts), and runs each example's
 // `<name>/<name>.test.ts` through xark-wasm's node build. `npm run update` rewrites
 // stale clients.
 export default defineConfig({
@@ -13,12 +14,5 @@ export default defineConfig({
     globals: true,
     testTimeout: 60_000,
     hookTimeout: 120_000,
-    // Type errors, and an `@ts-expect-error` with nothing to expect, fail the run.
-    typecheck: {
-      enabled: true,
-      include: ["*.test.ts", "*/*.test.ts"],
-      tsconfig: "./tsconfig.json",
-      ignoreSourceErrors: false,
-    },
   },
 });

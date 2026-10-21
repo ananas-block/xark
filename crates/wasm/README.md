@@ -169,10 +169,7 @@ instance) via a `SharedArrayBuffer`. That needs a cross-origin-isolated page
 (`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy:
 require-corp`), and the proving call must run in a Web Worker (it blocks with
 `Atomics.wait`). Without isolation `parallelSupported()` is false and the same
-prover runs single-threaded with the same memory profile. `tests/browser/run.py`
-checks both cases, `proveFromStream(fetch(...))` and smooth-domain keys in headless
-Chrome, Firefox and WebKit (Safari's engine) — all proofs byte-identical across
-engines.
+prover runs single-threaded with the same memory profile.
 
 **Smooth-domain keys** (`xark setup`'s default for dev keys: a QAP domain up to
 44% smaller) prove through every API. The key's header states its domain, so `proveFromStream` computes
