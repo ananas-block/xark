@@ -291,8 +291,7 @@ Errors are typed for a UI to act on: an `InputError` carries the input's `path`
 and their vitest tests. `npm test` there (run in CI) builds xark, xark-wasm and each
 example, fails if a committed client is stale (`npm run update` rewrites it),
 typechecks, and runs the tests in Node; a folder with a `<name>.test.ts` is all a new
-example needs. `npm run test:browser` (its own CI job) runs `browser/` in headless
-Chromium, through xark-wasm's web build as an app loads it.
+example needs.
 
 ## Editor diagnostics (rust-analyzer)
 

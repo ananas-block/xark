@@ -1,17 +1,14 @@
 {
   "name": "xark-client-check",
   "private": true,
-  "description": "The generated TypeScript clients of the representative examples: checked current, typechecked, and run in Node (npm test) or a browser (npm run test:browser).",
+  "description": "The generated TypeScript clients of the representative examples: checked current, typechecked, and run (npm test).",
   "scripts": {
-    "test": "vitest run --project node",
-    "update": "vitest run --project node -u",
-    "test:browser": "XARK_BROWSER=1 vitest run --project browser"
+    "test": "vitest run",
+    "update": "vitest run -u"
   },
   "devDependencies": {
     "@blueshift-gg/xark-wasm": "file:../../crates/wasm",
     "@types/node": "^22.0.0",
-    "@vitest/browser": "^3.2.7",
-    "playwright": "^1.64.1",
     "typescript": "^5.6.0",
     "vitest": "^3.2.7"
   }

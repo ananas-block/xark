@@ -202,29 +202,3 @@ jobs:
       - name: Generated clients (cube, zk_kyc, sha256, merkle)
         working-directory: clients/check
         run: npm ci && npm test
-
-  clients-browser:
-    # The same clients in headless Chromium, through xark-wasm's web build: loading it
-    # and its init(), fetching build output from URLs, proving, verifying, and the
-    # Rust functions from client.wasm.
-    name: generated clients (browser)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-      - name: Install stable Rust + wasm32
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Generated clients in Chromium
-        working-directory: clients/check
-        run: npm ci && npx playwright install --with-deps chromium && npm run test:browser

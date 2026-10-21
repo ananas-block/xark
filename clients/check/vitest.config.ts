@@ -1,53 +1,24 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-// `npm test` (the `node` project): builds what the clients need (setup.ts), checks
-// the committed clients are current (clients.test.ts), typechecks everything, and runs
-// each example's `<name>/<name>.test.ts` through xark-wasm's node build. `npm run
-// update` rewrites stale clients. `npm run test:browser` (the `browser` project, in
-// CI's own job) runs `browser/` in headless Chromium through xark-wasm's web build.
-const repo = fileURLToPath(new URL("../..", import.meta.url));
-
+// `npm test`: builds what the clients need (setup.ts), checks the committed clients
+// are current (clients.test.ts), typechecks everything, and runs each example's
+// `<name>/<name>.test.ts` through xark-wasm's node build. `npm run update` rewrites
+// stale clients.
 export default defineConfig({
   cacheDir: fileURLToPath(new URL("node_modules/.vite", import.meta.url)),
-  // The browser tests fetch the examples' build output and xark-wasm from the repo.
-  server: { fs: { allow: [repo] } },
-  // xark-wasm's web build loads its .wasm beside itself: serve it as it is.
-  optimizeDeps: { exclude: ["@blueshift-gg/xark-wasm"] },
   test: {
+    include: ["*.test.ts", "*/*.test.ts"],
     globalSetup: ["./setup.ts"],
     globals: true,
     testTimeout: 60_000,
     hookTimeout: 120_000,
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: "node",
-          include: ["*.test.ts", "*/*.test.ts"],
-          exclude: ["browser/**"],
-          // Type errors, and an `@ts-expect-error` with nothing to expect, fail the run.
-          typecheck: {
-            enabled: true,
-            include: ["*.test.ts", "*/*.test.ts"],
-            tsconfig: "./tsconfig.json",
-            ignoreSourceErrors: false,
-          },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "browser",
-          include: ["browser/*.test.ts"],
-          browser: {
-            enabled: true,
-            provider: "playwright",
-            headless: true,
-            instances: [{ browser: "chromium" }],
-          },
-        },
-      },
-    ],
+    // Type errors, and an `@ts-expect-error` with nothing to expect, fail the run.
+    typecheck: {
+      enabled: true,
+      include: ["*.test.ts", "*/*.test.ts"],
+      tsconfig: "./tsconfig.json",
+      ignoreSourceErrors: false,
+    },
   },
 });

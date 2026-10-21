@@ -215,8 +215,7 @@ verification starter, and the `xark-client` npm package is removed.
 - The slow CI checks (known-answer vectors, the EC gadget vectors, the example
   sweep, a publish rehearsal) run on every pull request instead of nightly. A
   weekly run keeps what can fail with no code change: the digest check on Rust
-  stable and beta, and a long fuzz run. Generated clients are tested in CI, in Node
-  and in headless Chromium. Repository tasks are `cargo xtask` (`digests`,
+  stable and beta, and a long fuzz run. Generated clients are tested in CI. Repository tasks are `cargo xtask` (`digests`,
   `difftest`, `publish`).
 
 ### Removed
