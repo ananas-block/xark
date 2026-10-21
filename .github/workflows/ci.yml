@@ -71,7 +71,8 @@ jobs:
 
   reproducible:
     # A circuit is identical (same R1CS digest) under every supported rustc. Rebuild every example with the oldest supported
-    # toolchain, stable and beta, and compare with tests/stable-digests.txt.
+    # toolchain, stable and beta, and compare with tests/stable-digests.txt; an example
+    # with Rust client functions must also build its client.wasm on each.
     name: circuit reproducibility (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     timeout-minutes: 60

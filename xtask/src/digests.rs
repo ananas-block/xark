@@ -2,7 +2,8 @@
 //! R1CS digest (`stream_digest`), one `<example> <digest>` line each.
 //!
 //! The digest is the same on every supported rustc (1.89+): the stable frontend's
-//! reproducibility guarantee. A difference means a toolchain changed a circuit (a
+//! reproducibility guarantee. An example with Rust client functions (`#[input]` on
+//! an `impl`) also builds its `client.wasm`, which must build on that rustc too. A difference means a toolchain changed a circuit (a
 //! bug to report) or the lowering changed on purpose (`--update`, and review).
 
 use std::collections::BTreeMap;
@@ -40,12 +41,17 @@ pub fn run(args: Args) -> Result<()> {
         .join("stable-digests")
         .join(version.replace(' ', "_"));
     let digests = Mutex::new(BTreeMap::new());
+    let clients = Mutex::new(Vec::new());
     crate::parallel(crate::circuits()?, args.jobs, |name| {
         let dir = crate::root().join("examples").join(&name);
         let digest = digest(&dir, &target.join(&name)).unwrap_or_else(|e| {
             eprintln!("{name}: {e}");
             "BUILD-FAILED".into()
         });
+        if has_client_functions(&dir) {
+            let built = xark_frontend::build_client(&dir, &target.join(&name).join("client"));
+            clients.lock().unwrap().push((name.clone(), built.err()));
+        }
         digests.lock().unwrap().insert(name, digest);
     });
     let text: String = digests
@@ -73,7 +79,30 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         print!("{text}");
     }
+    let clients = clients.into_inner().unwrap();
+    let failed: Vec<String> = clients
+        .iter()
+        .filter_map(|(n, e)| e.as_ref().map(|e| format!("{n}: {e}")))
+        .collect();
+    if !failed.is_empty() {
+        bail!(
+            "client.wasm doesn't build under {version}:\n{}",
+            failed.join("\n")
+        );
+    }
+    eprintln!("{} client.wasm build ({version})", clients.len());
     Ok(())
+}
+
+/// Whether the crate at `dir` puts `#[input]` on an `impl`: it has Rust functions a
+/// generated client calls, built as `client.wasm`.
+fn has_client_functions(dir: &std::path::Path) -> bool {
+    let src = std::fs::read_to_string(dir.join("src/lib.rs")).unwrap_or_default();
+    let lines: Vec<&str> = src.lines().map(str::trim).collect();
+    lines.windows(2).any(|w| {
+        matches!(w[0], "#[input]" | "#[xark::input]")
+            && (w[1].starts_with("impl ") || w[1].starts_with("impl<"))
+    })
 }
 
 /// Build the circuit crate at `dir` and digest its R1CS, after checking the compact
