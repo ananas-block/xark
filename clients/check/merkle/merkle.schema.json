@@ -36,5 +36,6 @@
     "root"
   ],
   "types": {},
-  "version": 2
+  "version": 2,
+  "xark": "0.3.0"
 }

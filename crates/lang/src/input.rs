@@ -551,11 +551,12 @@ fn push_str_json(s: &mut String, v: &str) {
 /// One `#[circuit]` parameter: its name, whether it is public, and its type.
 pub type Param = (&'static str, bool, Type);
 
-/// The circuit's `schema.json` (version 2): its inputs in declaration order, every
-/// named type they reach under `types`, and the public leaves in proof order.
+/// The circuit's `schema.json` (version 2): the xark version that wrote it, its inputs
+/// in declaration order, every named type they reach under `types`, and the public
+/// leaves in proof order.
 ///
 /// ```text
-/// {"version": 2, "circuit": "zk_kyc",
+/// {"version": 2, "xark": "0.3.0", "circuit": "zk_kyc",
 ///  "inputs": [{"name": "id", "visibility": "private", "type": {"ref": "Identity"}}, …],
 ///  "types": {"Identity": {"struct": [{"name": "born", "type": {"ref": "Date"}}, …]},
 ///            "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
@@ -568,7 +569,13 @@ pub type Param = (&'static str, bool, Type);
 /// `Bignum`, two crates' `Point`s): clients look types up by name.
 pub fn schema_json(circuit: &str, params: &[Param]) -> String {
     let mut defs = Defs::default();
-    let mut s = String::from("{\"version\":2,\"circuit\":");
+    // `xark`: the version that wrote it, so a client runtime can tell it was made for
+    // another release.
+    let mut s = String::from(concat!(
+        "{\"version\":2,\"xark\":\"",
+        env!("CARGO_PKG_VERSION"),
+        "\",\"circuit\":"
+    ));
     push_str_json(&mut s, circuit);
     s.push_str(",\"inputs\":[");
     for (i, (name, public, ty)) in params.iter().enumerate() {
@@ -883,7 +890,11 @@ mod tests {
         let s = schema_json("c", &[("p", true, ty), ("k", false, Type::Uint(64))]);
         assert_eq!(
             s,
-            r#"{"version":2,"circuit":"c","inputs":[{"name":"p","visibility":"public","type":{"ref":"P"}},{"name":"k","visibility":"private","type":{"uint":64}}],"types":{"P":{"struct":[{"name":"x","type":"field"},{"name":"t","type":{"array":{"of":{"tuple":[{"uint":8},"field"]},"len":2}}}]}},"public_inputs":["p.x","p.t[0].0","p.t[0].1","p.t[1].0","p.t[1].1"]}"#
+            concat!(
+                r#"{"version":2,"xark":""#,
+                env!("CARGO_PKG_VERSION"),
+                r#"","circuit":"c","inputs":[{"name":"p","visibility":"public","type":{"ref":"P"}},{"name":"k","visibility":"private","type":{"uint":64}}],"types":{"P":{"struct":[{"name":"x","type":"field"},{"name":"t","type":{"array":{"of":{"tuple":[{"uint":8},"field"]},"len":2}}}]}},"public_inputs":["p.x","p.t[0].0","p.t[0].1","p.t[1].0","p.t[1].1"]}"#
+            )
         );
     }
 

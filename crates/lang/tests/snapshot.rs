@@ -5005,6 +5005,7 @@ fn build_writes_input_schema() {
         schema,
         serde_json::json!({
             "version": 2,
+            "xark": env!("CARGO_PKG_VERSION"),
             "circuit": "gate",
             "inputs": [
                 { "name": "secret", "visibility": "private", "type": "field" },

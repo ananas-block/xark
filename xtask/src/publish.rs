@@ -105,6 +105,9 @@ fn plan() -> Result<Vec<(String, Option<PathBuf>)>> {
             mine.insert(pkgs.get_key_value(dep).unwrap().0.as_str());
         }
     }
+    errors.extend(npm_version_errors(
+        pkgs["xark-cli"]["version"].as_str().unwrap_or_default(),
+    ));
     if !errors.is_empty() {
         bail!("cannot publish:\n  {}", errors.join("\n  "));
     }
@@ -135,6 +138,34 @@ fn plan() -> Result<Vec<(String, Option<PathBuf>)>> {
             (n.to_string(), own)
         })
         .collect())
+}
+
+/// The npm package `@blueshift-gg/xark-wasm` is released with the crates: its
+/// `package.json` and its client runtime's `VERSION` (which checks a client's
+/// `schema.json` came from the same release) must carry the workspace's version.
+fn npm_version_errors(version: &str) -> Vec<String> {
+    let wasm = crate::root().join("crates/wasm");
+    let read = |f: &str| std::fs::read_to_string(wasm.join(f)).unwrap_or_default();
+    let package: Value = serde_json::from_str(&read("package.json")).unwrap_or_default();
+    let client = read("js/client.mjs");
+    let runtime = client
+        .lines()
+        .find_map(|l| l.strip_prefix("export const VERSION = \""))
+        .and_then(|l| l.split('"').next())
+        .unwrap_or_default();
+    let mut errors = Vec::new();
+    if package["version"] != version {
+        errors.push(format!(
+            "crates/wasm/package.json is {}, not {version}",
+            package["version"]
+        ));
+    }
+    if runtime != version {
+        errors.push(format!(
+            "crates/wasm/js/client.mjs's VERSION is {runtime:?}, not {version}"
+        ));
+    }
+    errors
 }
 
 /// `cargo metadata --no-deps` for the workspace at `dir`: its packages.

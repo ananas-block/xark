@@ -681,7 +681,11 @@ mod tests {
         assert_eq!(Color::from_name("Green"), Some(Color::Green));
         assert_eq!(
             crate::input::schema_json("c", &[("c", true, <Choice<Color>>::TYPE)]),
-            r#"{"version":2,"circuit":"c","inputs":[{"name":"c","visibility":"public","type":{"ref":"Choice<Color>"}}],"types":{"Choice<Color>":{"newtype":"field","encoding":{"choice":"Color"}},"Color":{"enum":["Red","Green","Blue"]}},"public_inputs":["c"]}"#
+            concat!(
+                r#"{"version":2,"xark":""#,
+                env!("CARGO_PKG_VERSION"),
+                r#"","circuit":"c","inputs":[{"name":"c","visibility":"public","type":{"ref":"Choice<Color>"}}],"types":{"Choice<Color>":{"newtype":"field","encoding":{"choice":"Color"}},"Color":{"enum":["Red","Green","Blue"]}},"public_inputs":["c"]}"#
+            )
         );
     }
 }

@@ -1,3 +1,6 @@
+/** This package's version. A client's `schema.json` must come from the same release. */
+export const VERSION: string;
+
 /**
  * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
  * a safe integer, a decimal or `0x`-hex string, little-endian bytes (a `Uint8Array`
@@ -200,7 +203,10 @@ export interface CircuitSpec<PublicValues> {
 }
 
 /**
- * One circuit: makes its provers and verifiers, from a URL serving a copy of its
+ * One circuit: makes its provers and verifiers. Throws if its schema was written by
+ * another xark release than this runtime's (another minor version before 1.0).
+ *
+ * Makes them from a URL serving a copy of its
  * build output (`target/xark/<circuit>/`, relative to the page in a browser) or
  * from the bytes. Made from a URL, either also loads `client.wasm` when the
  * circuit has Rust functions; a missing `sources.json` or `client.wasm` is skipped.
