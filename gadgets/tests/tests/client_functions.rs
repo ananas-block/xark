@@ -79,9 +79,11 @@ fn a_gadgets_functions_reach_the_client() {
     for want in [
         "export const Span = {",
         "   * `lo..hi`, checked.",
-        "  new(lo: number, hi: number): SpanValue & SpanMethods {",
+        "  new(lo: number, hi: number): SpanValue {",
         "  len(span: Span): number {",
-        "export interface SpanMethods {",
+        // `len` is also a method on the values `new` returns.
+        "export class SpanValue {",
+        "  len(): number {\n    return Span.len(this);",
     ] {
         assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
     }
