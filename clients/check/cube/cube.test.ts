@@ -26,12 +26,15 @@ test("refuses bad inputs", () => {
 test("a Field is checked when it's made", () => {
   // Every form is the same element.
   const three = new Field(3);
-  for (const x of [3n, "3", " 3 ", "0x03", new Uint8Array([3]), new Uint8Array(32).fill(3, 31), three]) {
+  for (const x of [3n, "3", " 3 ", "0x03", new Uint8Array([3]), new Uint8Array(32).fill(3, 0, 1), three]) {
     expect(new Field(x).value).toBe(3n);
   }
-  expect(new Field(p - 1n).toBytes()).toEqual(
-    Uint8Array.from(Buffer.from((p - 1n).toString(16).padStart(64, "0"), "hex")),
-  );
+  // Bytes are little-endian, as proofs and Rust's `Field::from_le_bytes` have them.
+  expect(new Field(new Uint8Array([1, 2])).value).toBe(0x0201n);
+  expect(Field.fromBeBytes(new Uint8Array([1, 2])).value).toBe(0x0102n);
+  const big = new Field(p - 1n).toBytes();
+  expect(big).toEqual(Uint8Array.from(Buffer.from((p - 1n).toString(16).padStart(64, "0"), "hex")).reverse());
+  expect(new Field(big).value).toBe(p - 1n);
   expect(JSON.stringify({ x: three })).toBe('{"x":"3"}');
   // Each generated client has its own copy of the class; a Field from one passes to another.
   expect(cube.verify(cube.prove({ ...inputs, secret: new KycField(3) }).proof, { result: new KycField(27) })).toBe(true);

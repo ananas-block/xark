@@ -90,8 +90,8 @@ gadgets now check more:
   limbs) are gone.
 - **Field elements are a `Field` class in TypeScript.** Generated clients take and
   return `Field` (replacing `FieldLike` and `bigint`): `new Field(x)` takes a
-  `bigint`, a safe integer, a decimal or `0x`-hex string, big-endian bytes or
-  another `Field`, and throws unless it's an integer below the modulus, instead of
+  `bigint`, a safe integer, a decimal or `0x`-hex string, little-endian bytes
+  (`Field.fromBeBytes` for big-endian) or another `Field`, and throws unless it's an integer below the modulus, instead of
   failing later in the prover. A `Field` from one generated client passes to another.
 - **Builds show where the constraints go.** `xark build` lists the three source
   lines that cost the most constraints. `xark profile` ends with a breakdown by

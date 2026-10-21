@@ -214,9 +214,10 @@ export interface Identity {
 ```
 
 A field element is a `Field`: `new Field(x)` takes a `bigint`, a safe integer, a
-decimal or `0x`-hex string, or big-endian bytes, and throws unless it's below the
-field's modulus, so a value that would wrap never reaches the prover. Decoded
-public inputs and Rust functions return `Field`s too.
+decimal or `0x`-hex string, or little-endian bytes (as proofs and Rust's
+`Field::from_le_bytes` have them; `Field.fromBeBytes` for the other order), and
+throws unless it's below the field's modulus, so a value that would wrap never
+reaches the prover. Decoded public inputs and Rust functions return `Field`s too.
 
 
 ```ts

@@ -11,8 +11,9 @@
 
 /**
  * A BN254 field element, checked when it's made: `new Field(x)` takes a `bigint`,
- * a safe integer, a decimal or `0x`-hex string, big-endian bytes (a `Uint8Array`
- * of at most 32), or another `Field`, and throws unless it's an integer in [0, p).
+ * a safe integer, a decimal or `0x`-hex string, little-endian bytes (a `Uint8Array`
+ * of at most 32, as proofs and Rust's `Field::from_le_bytes` have them), or another
+ * `Field`, and throws unless it's an integer in [0, p).
  */
 export class Field {
   /** The field's modulus, p (BN254's scalar field). */
@@ -27,15 +28,20 @@ export class Field {
     this.value = v;
   }
 
+  /** From big-endian bytes (at most 32), as some outside formats have them. */
+  static fromBeBytes(bytes: Uint8Array): Field {
+    return new Field(bytes.slice().reverse());
+  }
+
   /** Whether `other` is the same element. */
   equals(other: Field | bigint | number | string | Uint8Array): boolean {
     return this.value === new Field(other).value;
   }
 
-  /** The element as 32 big-endian bytes. */
+  /** The element as 32 little-endian bytes, as proofs have it. */
   toBytes(): Uint8Array {
     const out = new Uint8Array(32);
-    for (let i = 31, v = this.value; i >= 0; i--, v >>= 8n) out[i] = Number(v & 0xffn);
+    for (let i = 0, v = this.value; i < 32; i++, v >>= 8n) out[i] = Number(v & 0xffn);
     return out;
   }
 
@@ -62,7 +68,7 @@ function fieldValue(x: unknown): bigint {
   }
   if (x instanceof Uint8Array) {
     if (x.length > 32) throw new RangeError(`Field: ${x.length} bytes; at most 32`);
-    return x.reduce((v, b) => (v << 8n) | BigInt(b), 0n);
+    return x.reduceRight((v, b) => (v << 8n) | BigInt(b), 0n);
   }
   // A `Field`, from this client or another.
   if (typeof x === "object" && x !== null && typeof (x as { value?: unknown }).value === "bigint") {
