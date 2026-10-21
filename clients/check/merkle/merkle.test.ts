@@ -1,6 +1,5 @@
 // The generated `merkle` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `merkle.ts` and builds the keys.
-import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts } from "../artifacts";
 import { Field, Merkle, MerkleProver, MerkleVerifier } from "./merkle";
 
@@ -11,8 +10,8 @@ const inputs = { leaf: new Field(7), siblings: fields([11, 22, 33, 44]), indexBi
 let prover: MerkleProver;
 let verifier: MerkleVerifier;
 beforeAll(async () => {
-  prover = await Merkle.prover(wasm, artifacts("merkle"));
-  verifier = await Merkle.verifier(wasm, artifacts("merkle"));
+  prover = await Merkle.prover(artifacts("merkle"));
+  verifier = await Merkle.verifier(artifacts("merkle"));
 });
 
 test("proves membership", () => {

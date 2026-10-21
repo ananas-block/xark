@@ -1,6 +1,5 @@
 // The generated `cube` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `cube.ts` and builds the keys.
-import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts, serve } from "../artifacts";
 import { Cube, CubeProver, CubeVerifier, Field } from "./cube";
 import { Field as KycField } from "../zk_kyc/zk_kyc";
@@ -12,8 +11,8 @@ const inputs = { secret: new Field(3), result: new Field(27) };
 let prover: CubeProver;
 let verifier: CubeVerifier;
 beforeAll(async () => {
-  prover = await Cube.prover(wasm, artifacts("cube"));
-  verifier = await Cube.verifier(wasm, artifacts("cube").verifyingKey);
+  prover = await Cube.prover(artifacts("cube"));
+  verifier = await Cube.verifier(artifacts("cube").verifyingKey);
 });
 
 test("proves and verifies", () => {
@@ -74,16 +73,16 @@ test("a Field is checked when it's made", () => {
 test("loads its build output from a URL", async () => {
   const server = await serve("cube");
   try {
-    const proof = (await Cube.prover(wasm, server.url)).prove(inputs);
+    const proof = (await Cube.prover(server.url)).prove(inputs);
     // A verifier fetches only the verifying key, and can't prove.
-    const fetched = await Cube.verifier(wasm, new URL(server.url));
+    const fetched = await Cube.verifier(new URL(server.url));
     expect(fetched.verify(proof)).toBe(true);
     // @ts-expect-error: a verifier has no `prove` (tsc checks this line)
     expect(fetched.prove).toBeUndefined();
-    await expect(Cube.prover(wasm, server.url + "missing/")).rejects.toThrow(/404/);
-    await expect(Cube.verifier(wasm, "/circuits/cube/")).rejects.toThrow(/pass an absolute URL/);
+    await expect(Cube.prover(server.url + "missing/")).rejects.toThrow(/404/);
+    await expect(Cube.verifier("/circuits/cube/")).rejects.toThrow(/pass an absolute URL/);
     // @ts-expect-error: proving needs the circuit and proving key (tsc checks this line)
-    await expect(Cube.prover(wasm, { verifyingKey: artifacts("cube").verifyingKey })).rejects.toThrow(/needs `circuit`/);
+    await expect(Cube.prover({ verifyingKey: artifacts("cube").verifyingKey })).rejects.toThrow(/needs `circuit`/);
   } finally {
     await server.close();
   }

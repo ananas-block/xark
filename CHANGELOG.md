@@ -88,11 +88,11 @@ gadgets now check more:
   `encodeInputs(schema, …)` first, as generated clients already do. The old
   resolver's guesses (`0x`-hex byte arrays, `.hi`/`.lo` hashes, digest bits,
   limbs) are gone.
-- **Generated clients: a prover, a verifier and a proof.** `ZkKyc.prover(wasm,
-  source)` and `ZkKyc.verifier(wasm, source)` replace `new ZkKyc(wasm, keys)` and
-  `ZkKyc.load`: `source` is a URL serving the build output or its bytes, each has
-  only the methods it can run, and either loads `client.wasm` (no `initClient`
-  step). `prove` returns a `Proof`; `proof.toBytes()` is one blob that
+- **Generated clients: a prover, a verifier and a proof.** `ZkKyc.prover(source)`
+  and `ZkKyc.verifier(source)` replace `new ZkKyc(wasm, keys)` and `ZkKyc.load`:
+  `source` is a URL serving the build output or its bytes, each has only the
+  methods it can run, and either loads `client.wasm` (no `initClient` step) and
+  xark-wasm itself (no module to import and pass in; `{ wasm }` overrides it). `prove` returns a `Proof`; `proof.toBytes()` is one blob that
   `verifier.verify(bytes, required)` and `verifier.decode(bytes)` read. The shared
   code (`Field`, `Proof`, loading, the Rust-function bridge) is xark-wasm's
   `@blueshift-gg/xark-wasm/client`, so a generated file holds only its circuit:

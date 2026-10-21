@@ -1,6 +1,5 @@
 // The generated `zk_kyc` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `zk_kyc.ts` and builds the keys.
-import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts } from "../artifacts";
 import { Country, Field, Identity, Policy, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
 
@@ -9,8 +8,8 @@ import { Country, Field, Identity, Policy, ZkKyc, ZkKycProver, ZkKycVerifier } f
 let prover: ZkKycProver;
 let verifier: ZkKycVerifier;
 beforeAll(async () => {
-  prover = await ZkKyc.prover(wasm, artifacts("zk_kyc"));
-  verifier = await ZkKyc.verifier(wasm, artifacts("zk_kyc"));
+  prover = await ZkKyc.prover(artifacts("zk_kyc"));
+  verifier = await ZkKyc.verifier(artifacts("zk_kyc"));
 });
 
 // The holder's credential, in the circuit's own types: `Text`, `Date`, a `Country`.
@@ -97,7 +96,7 @@ test("computes the issuer's commitment as the circuit does", () => {
   // `xark_poseidon2::hash(id.to_fields())`, the circuit's `id.commitment()`.
   const fields = prover.fields("Identity", id);
   expect(fields).toHaveLength(6);
-  expect(new Field(wasm.poseidon2(fields.map(String)))).toEqual(commitment);
+  expect(prover.poseidon2(fields)).toEqual(commitment);
   // @ts-expect-error: `fields` takes the circuit's structs by name (tsc checks this line)
   expect(() => prover.fields("Nope", id)).toThrow();
 });
@@ -111,6 +110,6 @@ test("names the input at fault", () => {
 });
 
 test("a verifier needs only the verifying key", async () => {
-  const bare = await ZkKyc.verifier(wasm, artifacts("zk_kyc").verifyingKey);
+  const bare = await ZkKyc.verifier(artifacts("zk_kyc").verifyingKey);
   expect(bare.verify(prover.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
 });

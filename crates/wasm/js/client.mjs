@@ -2,14 +2,16 @@
 // making a prover or verifier from a circuit's build output. A generated client
 // adds its circuit's types and schema:
 //
-//   import * as wasm from "@blueshift-gg/xark-wasm";
 //   import { ZkKyc } from "./zk_kyc"; // generated
-//   const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+//   const prover = await ZkKyc.prover("/circuits/zk_kyc/");
 //   const proof = prover.prove(inputs);
 //   send(proof.toBytes());
 //   // elsewhere
-//   const verifier = await ZkKyc.verifier(wasm, vkBytes);
-//   verifier.verify(body); // true
+//   const verifier = await ZkKyc.verifier(vkBytes);
+//   verifier.verify(body, required); // true
+//
+// xark-wasm itself is this package's main module, loaded (and initialized, for the
+// web build) the first time a prover or verifier is made.
 
 const MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
@@ -162,6 +164,18 @@ async function fetchParts(base, parts, options = {}) {
 
 const isLocation = (x) => typeof x === "string" || x instanceof URL;
 
+let loaded;
+/** xark-wasm: `options.wasm`, or this package's build for the platform, initialized. */
+function xarkWasm(options = {}) {
+  if (options.wasm) return Promise.resolve(options.wasm);
+  loaded ??= import("@blueshift-gg/xark-wasm").then(async (m) => {
+    // The web build exports its `init` as the default; node and workerd need none.
+    if (typeof m.default === "function") await m.default();
+    return m;
+  });
+  return loaded;
+}
+
 /**
  * One circuit, as its generated client describes it: makes its provers and
  * verifiers, and runs its Rust functions (`client.wasm`).
@@ -176,7 +190,8 @@ export class Circuit {
     this.rust = undefined;
   }
 
-  async prover(wasm, from, options) {
+  async prover(from, options) {
+    const wasm = await xarkWasm(options);
     const parts = isLocation(from)
       ? await fetchParts(from, ["circuit", "provingKey", "sources", ...(this.hasClient ? ["client"] : [])], options)
       : from;
@@ -187,7 +202,8 @@ export class Circuit {
     return new Prover(this, wasm, parts);
   }
 
-  async verifier(wasm, from, options) {
+  async verifier(from, options) {
+    const wasm = await xarkWasm(options);
     const parts = isLocation(from)
       ? await fetchParts(from, ["verifyingKey", ...(this.hasClient ? ["client"] : [])], options)
       : from instanceof Uint8Array
@@ -263,6 +279,10 @@ class Session {
 
   fields(type, value) {
     return this.wasm.valueFields(this.circuit.schema, type, toJson(value)).map((f) => new Field(f));
+  }
+
+  poseidon2(fields) {
+    return new Field(this.wasm.poseidon2(fields.map(String)));
   }
 }
 

@@ -1,6 +1,5 @@
 // The generated `sha256` client (`xark client`) through xark-wasm. Run by
 // scripts/client-check.sh, which regenerates `sha256.ts` and builds the keys.
-import * as wasm from "../../../crates/wasm/dist/node/xark_wasm.js";
 import { artifacts } from "../artifacts";
 import { Sha256, Sha256Prover, Sha256Verifier } from "./sha256";
 
@@ -11,8 +10,8 @@ const msg = new TextEncoder().encode("abc");
 let prover: Sha256Prover;
 let verifier: Sha256Verifier;
 beforeAll(async () => {
-  prover = await Sha256.prover(wasm, artifacts("sha256"));
-  verifier = await Sha256.verifier(wasm, artifacts("sha256"));
+  prover = await Sha256.prover(artifacts("sha256"));
+  verifier = await Sha256.verifier(artifacts("sha256"));
 });
 
 test("proves a preimage", () => {

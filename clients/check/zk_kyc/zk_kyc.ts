@@ -110,16 +110,14 @@ export interface ZkKycStructs {
 }
 
 /**
- * `zk_kyc`: make a prover or verifier with the xark-wasm module you pass in,
- * from a URL serving a copy of `target/xark/zk_kyc/` (relative to the page in a
- * browser) or from the bytes:
+ * `zk_kyc`: make a prover or verifier from a URL serving a copy of
+ * `target/xark/zk_kyc/` (relative to the page in a browser) or from the bytes:
  *
  * ```ts
- * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+ * const prover = await ZkKyc.prover("/circuits/zk_kyc/");
  * const proof = prover.prove(inputs);
  * send(proof.toBytes());
- * const verifier = await ZkKyc.verifier(wasm, vkBytes);
+ * const verifier = await ZkKyc.verifier(vkBytes);
  * verifier.verify(proof.toBytes()); // true
  * ```
  */

@@ -285,15 +285,17 @@ What every client `xark client` generates shares, as plain JavaScript with types
 `Field` (a field element, checked when it's made), `Proof` (a proof and its public
 inputs; `toBytes()` is the one blob to send), and `Circuit`, which a generated file
 instantiates with its circuit's schema to make a `Prover` or a `Verifier` from a
-URL serving the build output or from its bytes:
+URL serving the build output or from its bytes. It loads this package's main
+module for the platform itself (running `init()` for the web build) the first time
+one is made; `{ wasm }` in the options passes your own.
 
 ```js
-import * as wasm from "@blueshift-gg/xark-wasm";
 import { ZkKyc } from "./zk_kyc"; // generated; imports this module
-const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+const prover = await ZkKyc.prover("/circuits/zk_kyc/");
 const proof = prover.prove(inputs);
-const verifier = await ZkKyc.verifier(wasm, vkBytes);
+const verifier = await ZkKyc.verifier(vkBytes);
 verifier.verify(proof.toBytes(), requiredPublicInputs); // true
+prover.poseidon2(prover.fields("Identity", id)); // hash a value as the circuit does
 ```
 
 ### Typed values (`schema.json`)

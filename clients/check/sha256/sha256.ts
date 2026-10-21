@@ -32,16 +32,14 @@ export interface Sha256PublicValues {
 }
 
 /**
- * `sha256`: make a prover or verifier with the xark-wasm module you pass in,
- * from a URL serving a copy of `target/xark/sha256/` (relative to the page in a
- * browser) or from the bytes:
+ * `sha256`: make a prover or verifier from a URL serving a copy of
+ * `target/xark/sha256/` (relative to the page in a browser) or from the bytes:
  *
  * ```ts
- * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const prover = await Sha256.prover(wasm, "/circuits/sha256/");
+ * const prover = await Sha256.prover("/circuits/sha256/");
  * const proof = prover.prove(inputs);
  * send(proof.toBytes());
- * const verifier = await Sha256.verifier(wasm, vkBytes);
+ * const verifier = await Sha256.verifier(vkBytes);
  * verifier.verify(proof.toBytes()); // true
  * ```
  */

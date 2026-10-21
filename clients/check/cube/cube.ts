@@ -29,16 +29,14 @@ export interface CubePublicValues {
 }
 
 /**
- * `cube`: make a prover or verifier with the xark-wasm module you pass in,
- * from a URL serving a copy of `target/xark/cube/` (relative to the page in a
- * browser) or from the bytes:
+ * `cube`: make a prover or verifier from a URL serving a copy of
+ * `target/xark/cube/` (relative to the page in a browser) or from the bytes:
  *
  * ```ts
- * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const prover = await Cube.prover(wasm, "/circuits/cube/");
+ * const prover = await Cube.prover("/circuits/cube/");
  * const proof = prover.prove(inputs);
  * send(proof.toBytes());
- * const verifier = await Cube.verifier(wasm, vkBytes);
+ * const verifier = await Cube.verifier(vkBytes);
  * verifier.verify(proof.toBytes()); // true
  * ```
  */

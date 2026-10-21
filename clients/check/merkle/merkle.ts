@@ -33,16 +33,14 @@ export interface MerklePublicValues {
 }
 
 /**
- * `merkle`: make a prover or verifier with the xark-wasm module you pass in,
- * from a URL serving a copy of `target/xark/merkle/` (relative to the page in a
- * browser) or from the bytes:
+ * `merkle`: make a prover or verifier from a URL serving a copy of
+ * `target/xark/merkle/` (relative to the page in a browser) or from the bytes:
  *
  * ```ts
- * import * as wasm from "@blueshift-gg/xark-wasm"; // node, web (after `await init()`), or bundler
- * const prover = await Merkle.prover(wasm, "/circuits/merkle/");
+ * const prover = await Merkle.prover("/circuits/merkle/");
  * const proof = prover.prove(inputs);
  * send(proof.toBytes());
- * const verifier = await Merkle.verifier(wasm, vkBytes);
+ * const verifier = await Merkle.verifier(vkBytes);
  * verifier.verify(proof.toBytes()); // true
  * ```
  */

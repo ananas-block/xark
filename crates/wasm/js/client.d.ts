@@ -58,6 +58,7 @@ export interface Wasm {
   encodePublicInputs(schema: string, publicInputs: string): Uint8Array;
   decodePublicValues(schema: string, publicInputs: Uint8Array): string;
   valueFields(schema: string, typeName: string, value: string): string[];
+  poseidon2(inputs: string[]): string;
 }
 
 /** `client.wasm`, the circuit's Rust functions: its bytes, or the compiled module. */
@@ -86,6 +87,11 @@ export interface VerifierArtifacts {
 export interface LoadOptions {
   /** Passed to each `fetch`. */
   request?: RequestInit;
+  /**
+   * The xark-wasm module to use, initialized. By default it's this package's
+   * build for the platform (node, web, workerd), loaded the first time.
+   */
+  wasm?: Wasm;
 }
 
 /** What provers and verifiers share. */
@@ -101,12 +107,14 @@ export class Session<PublicInputs, PublicValues, Structs> {
   decode(bytes: Uint8Array): Proof<PublicValues>;
   /**
    * A value's field elements in input order, as `to_fields()` gives them in Rust:
-   * hash them as the circuit does (`wasm.poseidon2(fields.map(String))`).
+   * hash them as the circuit does with `poseidon2`.
    */
   fields<K extends keyof Structs & string>(type: K, value: Structs[K]): Field[];
+  /** `xark_poseidon2::hash`, as the circuit computes it. */
+  poseidon2(fields: readonly Field[]): Field;
 }
 
-/** Proves a circuit: from `circuit.prover(wasm, …)`. */
+/** Proves a circuit: from `circuit.prover(…)`. */
 export class Prover<Inputs, PublicInputs, PublicValues, Structs = {}> extends Session<PublicInputs, PublicValues, Structs> {
   private constructor();
   /**
@@ -116,7 +124,7 @@ export class Prover<Inputs, PublicInputs, PublicValues, Structs = {}> extends Se
   prove(inputs: Inputs): Proof<PublicValues>;
 }
 
-/** Verifies a circuit's proofs: from `circuit.verifier(wasm, …)`. */
+/** Verifies a circuit's proofs: from `circuit.verifier(…)`. */
 export class Verifier<PublicInputs, PublicValues, Structs = {}> extends Session<PublicInputs, PublicValues, Structs> {
   private constructor();
   /**
@@ -152,13 +160,11 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
   /** The circuit's `schema.json`. */
   readonly schema: string;
   prover(
-    wasm: Wasm,
     from: string | URL | ProverArtifacts,
     options?: LoadOptions,
   ): Promise<Prover<Inputs, PublicInputs, PublicValues, Structs>>;
   /** `from` may also be `vk.bin`'s bytes. */
   verifier(
-    wasm: Wasm,
     from: string | URL | Uint8Array | VerifierArtifacts,
     options?: LoadOptions,
   ): Promise<Verifier<PublicInputs, PublicValues, Structs>>;

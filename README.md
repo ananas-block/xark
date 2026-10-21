@@ -196,9 +196,10 @@ xark check examples/cube
 `Input::TYPE`, plus the public inputs in proof order. `xark client` resolves it
 into the standard types and writes one `.ts` file: constants and a type per enum,
 an interface per struct, the inputs, the public inputs as given and as decoded, and
-the circuit, which makes provers and verifiers over the `xark-wasm` module you pass
-in. What every client shares (`Field`, `Proof`, loading) is xark-wasm's
-`@blueshift-gg/xark-wasm/client`, so the file holds only the circuit. Each type is
+the circuit, which makes its provers and verifiers. What every client shares
+(`Field`, `Proof`, loading xark-wasm and the build output) is xark-wasm's
+`@blueshift-gg/xark-wasm/client`, so the file holds only the circuit, and an app
+imports only the file. Each type is
 the one you'd write by hand:
 
 ```ts
@@ -226,11 +227,11 @@ A prover and a verifier are separate, each made from a URL serving a copy of
 run. A proof travels as one blob, `proof.toBytes()`:
 
 ```ts
-import * as wasm from "@blueshift-gg/xark-wasm"; // web: `await init()` first
 import { Country, Field, Identity, Policy, ZkKyc } from "./zk_kyc";
 
-// In the app: fetches circuit.xbc, pk.bin, sources.json and client.wasm.
-const prover = await ZkKyc.prover(wasm, "/circuits/zk_kyc/");
+// In the app: fetches circuit.xbc, pk.bin, sources.json and client.wasm, and loads
+// xark-wasm (node, web or workerd).
+const prover = await ZkKyc.prover("/circuits/zk_kyc/");
 const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt: new Field(saltBytes) };
 const commitment = Identity.commitment(id); // the circuit's own Rust (below)
 const policy = Policy.on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
@@ -239,7 +240,7 @@ proof.publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date 
 send(proof.toBytes());
 
 // On the server: check it proves the policy you require, not just any.
-const verifier = await ZkKyc.verifier(wasm, vkBytes); // or { verifyingKey, client }
+const verifier = await ZkKyc.verifier(vkBytes); // or a URL, or { verifyingKey, client }
 verifier.verify(body, { commitment, policy: required }); // true
 verifier.decode(body).publicInputs; // what it claims, typed
 ```

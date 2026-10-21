@@ -448,16 +448,14 @@ pub fn generate(m: &Model) -> Result<String> {
     let _ = writeln!(
         out,
         "/**\n \
-         * `{circuit}`: make a prover or verifier with the xark-wasm module you pass in,\n \
-         * from a URL serving a copy of `target/xark/{circuit}/` (relative to the page in a\n \
-         * browser) or from the bytes:\n \
+         * `{circuit}`: make a prover or verifier from a URL serving a copy of\n \
+         * `target/xark/{circuit}/` (relative to the page in a browser) or from the bytes:\n \
          *\n \
          * ```ts\n \
-         * import * as wasm from \"@blueshift-gg/xark-wasm\"; // node, web (after `await init()`), or bundler\n \
-         * const prover = await {name}.prover(wasm, \"/circuits/{circuit}/\");\n \
+         * const prover = await {name}.prover(\"/circuits/{circuit}/\");\n \
          * const proof = prover.prove(inputs);\n \
          * send(proof.toBytes());\n \
-         * const verifier = await {name}.verifier(wasm, vkBytes);\n \
+         * const verifier = await {name}.verifier(vkBytes);\n \
          * verifier.verify(proof.toBytes()); // true\n \
          * ```\n \
          */\n\
