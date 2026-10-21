@@ -79,7 +79,7 @@ fn a_gadgets_functions_reach_the_client() {
     for want in [
         "export const Span = {",
         "   * `lo..hi`, checked.",
-        "  new(lo: number, hi: number): SpanValue {",
+        "  new(lo: U32, hi: U32): SpanValue {",
         "  len(span: Span): number {",
         // `len` is also a method on the values `new` returns.
         "export class SpanValue {",
