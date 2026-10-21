@@ -784,8 +784,8 @@ fn encoding_json(n: &Named, defs: &mut Defs, s: &mut String) {
 /// parameter's leaf names worked out before any input is bound, and the leaf counts
 /// checked only after the body has run, so nothing but the input imports runs
 /// between binding an input and using it. (Code in between can make LLVM carry a
-/// small value, such as `[u8; 3]`, packed into one integer that the circuit would
-/// then have to unpack.)
+/// small value, such as `[u8; 3]`, packed into one integer; the compiler unpacks
+/// that for free, but the shim keeps the circuit as written anyway.)
 #[cfg(all(xark, target_arch = "wasm32"))]
 #[doc(hidden)]
 pub struct Binder<const N: usize> {

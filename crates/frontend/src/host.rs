@@ -640,6 +640,11 @@ impl Host {
         if 8 * k as u32 >= width {
             return Ok(LinearCombination::zero());
         }
+        if let Some((_, high)) = self.split_lc(&lc, 8 * k as u32)
+            && let Some((byte, _)) = self.split_lc(&high, 8)
+        {
+            return Ok(byte);
+        }
         let bits = self.bits_of(&lc, width as usize)?;
         let hi = (8 * k as usize + 8).min(width as usize);
         Ok(Self::recompose(&bits[8 * k as usize..hi]))
@@ -839,6 +844,70 @@ impl Host {
         Some(max)
     }
 
+    /// `lc` as `low + 2^k·high` over the integers, with `0 ≤ low < 2^k`, read off its
+    /// terms (each coefficient `c = q·2^k + r` gives `q` to `high` and `r` to `low`):
+    /// bits `k..` and `..k` of a value without decomposing it. Needs `lc`'s bound
+    /// ([`Self::lc_max`]: non-negative coefficients, every variable proven bounded, so
+    /// no wrap mod p) and `low`'s below `2^k`; `None` otherwise.
+    ///
+    /// A value assembled from narrow pieces (bytes packed into a word, `hi << k | lo`)
+    /// comes apart this way for free, so moving it through a register costs nothing.
+    fn split_lc(
+        &self,
+        lc: &LinearCombination,
+        k: u32,
+    ) -> Option<(LinearCombination, LinearCombination)> {
+        if k >= 63 {
+            return None;
+        }
+        self.lc_max(lc)?;
+        let m = 1i64 << k;
+        let konst = |c: i64| LinearCombination {
+            constant: FieldConst::from_i64(c),
+            terms: Vec::new(),
+        };
+        let c = lc.constant.as_i64()?;
+        let (mut low, mut high) = (konst(c % m), konst(c / m));
+        for t in &lc.terms {
+            let c = t.coeff.as_i64()?;
+            let v = LinearCombination::var(t.var);
+            if c % m != 0 {
+                low = low + v.clone().scale(&FieldConst::from_i64(c % m));
+            }
+            if c / m != 0 {
+                high = high + v.scale(&FieldConst::from_i64(c / m));
+            }
+        }
+        (self.lc_max(&low)? < m as u128).then_some((low, high))
+    }
+
+    /// `a | b` (and `a ^ b`, `a + b`) when their bits can't overlap: every term and
+    /// the constant of one a multiple of `2^k`, and the other below `2^k` — a word
+    /// packed from narrow pieces (`hi << k | lo`). Then the OR is the sum.
+    fn disjoint(&self, a: &LinearCombination, b: &LinearCombination) -> bool {
+        let tz = |lc: &LinearCombination| -> Option<u32> {
+            let mut k = 63u32;
+            for c in std::iter::once(&lc.constant).chain(lc.terms.iter().map(|t| &t.coeff)) {
+                let c = c.as_i64()?;
+                if c < 0 {
+                    return None;
+                }
+                if c != 0 {
+                    k = k.min(c.trailing_zeros());
+                }
+            }
+            Some(k)
+        };
+        let fits = |hi: &LinearCombination, lo: &LinearCombination| {
+            !hi.is_constant()
+                && self.lc_max(hi).is_some()
+                && tz(hi)
+                    .zip(self.lc_max(lo))
+                    .is_some_and(|(k, max)| max < 1u128 << k)
+        };
+        fits(a, b) || fits(b, a)
+    }
+
     /// An unsigned comparison (or `==`/`!=`) the operands' bounds already decide —
     /// e.g. a loop counter past a witness bound's proven width — with no gadget.
     fn decided_cmp(&self, o: Cmp, la: &LinearCombination, lb: &LinearCombination) -> Option<bool> {
@@ -1013,6 +1082,9 @@ impl Host {
         if width <= reg {
             return Ok(self.new_wire(m, lc, width));
         }
+        if let Some((low, _)) = self.split_lc(&lc, reg) {
+            return Ok(self.new_wire(m, low, reg));
+        }
         let bits = self.bits_of(&lc, width as usize)?;
         let low = Self::recompose(&bits[..reg as usize]);
         Ok(self.new_wire(m, low, reg))
@@ -1102,6 +1174,21 @@ impl crate::interp::Host for Host {
                 };
                 self.int_result(m, lc, w, reg)?
             }
+            Bin::Or | Bin::Xor if self.disjoint(&la, &lb) => {
+                self.int_result(m, la + lb, wa.max(wb), reg)?
+            }
+            // `x & (2^k − 1)`: the low `k` bits.
+            Bin::And
+                if let Some(k) = konst(b)
+                    .or(konst(a))
+                    .and_then(|mask| mask.checked_add(1))
+                    .filter(|p| p.is_power_of_two())
+                    .map(u64::trailing_zeros)
+                    && let Some((low, _)) =
+                        self.split_lc(if konst(b).is_some() { &la } else { &lb }, k) =>
+            {
+                self.int_result(m, low, k.min(if konst(b).is_some() { wa } else { wb }), reg)?
+            }
             Bin::And | Bin::Or | Bin::Xor => {
                 let n = wa.max(wb).min(reg) as usize;
                 let ba = self.bits_of(&la, n)?;
@@ -1152,6 +1239,9 @@ impl crate::interp::Host for Host {
                 if k >= wa {
                     return Ok(V::c(0));
                 }
+                if let Some((_, high)) = self.split_lc(&la, k) {
+                    return self.int_result(m, high, wa - k, reg);
+                }
                 let bits = self.bits_of(&la, wa as usize)?;
                 let lc = Self::recompose(&bits[k as usize..]);
                 self.int_result(m, lc, wa - k, reg)?
@@ -1170,6 +1260,13 @@ impl crate::interp::Host for Host {
             Bin::DivU | Bin::RemU => match konst(b) {
                 Some(c) if c.is_power_of_two() => {
                     let k = c.trailing_zeros();
+                    if let Some((low, high)) = self.split_lc(&la, k) {
+                        return if o == Bin::DivU {
+                            self.int_result(m, high, wa.saturating_sub(k), reg)
+                        } else {
+                            self.int_result(m, low, k.min(wa), reg)
+                        };
+                    }
                     let bits = self.bits_of(&la, wa.max(k) as usize)?;
                     let lc = if o == Bin::DivU {
                         Self::recompose(&bits[k.min(wa) as usize..])

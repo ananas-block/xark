@@ -5027,8 +5027,8 @@ fn build_writes_input_schema() {
 
 /// A byte input costs its entry range check and nothing more. Code in the entry shim
 /// between binding the bytes and using them can make LLVM carry `[u8; 3]` packed in
-/// one integer, which the circuit then unpacks (an `Or` and range checks per bit:
-/// about 47 more constraints on `sha256`); see `xark::input::Binder`.
+/// one integer; the compiler takes such a word apart for free (see
+/// `packed_words_cost_nothing`), and `xark::input::Binder` keeps it from arising.
 #[test]
 fn byte_inputs_are_not_repacked() {
     let src = "#![no_std]\nuse xark::prelude::*;\n\
@@ -5043,8 +5043,42 @@ fn byte_inputs_are_not_repacked() {
     let json = std::fs::read_to_string(c.out_dir.join("r1cs.json")).unwrap();
     let rows = xark_ir::json::from_json(&json).unwrap().constraints.len();
     // 3 × 9 entry range checks, 3 × 9 decompositions (`to_bits` hasn't the entry's bits),
-    // 3 products and the final equality. A repacking shim costs 105.
+    // 3 products and the final equality. (A repacking shim once cost 105.)
     assert_eq!(rows, 58, "byte inputs cost more than their range checks");
+}
+
+/// Packing narrow values into a word (`c << 16 | b << 8 | a`) and taking it apart
+/// again (`>>`, `&`, `as u8`, `/` and `%` by powers of two, a byte through memory)
+/// is linear: the pieces' bits can't overlap, so OR is a sum and each piece is read
+/// back off the sum. Only the inputs' range checks are constraints.
+#[test]
+fn packed_words_cost_nothing() {
+    let src = "#![no_std]\nuse xark::prelude::*;\n\
+        #[circuit]\n\
+        pub fn pack(a: Private<u8>, b: Private<u8>, c: Private<u8>, out: Public<Field>) {\n\
+        let w = core::hint::black_box((c as u32) << 16 | (b as u32) << 8 | a as u32);\n\
+        let bytes = core::hint::black_box(w.to_le_bytes());\n\
+        let (x, y, z) = ((w & 0xff) as u8, (w >> 8) as u8, (w / 65536) as u8);\n\
+        let r = (w % 256) as u8;\n\
+        let s = Field::from(x) + Field::from(y) * 2u64 + Field::from(z) * 4u64 + Field::from(r) * 8u64;\n\
+        require_eq(s + Field::from(bytes[2]) * 16u64, out);\n}\n";
+    let c = compile_with_field(&write_case("packed_words", src), "packed_words", "bn254");
+    assert!(c.status_success, "{}", c.stderr);
+    let json = std::fs::read_to_string(c.out_dir.join("r1cs.json")).unwrap();
+    let rows = xark_ir::json::from_json(&json).unwrap().constraints.len();
+    // 3 × 9 entry range checks and the final equality.
+    assert_eq!(rows, 28, "taking a packed word apart emitted constraints");
+    let p = c.program();
+    let run = |a: u64, b: u64, cc: u64| {
+        let out = (a + 2 * b + 4 * cc + 8 * a + 16 * cc).to_string();
+        let (a, b, cc) = (a.to_string(), b.to_string(), cc.to_string());
+        solves(&p, &[("a", &a), ("b", &b), ("c", &cc), ("out", &out)])
+    };
+    assert!(run(1, 2, 3) && run(255, 0, 255) && run(0, 255, 7));
+    assert!(!solves(
+        &p,
+        &[("a", "1"), ("b", "2"), ("c", "3"), ("out", "0")]
+    ));
 }
 
 /// A `bool` input is a `{0, 1}` wire: it selects, converts to a `Field`, sits in a
