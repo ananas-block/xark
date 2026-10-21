@@ -42,6 +42,10 @@ pub struct ClientArgs {
     /// Output file. Defaults to `target/xark/<name>/<circuit>.<ext>`.
     #[arg(long, short, value_hint = clap::ValueHint::FilePath)]
     pub out: Option<PathBuf>,
+    /// Skip the Rust client functions (`#[input]` on an `impl`, built as
+    /// `client.wasm`): for a crate whose host code doesn't build for wasm.
+    #[arg(long)]
+    pub no_functions: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug)]
@@ -94,7 +98,7 @@ pub fn run(args: ClientArgs) -> Result<()> {
     // Client functions (`#[input]` on an `impl`, in this crate or any it uses): build
     // the crate's host code as `client.wasm` beside the circuit, and type its
     // functions from the module's descriptions.
-    if let Some(krate) = crate_dir(&project.xark_dir) {
+    if let Some(krate) = crate_dir(&project.xark_dir).filter(|_| !args.no_functions) {
         let path = project.xark_dir.join("client.wasm");
         match xark_frontend::build_client(&krate, &krate.join("target/xark-client")) {
             Ok(wasm) => {
@@ -124,10 +128,12 @@ pub fn run(args: ClientArgs) -> Result<()> {
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&path);
-                eprintln!(
-                    "{} the crate's host code doesn't build for wasm ({e}): the client has \
-                     no Rust functions",
-                    crate::style::tag()
+                // A client without the crate's Rust functions would only fail later, where
+                // they're called: stop here, with cargo's errors above.
+                anyhow::bail!(
+                    "the crate's Rust client functions (client.wasm, its host code built for \
+                     wasm) don't build: {e} (the errors are above). Fix them, or pass \
+                     `--no-functions` for a client without them."
                 );
             }
         }

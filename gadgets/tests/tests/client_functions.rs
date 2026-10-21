@@ -90,21 +90,33 @@ fn a_gadgets_functions_reach_the_client() {
     assert!(!ts.contains("Unused"), "{ts}");
 }
 
-/// A circuit with no client functions gets no `client.wasm` (nor its loader).
-#[test]
-fn no_functions_no_module() {
-    let tmp = tempdir();
-    let dir = tmp.path().join("square");
+/// A copy of `examples/arithmetic_square` in `tmp`, with `extra` appended to its
+/// `src/lib.rs`.
+fn square(tmp: &Path, extra: &str) -> std::path::PathBuf {
+    let dir = tmp.join("square");
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/arithmetic_square");
     for f in ["Cargo.toml", "src/lib.rs"] {
         let text = std::fs::read_to_string(src.join(f)).unwrap();
         // The copy's path dependencies, absolute.
         let abs = src.join("../../crates").canonicalize().unwrap();
+        let text = text.replace("../../crates", abs.to_str().unwrap());
         write(
             &dir.join(f),
-            &text.replace("../../crates", abs.to_str().unwrap()),
+            &if f == "src/lib.rs" {
+                text + extra
+            } else {
+                text
+            },
         );
     }
+    dir
+}
+
+/// A circuit with no client functions gets no `client.wasm` (nor its loader).
+#[test]
+fn no_functions_no_module() {
+    let tmp = tempdir();
+    let dir = square(tmp.path(), "");
     let (ok, out) = xark(&dir, &["build"]);
     assert!(ok, "build failed:\n{out}");
     let (ok, out) = xark(&dir, &["client"]);
@@ -113,4 +125,27 @@ fn no_functions_no_module() {
     assert!(!out_dir.join("client.wasm").exists());
     let ts = std::fs::read_to_string(out_dir.join("arithmetic_square.ts")).unwrap();
     assert!(ts.contains("  client: false,") && !ts.contains(".call("));
+}
+
+/// Host code that doesn't build for wasm fails `xark client`, showing why, rather
+/// than quietly writing a client without the Rust functions; `--no-functions`
+/// skips them on purpose.
+#[test]
+fn a_client_build_failure_is_an_error() {
+    let tmp = tempdir();
+    let dir = square(
+        tmp.path(),
+        "\n#[cfg(xark_client)]\ncompile_error!(\"host code that can't build for wasm\");\n",
+    );
+    let (ok, out) = xark(&dir, &["build"]);
+    assert!(ok, "build failed:\n{out}");
+    let (ok, out) = xark(&dir, &["client"]);
+    assert!(!ok, "client should fail:\n{out}");
+    assert!(out.contains("host code that can't build for wasm"), "{out}");
+    assert!(
+        out.contains("--no-functions") && !out.contains("✅"),
+        "{out}"
+    );
+    let (ok, out) = xark(&dir, &["client", "--no-functions"]);
+    assert!(ok, "client --no-functions failed:\n{out}");
 }
