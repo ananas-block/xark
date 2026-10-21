@@ -199,6 +199,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generated clients (cube, zk_kyc, sha256, merkle)
+      - name: Generated clients (cube, zk_kyc, sha256, merkle), in Node and Chromium
         working-directory: clients/check
-        run: npm ci && npm test
+        run: npm ci && npx playwright install --with-deps chromium && npm test
