@@ -358,9 +358,9 @@ pub fn cmd_clean(_args: &[String]) -> i32 {
             }
             let path = entry.path();
             match path.file_name().and_then(|s| s.to_str()) {
-                // Remove `target/xark{,-wasm}` here; don't descend into `target/`.
+                // Remove `target/xark{,-wasm,-client}` here; don't descend into `target/`.
                 Some("target") => {
-                    for xark in [path.join("xark"), path.join("xark-wasm")] {
+                    for xark in ["xark", "xark-wasm", "xark-client"].map(|d| path.join(d)) {
                         if !xark.is_dir() {
                             continue;
                         }
@@ -673,8 +673,15 @@ pub fn cmd_init(args: &[String]) -> i32 {
     // Pin the published `xark` dep to this CLI's own major.minor
     // (the whole workspace releases together), so the scaffold never suggests a
     // version older than the CLI you ran it with.
-    let full = env!("CARGO_PKG_VERSION");
-    let ver = full.rsplit_once('.').map_or(full, |(mm, _)| mm);
+    // `0.3.1` and `0.3.0-rc.1` both pin `0.3`.
+    let ver = env!("CARGO_PKG_VERSION")
+        .split(['-', '+'])
+        .next()
+        .unwrap_or_default()
+        .splitn(3, '.')
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(".");
     let cargo_toml = format!(
         "[package]\n\
          name = \"{name}\"\n\
@@ -753,16 +760,12 @@ pub fn cmd_init(args: &[String]) -> i32 {
         "{}",
         crate::style::next_steps(&[
             (
-                format!("xark build {where_}"),
-                "compile the circuit to R1CS"
-            ),
-            (
-                format!("xark setup {where_}"),
-                "generate the proving/verifying keys"
+                format!("xark test {where_}"),
+                "build the circuit and run its tests"
             ),
             (
                 format!("xark prove {where_} --inputs '{{\"secret\": 3, \"result\": 9}}'"),
-                "produce your first proof",
+                "produce your first proof (with a dev key, made on the first run)",
             ),
         ])
     );

@@ -18,8 +18,9 @@ fn init_then_test() {
     let root = root.canonicalize().unwrap();
     let manifest = dir.join("Cargo.toml");
     let toml = std::fs::read_to_string(&manifest).unwrap();
-    // The scaffold pins major.minor.
-    let ver = env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0;
+    // The scaffold pins major.minor (of a pre-release too).
+    let core = env!("CARGO_PKG_VERSION").split('-').next().unwrap();
+    let ver = core.rsplit_once('.').unwrap().0;
     let patched = toml.replace(
         &format!("xark = {{ version = \"{ver}\" }}"),
         &format!(

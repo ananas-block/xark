@@ -108,16 +108,16 @@ fn corrupt_public_inputs_get_no_prove_hint() {
 fn clean_does_not_follow_symlinks() {
     let tmp = tempdir();
     let (inside, outside) = (tmp.path().join("in"), tmp.path().join("out"));
-    for d in [inside.join("a/target/xark"), outside.join("b/target/xark")] {
+    let ours = ["xark", "xark-wasm", "xark-client"].map(|d| inside.join("a/target").join(d));
+    for d in ours.iter().chain([&outside.join("b/target/xark")]) {
         std::fs::create_dir_all(d).unwrap();
     }
     std::os::unix::fs::symlink(&outside, inside.join("link")).unwrap();
     let (ok, out) = run_in(&inside, &["clean"]);
     assert!(ok, "{out}");
-    assert!(
-        !inside.join("a/target/xark").exists(),
-        "not cleaned:\n{out}"
-    );
+    for d in &ours {
+        assert!(!d.exists(), "{} not cleaned:\n{out}", d.display());
+    }
     assert!(
         outside.join("b/target/xark").exists(),
         "cleaned through a symlink:\n{out}"

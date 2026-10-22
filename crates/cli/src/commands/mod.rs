@@ -75,8 +75,8 @@ pub enum Command {
     Check(CheckArgs),
     /// Build the circuit, then run its `cargo test` circuit tests.
     Test(TestArgs),
-    /// Remove all xark build output (every `target/xark/` and `target/xark-wasm/`
-    /// under the current dir).
+    /// Remove all xark build output (every `target/xark/`, `target/xark-wasm/` and
+    /// `target/xark-client/` under the current dir).
     Clean(CleanArgs),
     /// Generate Groth16 proving and verifying keys.
     Setup(setup::SetupArgs),
