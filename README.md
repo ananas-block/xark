@@ -257,6 +257,10 @@ verifier.verify(body, { commitment, policy: required }); // true
 verifier.decode(body).publicInputs; // what it claims, typed
 ```
 
+To be sure the prover runs the circuit the client was generated from, and not
+whatever a deployment serves, pin it: `Zkyc.prover(url, { digest: Zkyc.digest })`
+refuses any other circuit (`Zkyc.digest` is the digest `xark build` printed).
+
 `Policy.default().on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
 not a TypeScript copy of it: the same `#[input]`, on an `impl` block, makes its
 methods client functions, typed from their signatures and documented with their doc

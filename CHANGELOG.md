@@ -164,6 +164,9 @@ verification starter, and the `xark-client` npm package is removed.
   for big-endian) or another `Field`, and throws unless it's below the modulus. A
   field input (`FieldInput`) also takes a plain integer, checked the same way, and a
   number past 2^53 is refused rather than rounded.
+- **Pinning a prover:** `Circuit.digest` is the circuit the client was generated
+  from, and `prover(from, { digest })` refuses a `circuit.xbc` with another one
+  (xark-wasm's `circuitDigest` computes it).
 - **Typed errors:** a refused input throws an `InputError` with its `path` in the
   caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
   fail a check a `CheckFailed` with the statement's `site` (file, line, column,

@@ -196,3 +196,16 @@ test("a URL without client.wasm says so when a Rust function is called", async (
     await server.close();
   }
 });
+
+test("a prover pinned to the client's circuit refuses another", async () => {
+  // The digest of the circuit this client was generated from (`xark build` prints it).
+  expect(Zkyc.digest).toMatch(/^[0-9a-f]{32}$/);
+  const pinned = await Zkyc.prover(artifacts("zkyc"), { digest: Zkyc.digest });
+  expect(verifier.verify(pinned.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
+  await expect(Zkyc.prover(artifacts("zkyc"), { digest: "0".repeat(32) })).rejects.toThrow(
+    new RegExp(`has digest ${Zkyc.digest}, not the 0{32} this prover is pinned to`),
+  );
+  // Not a circuit at all: said so, not a crash.
+  const bogus = { ...artifacts("zkyc"), circuit: new Uint8Array([1, 2, 3]) };
+  await expect(Zkyc.prover(bogus, { digest: Zkyc.digest })).rejects.toThrow(/not a circuit.xbc/);
+});

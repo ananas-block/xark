@@ -49,6 +49,7 @@ export const Merkle = new Circuit<MerkleInputs, MerklePublicInputs, MerklePublic
   schema,
   decodePublic,
   client: false,
+  digest: "8f678a5c562e29a351cba72692aeea0b",
 });
 
 export type MerkleProver = Prover<MerkleInputs, MerklePublicInputs, MerklePublicValues, {}>;

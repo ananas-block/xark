@@ -149,6 +149,13 @@ export interface LoadOptions {
    * build for the platform (node, web, workerd), loaded the first time.
    */
   wasm?: Wasm;
+  /**
+   * A prover only: the circuit digest its `circuit.xbc` must have (what `xark build`
+   * prints; the generated client's `digest` is the one it was generated from).
+   * Another circuit is refused, so a deployment can't swap the circuit under an app.
+   * Every build of one circuit has the same digest, whichever Rust compiled it.
+   */
+  digest?: string;
 }
 
 /** What provers and verifiers share. */
@@ -205,6 +212,8 @@ export interface CircuitSpec<PublicValues> {
   decodePublic(json: Json<PublicValues>): PublicValues;
   /** Whether it has Rust functions (`client.wasm`). */
   client: boolean;
+  /** The digest of the circuit it was generated from (`xark build` prints it). */
+  digest?: string;
 }
 
 /**
@@ -222,6 +231,11 @@ export class Circuit<Inputs, PublicInputs, PublicValues, Structs = {}> {
   readonly name: string;
   /** The circuit's `schema.json`, as text. */
   readonly schema: string;
+  /**
+   * The digest of the circuit this client was generated from: pin a prover to it
+   * with `prover(from, { digest: Circuit.digest })`.
+   */
+  readonly digest: string | undefined;
   prover(
     from: string | URL | ProverArtifacts,
     options?: LoadOptions,

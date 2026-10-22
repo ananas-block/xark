@@ -289,6 +289,20 @@ fn verify_with(
     xark_groth16::verify(vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
 }
 
+/// The circuit digest of a `circuit.xbc` (what `xark build` prints, and a key's
+/// `metadata.json` records): the same for every build of the circuit, whichever Rust
+/// compiled it, and different for any other circuit.
+#[wasm_bindgen(js_name = circuitDigest)]
+pub fn circuit_digest(circuit_xbc: &Bytes) -> Result<String, js_sys::Error> {
+    let b = to_bytes(circuit_xbc, "circuit.xbc")?;
+    if xark_ir::function_decode::stream_field(&b).is_none() {
+        return Err(js_error(
+            "not a circuit.xbc written by this xark's `xark build`",
+        ));
+    }
+    Ok(xark_ir::function_decode::stream_digest_hex(&b))
+}
+
 /// Decode binary public inputs (the `publicInputs` `Uint8Array` from [`prove`],
 /// == `public_inputs.bin`) to decimal strings, in proof order.
 #[wasm_bindgen]

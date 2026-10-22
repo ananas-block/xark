@@ -123,6 +123,9 @@ pub fn run(args: ClientArgs) -> Result<()> {
     let schema: Value = serde_json::from_str(&text)
         .with_context(|| format!("reading {}", schema_path.display()))?;
     let mut model = model::Model::new(&schema)?;
+    model.digest = std::fs::read(project.circuit_xbc())
+        .ok()
+        .map(|b| super::r1cs_digest(&b));
     // Client functions (`#[input]` on an `impl`, in this crate or any it uses): build
     // the crate's host code as `client.wasm` beside the circuit, and type its
     // functions from the module's descriptions.

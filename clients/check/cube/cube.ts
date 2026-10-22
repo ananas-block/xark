@@ -47,6 +47,7 @@ export const Cube = new Circuit<CubeInputs, CubePublicInputs, CubePublicValues, 
   schema,
   decodePublic,
   client: false,
+  digest: "82c59d245a2403b8e3c0c455908c3028",
 });
 
 export type CubeProver = Prover<CubeInputs, CubePublicInputs, CubePublicValues, {}>;

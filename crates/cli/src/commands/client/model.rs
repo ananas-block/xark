@@ -68,6 +68,8 @@ pub struct Model {
     pub enums: BTreeMap<String, Vec<String>>,
     /// The client functions (`#[input]` on an `impl`), run from `client.wasm`.
     pub exports: Vec<Export>,
+    /// The digest of the circuit the client is generated from (`xark build`'s).
+    pub digest: Option<String>,
 }
 
 /// A Rust method a client calls (`#[input]` on an `impl`).
@@ -103,6 +105,7 @@ impl Model {
             structs: BTreeMap::new(),
             enums: BTreeMap::new(),
             exports: Vec::new(),
+            digest: None,
         };
         for i in schema["inputs"].as_array().into_iter().flatten() {
             let f = m.field(schema, i)?;
@@ -233,6 +236,7 @@ impl Model {
                 structs: self.structs.clone(),
                 enums: self.enums.clone(),
                 exports: Vec::new(),
+                digest: None,
             };
             if names.iter().any(|n| probe.rust_ty(schema, n).is_err()) {
                 skipped.push(format!("{}::{}", s("type"), s("name")));

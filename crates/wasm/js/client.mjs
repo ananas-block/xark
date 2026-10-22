@@ -283,6 +283,8 @@ export class Circuit {
     this.schema = typeof spec.schema === "string" ? spec.schema : JSON.stringify(spec.schema);
     this.decodePublic = spec.decodePublic;
     this.hasClient = spec.client;
+    /** The digest of the circuit the client was generated from (`xark build` prints it). */
+    this.digest = spec.digest;
     this.rust = undefined;
     /** A URL a prover or verifier was made from that had no `client.wasm`. */
     this.missingAt = undefined;
@@ -295,6 +297,16 @@ export class Circuit {
       : from;
     if (!parts.circuit || !parts.provingKey) {
       throw new Error(`a ${this.name} prover needs \`circuit\` (circuit.xbc) and \`provingKey\` (pk.bin)`);
+    }
+    // Pinned (`options.digest`): this exact circuit, and no other build output.
+    if (options?.digest !== undefined) {
+      const got = wasm.circuitDigest(parts.circuit);
+      if (got !== options.digest) {
+        throw new Error(
+          `the ${this.name} circuit.xbc has digest ${got}, not the ${options.digest} this prover is pinned to: ` +
+            `deploy the build output of that circuit (\`xark build\` prints its digest), or pin the new one`,
+        );
+      }
     }
     await loadClient(this, parts.client, from);
     return new Prover(this, wasm, parts);

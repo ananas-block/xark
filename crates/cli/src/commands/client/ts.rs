@@ -506,12 +506,15 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
          name: {circuit:?},\n  \
          schema,\n  \
          decodePublic,\n  \
-         client: {},\n\
+         client: {},\n{}\
          }});\n\n\
          export type {name}Prover = Prover<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>;\n\
          export type {name}Verifier = Verifier<{name}PublicInputs, {name}PublicValues, {structs}>;\n\
          export type {name}Proof = Proof<{name}PublicValues>;\n",
         !m.exports.is_empty(),
+        m.digest
+            .as_ref()
+            .map_or(String::new(), |d| format!("  digest: {d:?},\n")),
     );
     out.push_str(&exports);
     out.push_str(&decode);
