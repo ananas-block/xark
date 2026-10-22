@@ -38,8 +38,7 @@ jobs:
         run: cargo install wasm-pack --locked
 
       - name: Build every target (release)
-        working-directory: crates/wasm
-        run: ./build.sh all release
+        run: cargo xtask wasm all
 
       - name: Verify shipped files exist
         working-directory: crates/wasm

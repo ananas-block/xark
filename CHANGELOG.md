@@ -230,8 +230,9 @@ verification starter, and the `xark-client` npm package is removed.
 - The slow CI checks (known-answer vectors, the EC gadget vectors, the example
   sweep, a publish rehearsal) run on every pull request instead of nightly. A
   weekly run keeps what can fail with no code change: the digest check on Rust
-  stable and beta, and a long fuzz run. Generated clients are tested in CI. Repository tasks are `cargo xtask` (`digests`,
-  `difftest`, `publish`).
+  stable and beta, and a long fuzz run. Generated clients and xark-wasm's streaming
+  prover are tested in CI. Repository tasks are `cargo xtask` (`digests`,
+  `difftest`, `publish`, and `wasm`, which builds xark-wasm's packages).
 
 ### Removed
 
@@ -292,7 +293,6 @@ verification starter, and the `xark-client` npm package is removed.
   to 3.6 GB and 7 s.
 - A circuit importing `Field` by name (`use xark::{Field, …}`) no longer gets an
   `unused import` warning on host builds.
-- `crates/wasm/build.sh` runs on macOS.
 - Smaller fixes to messages and `--help`: `xark ceremony` documents its flags,
   default artifact paths are given as `target/xark/<name>/…`, the builds that other
   commands run don't print `xark build`'s next-step hint, and `xark setup` says a

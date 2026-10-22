@@ -2,11 +2,13 @@
 //!
 //! * `digests`: every example circuit's R1CS digest, against `tests/stable-digests.txt`;
 //! * `difftest`: every example on its own test inputs, adversarially;
-//! * `publish`: the crates in dependency order: checked, rehearsed, or uploaded.
+//! * `publish`: the crates in dependency order: checked, rehearsed, or uploaded;
+//! * `wasm`: xark-wasm's JavaScript packages, into `crates/wasm/dist/`.
 
 mod difftest;
 mod digests;
 mod publish;
+mod wasm;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,6 +33,9 @@ enum Task {
     /// The crates in dependency order: checked (--plan), rehearsed (--dry-run) or
     /// uploaded (--execute).
     Publish(publish::Args),
+    /// xark-wasm's JavaScript packages (nodejs, web, bundler, module, or all of
+    /// them), into crates/wasm/dist/.
+    Wasm(wasm::Args),
 }
 
 fn main() -> Result<()> {
@@ -38,6 +43,7 @@ fn main() -> Result<()> {
         Task::Digests(a) => digests::run(a),
         Task::Difftest(a) => difftest::run(a),
         Task::Publish(a) => publish::run(a),
+        Task::Wasm(a) => wasm::run(a),
     }
 }
 

@@ -331,15 +331,18 @@ Prover randomness comes from the platform CSPRNG (`crypto.getRandomValues`).
 
 ## Build
 
+From the repository root:
+
 ```sh
 cargo install wasm-pack
 rustup target add wasm32-unknown-unknown
-./build.sh                 # default target: bundler (webpack, vite, …)
-./build.sh web             # or: nodejs | bundler | module
+cargo xtask wasm           # default target: bundler (webpack, vite, …)
+cargo xtask wasm web       # or: nodejs | bundler | module | all; --dev for a debug build
 ```
 
 The `module` target (Cloudflare Workers / `workerd`) is built with
-`wasm-bindgen` directly, since wasm-pack can't emit `--target module`. A
-`release` build of the `module` target will **also rebuild `dist/bundler/`**
+`wasm-bindgen` directly, since wasm-pack can't emit `--target module`; the
+`wasm-bindgen` CLI is installed at the version `Cargo.lock` pins. A
+release build of the `module` target will **also rebuild `dist/bundler/`**
 and copies its optimized wasm (the raw wasm is byte-identical across targets —
 only the JS glue differs).
