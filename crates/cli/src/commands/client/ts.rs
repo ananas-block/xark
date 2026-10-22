@@ -279,7 +279,8 @@ fn paren(t: &str) -> String {
 pub fn schema_module(circuit: &str, schema: &serde_json::Value) -> Result<String> {
     Ok(format!(
         "// {MARKER}: the `{circuit}` circuit's schema.json, which its client imports.\n\
-         export default {};\n",
+         const schema = {};\n\
+         export default schema;\n",
         serde_json::to_string_pretty(schema)?
     ))
 }
