@@ -86,6 +86,21 @@ fn a_build_clears_the_last_ones_debug_output() {
     }
 }
 
+/// `deps` marks a build complete, so it's written last: a build stopped before it
+/// reads as stale, never as current without (say) its `schema.json`.
+#[test]
+fn a_build_writes_deps_last() {
+    let tmp = tempdir();
+    let dir = cube(tmp.path());
+    let (ok, err) = xark(&dir, &["build", "."]);
+    assert!(ok, "{err}");
+    let out = dir.join("target/xark/cube");
+    let written = |f: &str| std::fs::metadata(out.join(f)).unwrap().modified().unwrap();
+    for f in ["circuit.xbc", "sources.json", "digest", "schema.json"] {
+        assert!(written(f) <= written("deps"), "{f} was written after deps");
+    }
+}
+
 #[test]
 fn client_builds_a_missing_or_stale_circuit() {
     let tmp = tempdir();

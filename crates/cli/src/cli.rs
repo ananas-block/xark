@@ -287,17 +287,19 @@ fn build_stable(
         );
         return 1;
     }
-    // The source files the circuit came from, gadgets included: how a plain `cargo
-    // test` notices the circuit is out of date (`xark_prover::circuit`).
-    if let Ok(deps) = xark_frontend::circuit_sources(crate_abs, &target_dir) {
-        let list: String = deps.iter().map(|p| format!("{}\n", p.display())).collect();
-        let _ = std::fs::write(out_abs.join("deps"), list);
-    }
     let _ = std::fs::write(out_abs.join("digest"), format!("{digest}\n"));
     let _ = std::fs::write(
         out_abs.join("schema.json"),
         serde_json::to_string_pretty(&lowered.schema).unwrap_or_default() + "\n",
     );
+    // The source files the circuit came from, gadgets included: how a plain `cargo
+    // test` notices the circuit is out of date (`xark_prover::circuit`). Written
+    // last: a build is only complete with it (`stale_build`), so one stopped
+    // before here is rebuilt rather than used without its schema.
+    if let Ok(deps) = xark_frontend::circuit_sources(crate_abs, &target_dir) {
+        let list: String = deps.iter().map(|p| format!("{}\n", p.display())).collect();
+        let _ = std::fs::write(out_abs.join("deps"), list);
+    }
     let p = &lowered.output.primitive;
     eprintln!(
         "{} {} vars, {} constraints, {} witness-gen ops",
