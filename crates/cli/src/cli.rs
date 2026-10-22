@@ -676,14 +676,7 @@ pub fn cmd_init(args: &[String]) -> i32 {
     // (the whole workspace releases together), so the scaffold never suggests a
     // version older than the CLI you ran it with.
     // `0.3.1` and `0.3.0-rc.1` both pin `0.3`.
-    let ver = env!("CARGO_PKG_VERSION")
-        .split(['-', '+'])
-        .next()
-        .unwrap_or_default()
-        .splitn(3, '.')
-        .take(2)
-        .collect::<Vec<_>>()
-        .join(".");
+    let ver = xark_ir::major_minor(env!("CARGO_PKG_VERSION"));
     let cargo_toml = format!(
         "[package]\n\
          name = \"{name}\"\n\

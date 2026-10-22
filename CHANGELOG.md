@@ -130,7 +130,8 @@ gadgets now check more:
 verification starter, and the `xark-client` npm package is removed.
 
 - **What it writes:** `<circuit>.ts` and the `<circuit>.schema.ts` it imports (the
-  circuit's `schema.json` as a module, so no project settings are needed). The
+  circuit's `schema.json` as a module, so no project settings are needed), where
+  `-o` says: a file, or a directory to write them in. The
   types read like the circuit's: interfaces for input structs, enums as constants
   and a type (`Country.US` or `"US"`; `"XX"` doesn't compile), named aliases for
   xark's standard types (`Day`, `Text`, `U8` … `U128`), and arrays of up to 16

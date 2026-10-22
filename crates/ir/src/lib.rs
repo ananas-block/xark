@@ -31,6 +31,13 @@ pub use profile::{ConstraintKind, ConstraintProfile, ProfileProgram};
 pub use r1cs::{DebugInfo, FieldSpec, R1csConstraint, R1csProgram, Variable, Visibility};
 pub use sources::{Site, SourceMap};
 
+/// A version's major and minor parts, a pre-release or build suffix dropped:
+/// `0.3.1` and `0.3.0-rc.1` → `0.3`. What a dependency on this release pins.
+pub fn major_minor(v: &str) -> String {
+    let core = v.split(['-', '+']).next().unwrap_or_default();
+    core.splitn(3, '.').take(2).collect::<Vec<_>>().join(".")
+}
+
 /// Whether xark versions `a` and `b` are the same release, which build and read the
 /// same circuits: the same minor version before 1.0, the same major version after.
 /// A pre-release or build suffix (`0.3.0-rc.1`) doesn't count.
@@ -58,6 +65,9 @@ mod release_tests {
         assert!(same_release("1.2.0", "1.3.1"));
         assert!(!same_release("1.2.0", "2.0.0"));
         assert!(!same_release("0.3.0", "nonsense"));
+        assert_eq!(super::major_minor("0.3.1"), "0.3");
+        assert_eq!(super::major_minor("0.3.0-rc.1"), "0.3");
+        assert_eq!(super::major_minor("1.2.0+build"), "1.2");
     }
 }
 

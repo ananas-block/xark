@@ -39,7 +39,8 @@ pub struct ClientArgs {
     /// Client language.
     #[arg(long, value_enum, default_value_t = Lang::Ts)]
     pub lang: Lang,
-    /// Output file. Defaults to `target/xark/<name>/<circuit>.<ext>`.
+    /// Output file, or a directory to write `<circuit>.<ext>` in (its schema module
+    /// goes beside it). Defaults to `target/xark/<name>/<circuit>.<ext>`.
     #[arg(long, short, value_hint = clap::ValueHint::FilePath)]
     pub out: Option<PathBuf>,
     /// Skip the Rust client functions (`#[input]` on an `impl`, built as
@@ -165,27 +166,32 @@ pub fn run(args: ClientArgs) -> Result<()> {
             }
         }
     }
-    let out = args.out.unwrap_or_else(|| {
-        project
-            .xark_dir
-            .join(format!("{}.{}", model.circuit, args.lang.ext()))
-    });
-    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    }
+    let file = format!("{}.{}", model.circuit, args.lang.ext());
+    let out = match args.out {
+        // A directory (an existing one, or a path ending in `/`): the client goes in it.
+        Some(o) if o.is_dir() || o.as_os_str().to_string_lossy().ends_with(['/', '\\']) => {
+            o.join(file)
+        }
+        Some(o) => o,
+        None => project.xark_dir.join(file),
+    };
     // The schema beside the client (`zkyc.schema.ts`), which the client imports:
-    // written together, so the two always agree.
+    // written together, so the two always agree. Both made before either is
+    // written, so a failure leaves neither.
     let stem = out
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(&model.circuit);
     let schema_stem = format!("{stem}.schema");
     let (module, ext) = args.lang.schema_module(&model, &schema)?;
+    let client = args.lang.generate(&model, &schema_stem)?;
     let schema_out = out.with_file_name(format!("{schema_stem}.{ext}"));
+    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
     std::fs::write(&schema_out, module)
         .with_context(|| format!("writing {}", schema_out.display()))?;
-    std::fs::write(&out, args.lang.generate(&model, &schema_stem)?)
-        .with_context(|| format!("writing {}", out.display()))?;
+    std::fs::write(&out, client).with_context(|| format!("writing {}", out.display()))?;
     println!(
         "{}",
         crate::style::brand(&format!(
@@ -197,8 +203,7 @@ pub fn run(args: ClientArgs) -> Result<()> {
     );
     // What using it takes: the runtime it imports (this release's), unless the project
     // beside it already lists it, and where to start.
-    let full = env!("CARGO_PKG_VERSION");
-    let release = full.rsplit_once('.').map_or(full, |(mm, _)| mm);
+    let release = xark_ir::major_minor(env!("CARGO_PKG_VERSION"));
     let name = ts::pascal(&model.circuit);
     let mut steps = Vec::new();
     if !lists_runtime(&out) {

@@ -306,6 +306,28 @@ fn client_overwrites_its_output() {
     );
 }
 
+/// `xark client -o` given a directory (an existing one, or a path ending in `/`)
+/// writes the client and its schema in it, and nothing beside it.
+#[test]
+fn client_out_can_be_a_directory() {
+    let tmp = tempdir();
+    let out = tmp.path().join("out");
+    let (ok, err) = xark_build("arithmetic_square", &out, &tmp.path().join("target"));
+    assert!(ok, "build failed: {err}");
+    let existing = tmp.path().join("clients");
+    std::fs::create_dir(&existing).unwrap();
+    let fresh = format!("{}/", tmp.path().join("fresh").display());
+    for dir in [existing.to_str().unwrap(), fresh.as_str()] {
+        let (ok, _, err) = run(&["client", out.to_str().unwrap(), "-o", dir]);
+        assert!(ok, "client -o {dir} failed: {err}");
+        let dir = std::path::Path::new(dir);
+        for f in ["arithmetic_square.ts", "arithmetic_square.schema.ts"] {
+            assert!(dir.join(f).exists(), "no {f} in {}", dir.display());
+        }
+    }
+    assert!(!tmp.path().join("clients.schema.ts").exists());
+}
+
 /// `xark prove` on a crate that was never built builds it, makes a dev key and
 /// proves, in one command (the setup step used to be skipped after the build).
 #[test]
