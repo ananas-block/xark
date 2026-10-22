@@ -451,14 +451,16 @@ fn not_built_message(name: &str, xbc_path: &std::path::Path) -> String {
 /// Best-effort auto-build: when a `#[circuit]` test finds its circuit missing,
 /// run the `xark` CLI (`$XARK`, else `xark` on `PATH`) to build it in place.
 /// Silently no-ops if `xark` isn't reachable or the build fails. Fires when the
-/// artifact is absent or older than the crate's sources ([`newer_source`]).
+/// artifact is absent, older than the crate's sources ([`newer_source`]), or built over
+/// another field ([`other_field`]).
 fn try_autobuild(dir: &std::path::Path) {
     // Serialize across the test binary's threads: parallel `#[circuit]` tests
     // would otherwise each launch a build and race on the output files. After
     // taking the lock, re-check — another thread may have just built it.
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    if dir.join("circuit.xbc").exists() && newer_source(dir).is_none() {
+    if dir.join("circuit.xbc").exists() && newer_source(dir).is_none() && other_field(dir).is_none()
+    {
         return;
     }
     let crate_dir = dir
@@ -497,6 +499,15 @@ fn cli_version(xark: &str) -> Option<String> {
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.split_whitespace().nth(1).map(str::to_string)
+}
+
+/// The field `circuit.xbc` in `dir` was built over, when it isn't BN254 (`xark build
+/// --field 7`): Rust tests check the BN254 circuit, so that build is rebuilt.
+fn other_field(dir: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(dir.join("circuit.xbc")).ok()?;
+    xark_ir::function_decode::stream_field(&bytes)
+        .filter(|f| f.name != "bn254")
+        .map(|f| f.modulus_decimal)
 }
 
 /// A source the circuit came from changed since `circuit.xbc` in
@@ -586,11 +597,18 @@ pub fn circuit_at(dir: impl AsRef<std::path::Path>) -> Circuit {
     // tests what's in `src/`; if that can't run (no
     // `xark` on `PATH`/`$XARK`), fall through to the clear "run `xark build`"
     // guidance rather than a raw file/parse error from deeper in the load.
-    if !xbc_path.exists() || newer_source(dir).is_some() {
+    if !xbc_path.exists() || newer_source(dir).is_some() || other_field(dir).is_some() {
         try_autobuild(dir);
     }
     if !xbc_path.exists() {
         panic!("{}", not_built_message(&name, &xbc_path));
+    }
+    if let Some(p) = other_field(dir) {
+        panic!(
+            "{} was built over another field ({p}), and couldn't be rebuilt: Rust tests \
+             check the BN254 circuit. Run `xark build` (no `--field`), or `xark test`.",
+            xbc_path.display()
+        );
     }
     if let Some(src) = newer_source(dir) {
         eprintln!(

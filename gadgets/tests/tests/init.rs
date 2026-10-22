@@ -114,4 +114,24 @@ fn init_then_test() {
         !o.status.success() && log.contains("accepts_valid ... FAILED"),
         "cargo test ran the stale circuit:\n{log}"
     );
+
+    // A build over another field (`--field 7`) isn't the circuit Rust tests check:
+    // plain `cargo test` rebuilds it for BN254, then passes.
+    std::fs::write(&lib, &src).unwrap();
+    let (ok, _, err) = run(&["build", dir_s, "--field", "7"]);
+    assert!(ok, "build --field 7 failed: {err}");
+    let o = std::process::Command::new("cargo")
+        .args(["test", "--release"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("XARK", common::xark_bin())
+        .output()
+        .expect("invoke cargo");
+    let log = String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
+    assert!(
+        o.status.success() && log.contains("building circuit"),
+        "cargo test didn't rebuild the field-7 circuit:\n{log}"
+    );
+    let (ok, field, _) = run(&["inspect", dir_s]);
+    assert!(ok && field.contains("bn254"), "{field}");
 }

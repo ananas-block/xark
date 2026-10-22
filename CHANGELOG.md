@@ -71,8 +71,9 @@ gadgets now check more:
   constraint number.
 - **`cargo test` rebuilds a stale circuit**, one older than any local source it
   came from (path-dependency gadgets and `xark` included, from cargo's dep-info),
-  instead of testing the previous build. Without an `xark` to rebuild with, it
-  warns.
+  instead of testing the previous build, and one built over another field
+  (`--field`). Without an `xark` to rebuild with, it warns (for another field, the
+  tests fail, saying why).
 
 #### Inputs
 
