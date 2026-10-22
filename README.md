@@ -118,7 +118,7 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Polic
 }
 
 // In a test:
-// let policy = Policy::on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE]);
+// let policy = Policy::default().on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE]);
 // zk_kyc(id, id.commitment(), policy)
 ```
 
@@ -246,7 +246,7 @@ import { Country, Field, Identity, Policy, ZkKyc } from "./zk_kyc";
 const prover = await ZkKyc.prover("/circuits/zk_kyc/");
 const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt: new Field(saltBytes) };
 const commitment = Identity.commitment(id); // the circuit's own Rust (below)
-const policy = Policy.on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
+const policy = Policy.default().on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
 const proof = prover.prove({ id, commitment, policy });
 proof.publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
 send(proof.toBytes());
@@ -257,20 +257,28 @@ verifier.verify(body, { commitment, policy: required }); // true
 verifier.decode(body).publicInputs; // what it claims, typed
 ```
 
-`Policy.on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
+`Policy.default().on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
 not a TypeScript copy of it: the same `#[input]`, on an `impl` block, makes its
 methods client functions, typed from their signatures and documented with their doc
 comments.
 
 ```rust
 #[input]
+impl Default for Policy {
+    /// A policy every holder passes: no expiry, age, net worth or nationality check.
+    fn default() -> Policy { … }
+}
+
+#[input]
 impl Policy {
-    /// A check on `today` that any holder with a valid document passes.
-    pub fn on(today: impl Into<Date>) -> Policy { … }
-    /// At least `years` old on `today`.
+    /// Checked on `today`: the holder's document mustn't have expired by then.
+    pub fn on(self, today: impl Into<Date>) -> Policy { … }
+    /// At least `years` old on `today` (set it with `on` first).
     pub fn min_age(self, years: u16) -> Policy { … }
 }
 ```
+
+A trait's `impl` works the same way: `impl Default` gives `Policy.default()`.
 
 `xark client` builds the crate's host code once more as `client.wasm` (beside
 `circuit.xbc`; a prover or verifier made from a URL fetches it, or
@@ -281,7 +289,7 @@ works from any crate: a gadget that puts `#[input]` on its types and their `impl
 brings those functions to the client of every circuit that takes them, with
 nothing added to xark. A method that takes `self` is also a method on the values
 these functions return and on decoded public inputs, so a chain reads as in Rust:
-`Policy.on(today).minAge(18).worthAtLeast(500_000)`. A method named like a field
+`Policy.default().on(today).minAge(18).worthAtLeast(500_000)`. A method named like a field
 can't be both in TypeScript: it stays `Policy.method(value, …)`, and `xark client`
 warns, so you can rename it.
 

@@ -1,5 +1,5 @@
 //! Rust functions a generated client calls: `#[input]` on an `impl` block
-//! makes its methods (constructors such as `Policy::on`, helpers such as
+//! makes its methods (constructors such as `Policy::default`, helpers such as
 //! `Identity::commitment`) callable from a client, running this same code.
 //!
 //! `xark client` builds the circuit crate's host code a second time, as a plain wasm

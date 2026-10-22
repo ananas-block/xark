@@ -20,7 +20,7 @@ pub struct Identity {
     pub salt: Field,
 }
 
-#[xark::input]
+#[input]
 impl Identity {
     /// The issuer's commitment: Poseidon2 over every field, so adding one extends it.
     pub fn commitment(&self) -> Field {
@@ -32,7 +32,7 @@ impl Identity {
 /// picks its own rules with no new circuit.
 ///
 /// ```ignore
-/// Policy::on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE])
+/// Policy::default().on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE])
 /// ```
 #[input]
 pub struct Policy {
@@ -46,22 +46,37 @@ pub struct Policy {
     pub allowed: Bitfield<Country>,
 }
 
-#[xark::input]
-impl Policy {
-    /// A check on `today` that any holder with a valid document passes: tighten it
-    /// with the other constructors.
-    pub fn on(today: impl Into<Date>) -> Policy {
+#[input]
+impl Default for Policy {
+    /// A policy every holder passes: no expiry, age, net worth or nationality check.
+    /// Tighten it from there, starting with `on`.
+    fn default() -> Policy {
         Policy {
-            today: today.into(),
+            today: Date::MIN,
             born_by: Date::MAX,
             min_net_worth: 0,
             allowed: Bitfield::all(),
         }
     }
+}
 
-    /// At least `years` old on `today`.
+#[input]
+impl Policy {
+    /// Checked on `today`: the holder's document mustn't have expired by then.
+    pub fn on(self, today: impl Into<Date>) -> Policy {
+        Policy {
+            today: today.into(),
+            ..self
+        }
+    }
+
+    /// At least `years` old on `today` (set it with `on` first).
     #[cfg(not(xark))]
     pub fn min_age(self, years: u16) -> Policy {
+        assert!(
+            self.today != Date::MIN,
+            "a minimum age needs the day of the check: call `on(today)` first"
+        );
         Policy {
             born_by: self.today.years_before(years),
             ..self
@@ -114,7 +129,8 @@ mod tests {
 
     /// 18 or older, worth ≥ 500k, valid on 2026-10-20, from US/GB/FR/DE.
     fn policy() -> Policy {
-        Policy::on("2026-10-20")
+        Policy::default()
+            .on("2026-10-20")
             .min_age(18)
             .worth_at_least(500_000)
             .nationalities([US, GB, FR, DE])
@@ -148,6 +164,15 @@ mod tests {
     #[test]
     fn checks_switch_off_without_a_new_circuit() {
         let id = holder(JP, "2025-01-01", 0, "2026-10-21");
-        zk_kyc(id, id.commitment(), Policy::on("2026-10-20")).unwrap();
+        zk_kyc(id, id.commitment(), Policy::default().on("2026-10-20")).unwrap();
+        // With no day either, not even an expired document is refused.
+        let expired = holder(JP, "2025-01-01", 0, "2001-01-01");
+        zk_kyc(expired, expired.commitment(), Policy::default()).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "call `on(today)` first")]
+    fn a_minimum_age_needs_the_day() {
+        let _ = Policy::default().min_age(18);
     }
 }

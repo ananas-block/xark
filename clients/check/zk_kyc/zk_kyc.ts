@@ -103,7 +103,14 @@ export class PolicyValue {
   }
 
   /**
-   * At least `years` old on `today`.
+   * Checked on `today`: the holder's document mustn't have expired by then.
+   */
+  on(today: Day): PolicyValue {
+    return Policy.on(this, today);
+  }
+
+  /**
+   * At least `years` old on `today` (set it with `on` first).
    */
   minAge(years: U16): PolicyValue {
     return Policy.minAge(this, years);
@@ -162,14 +169,20 @@ export type ZkKycProof = Proof<ZkKycPublicValues>;
 /** `Policy`'s Rust functions (`#[input] impl Policy`), run from `client.wasm`. */
 export const Policy = {
   /**
-   * A check on `today` that any holder with a valid document passes: tighten it
-   * with the other constructors.
+   * Checked on `today`: the holder's document mustn't have expired by then.
    */
-  on(today: Day): PolicyValue {
-    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [today]));
+  on(policy: Policy, today: Day): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.on", [policy, today]));
   },
   /**
-   * At least `years` old on `today`.
+   * A policy every holder passes: no expiry, age, net worth or nationality check.
+   * Tighten it from there, starting with `on`.
+   */
+  default(): PolicyValue {
+    return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.default", []));
+  },
+  /**
+   * At least `years` old on `today` (set it with `on` first).
    */
   minAge(policy: Policy, years: U16): PolicyValue {
     return decodePolicy(ZkKyc.call<Json<PolicyValue>>("Policy.min_age", [policy, years]));

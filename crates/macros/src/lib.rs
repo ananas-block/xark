@@ -427,23 +427,30 @@ fn to_pascal(s: &str) -> String {
 /// pub enum Tier { Retail, Accredited, Institutional }
 /// ```
 ///
-/// **On an inherent `impl` block** its `pub fn`s become functions a generated client
-/// (`xark client`) calls, running this Rust code: write a constructor or helper once.
+/// **On an `impl` block** its `pub fn`s (every function, for a trait's impl) become
+/// functions a generated client (`xark client`) calls, running this Rust code: write
+/// a constructor or helper once.
 ///
 /// ```ignore
 /// #[input]
+/// impl Default for Policy {
+///     /// A policy every holder passes.
+///     fn default() -> Policy { /* … */ }
+/// }
+///
+/// #[input]
 /// impl Policy {
-///     /// A check on `today` that any holder passes.
-///     pub fn on(today: impl Into<Date>) -> Policy { /* … */ }
+///     /// Checked on `today`.
+///     pub fn on(self, today: impl Into<Date>) -> Policy { /* … */ }
 ///     /// At least `years` old on `today`.
 ///     pub fn min_age(self, years: u16) -> Policy { /* … */ }
 /// }
 /// ```
 ///
-/// TypeScript gets `Policy.on(new Date()).minAge(18)`, typed from the signature, its
-/// docs from these comments. Each parameter and the result must be an `xark::Input`
-/// type (`Field`, `uN`, `bool`, `Date`, a struct with `#[input]`, …; `impl Into<T>`
-/// takes a `T`); the receiver may be `self` or `&self`. The block itself compiles as
+/// TypeScript gets `Policy.default().on(new Date()).minAge(18)`, typed from the
+/// signature, its docs from these comments. Each parameter and the result must be an
+/// `xark::Input` type (`Field`, `uN`, `bool`, `Date`, a struct with `#[input]`, …;
+/// `impl Into<T>` takes a `T`); the receiver may be `self` or `&self`. The block itself compiles as
 /// written; a client build (`--cfg xark_client`) also gives each method a wasm export
 /// taking and returning JSON (see `xark::client`), described in the module's
 /// `xark.exports` section. That works from any crate, so a gadget's types bring their
@@ -877,18 +884,24 @@ fn eval_usize_lit(e: &Expr) -> syn::Result<usize> {
 }
 
 fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
-    if block.trait_.is_some() || !block.generics.params.is_empty() {
+    if !block.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
             &block.self_ty,
-            "#[input] goes on a plain inherent `impl Type { .. }` block",
+            "#[input] goes on a plain `impl Type { .. }` or `impl Trait for Type { .. }` block",
         ));
     }
     let self_ty = &block.self_ty;
     let type_name = type_string(self_ty);
+    // `Type::f`, or `<Type as Trait>::f` for a trait's (`impl Default for Policy`).
+    let path = match &block.trait_ {
+        Some((_, tr, _)) => quote! { <#self_ty as #tr> },
+        None => quote! { <#self_ty> },
+    };
     let mut items = Vec::new();
     for item in &block.items {
         let ImplItem::Fn(f) = item else { continue };
-        if !matches!(f.vis, syn::Visibility::Public(_)) {
+        // A trait's functions are as public as the trait; an inherent one, if `pub`.
+        if block.trait_.is_none() && !matches!(f.vis, syn::Visibility::Public(_)) {
             continue;
         }
         let name = &f.sig.ident;
@@ -995,7 +1008,7 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
             pub extern "C" fn #shim(__ptr: *const u8, __len: usize) -> u64 {
                 ::xark::client::call(__ptr, __len, |__args| {
                     #(#decode)*
-                    ::core::result::Result::Ok(::xark::client::to_json(&<#self_ty>::#name(#(#call_args),*))?)
+                    ::core::result::Result::Ok(::xark::client::to_json(&#path::#name(#(#call_args),*))?)
                 })
             }
             #(#cfgs)*

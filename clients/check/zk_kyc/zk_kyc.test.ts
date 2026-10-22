@@ -4,7 +4,7 @@ import { artifacts } from "../artifacts";
 import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
 
 // Made from the build output, the prover also loads `client.wasm`: the Rust
-// functions (`Policy.on`, `Identity.commitment`) work from then on.
+// functions (`Policy.default`, `Identity.commitment`) work from then on.
 let prover: ZkKycProver;
 let verifier: ZkKycVerifier;
 beforeAll(async () => {
@@ -35,9 +35,9 @@ const policy: Policy = {
 };
 
 test("builds the policy and the commitment with the circuit's Rust code", () => {
-  // `Policy::on(..).min_age(..)…` and `Identity::commitment`, from `#[input] impl`: the
+  // `Policy::default().on(..).min_age(..)…` and `Identity::commitment`, from `#[input] impl`: the
   // same chain as in Rust.
-  const built = Policy.on(new Date("2026-10-20")).minAge(18).worthAtLeast(500_000).nationalities(["US", "GB", "FR", "DE"]);
+  const built = Policy.default().on(new Date("2026-10-20")).minAge(18).worthAtLeast(500_000).nationalities(["US", "GB", "FR", "DE"]);
   expect(built).toBeInstanceOf(PolicyValue);
   expect({ ...built }).toEqual({ ...policy, minNetWorth: 500_000n, allowed: ["DE", "FR", "GB", "US"] });
   expect(Policy.minAge(policy, 21).bornBy).toEqual(new Date("2005-10-20"));
@@ -46,9 +46,17 @@ test("builds the policy and the commitment with the circuit's Rust code", () => 
   expect(verifier.verify(proof, { commitment, policy: built })).toBe(true);
   // A Rust panic is an exception with its message, and the module keeps working.
   expect(() => built.minAge(3000)).toThrow(/a date before year 0/);
-  expect(Policy.on(new Date("2024-02-29")).minAge(1).bornBy).toEqual(new Date("2023-02-28"));
+  expect(Policy.default().on(new Date("2024-02-29")).minAge(1).bornBy).toEqual(new Date("2023-02-28"));
+  // The default policy passes everyone; `on` sets only the day, which a minimum age needs.
+  expect({ ...Policy.default().on(new Date("2026-10-20")) }).toEqual({
+    today: new Date("2026-10-20"),
+    bornBy: new Date("9999-12-31"),
+    minNetWorth: 0n,
+    allowed: expect.arrayContaining(["US", "KP"]),
+  });
+  expect(() => Policy.default().minAge(18)).toThrow(/call `on\(today\)` first/);
   // Values are checked on the way in, as for `prove`.
-  expect(() => Policy.on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(/"XX" is not a Country/);
+  expect(() => Policy.default().on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(/"XX" is not a Country/);
 });
 
 test("countries are typed", () => {
@@ -143,7 +151,7 @@ test("names the input at fault", () => {
   expect(() => prover.prove({ id: { ...id, netWorth: -1 }, commitment, policy })).toThrow(
     expect.objectContaining({ name: "InputError", path: "id.netWorth" }),
   );
-  expect(() => Policy.on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(
+  expect(() => Policy.default().on(new Date("2026-10-20")).nationalities(["XX" as Country])).toThrow(
     expect.objectContaining({ name: "InputError", path: "allowed" }),
   );
   expect(() => Policy.minAge({ ...policy, bornBy: new Date("x") }, 18)).toThrow(

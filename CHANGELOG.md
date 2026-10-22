@@ -95,7 +95,7 @@ gadgets now check more:
   `Choice::require_in(set)` costs about 510 constraints over `Country`.
   `Date::parse`/`Text::parse` return a `Result` for input you didn't write.
   `examples/zk_kyc` uses them: a private `Identity` checked against a public
-  `Policy` built with `Policy::on(today).min_age(18).worth_at_least(500_000)`.
+  `Policy` built with `Policy::default().on(today).min_age(18).worth_at_least(500_000)`.
 - **`bool` inputs.** A `bool` parameter or field is one field element, checked to
   be 0 or 1, usable as a condition and a value.
 - **`schema.json`.** `xark build` writes every input's name, visibility and type,
@@ -143,8 +143,9 @@ verification starter, and the `xark-client` npm package is removed.
   require, and `verifier.decode(bytes)` reads them. A malformed verifying key fails
   when the verifier is made.
 - **The circuit's Rust in TypeScript:** `#[input]` on an `impl` makes its methods
-  client functions, from any crate. `xark client` builds the crate's host code as
-  `client.wasm`, so `Policy.on(day).minAge(18)` and `Identity.commitment(id)` run the
+  client functions, from any crate; on a trait's `impl` too (`impl Default for
+  Policy` gives `Policy.default()`). `xark client` builds the crate's host code as
+  `client.wasm`, so `Policy.default().on(day).minAge(18)` and `Identity.commitment(id)` run the
   crate's Rust, chaining as in Rust. A method named like a field stays
   `Policy.method(value, …)`, and `xark client` warns. A Rust panic is an exception
   with its message. `await ZkKyc.ready(url)` loads `client.wasm` on its own.

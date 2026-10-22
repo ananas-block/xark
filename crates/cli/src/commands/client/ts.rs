@@ -175,9 +175,9 @@ fn note(ty: &Ty) -> Option<String> {
 }
 
 /// The client functions (`#[input]` on an `impl`): per type, an object of typed functions
-/// running the Rust code in `client.wasm` (`Policy.on(day)`). Also returned: per type,
+/// running the Rust code in `client.wasm` (`Policy.default()`). Also returned: per type,
 /// its `self` methods as class members of its decoded value, so they chain on
-/// whatever a function returns (`Policy.on(day).minAge(18)`).
+/// whatever a function returns (`Policy.default().on(day).minAge(18)`).
 fn exports_ts(
     m: &Model,
     value_structs: &mut BTreeSet<String>,
