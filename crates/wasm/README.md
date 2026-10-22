@@ -151,7 +151,7 @@ proveStreamingPreloaded(inputs);
 ```
 
 `residentKey` decodes the key once (≈2.2× its compressed size in wasm memory) so
-repeat proofs skip point decompression — ZK-KYC proves in the same time as
+repeat proofs skip point decompression — zkyc proves in the same time as
 `prove_preloaded`; sha256 3.6× faster than streamed. Leave it off with a worker
 pool, whose workers decompress their chunks in parallel.
 
@@ -287,10 +287,10 @@ module for the platform itself (running `init()` for the web build) the first ti
 one is made; `{ wasm }` in the options passes your own.
 
 ```js
-import { ZkKyc } from "./zk_kyc"; // generated; imports this module
-const prover = await ZkKyc.prover("/circuits/zk_kyc/");
+import { Zkyc } from "./zkyc"; // generated; imports this module
+const prover = await Zkyc.prover("/circuits/zkyc/");
 const proof = prover.prove(inputs);
-const verifier = await ZkKyc.verifier(vkBytes);
+const verifier = await Zkyc.verifier(vkBytes);
 verifier.verify(proof.toBytes(), requiredPublicInputs); // true
 prover.poseidon2(prover.fields("Identity", id)); // hash a value as the circuit does
 ```

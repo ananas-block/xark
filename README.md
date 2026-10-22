@@ -70,7 +70,7 @@ line each constraint came from (the circuit itself is unchanged by it).
 Circuit code also runs as plain Rust on the host: `Field` arithmetic,
 comparisons, hints and whole gadgets compute their values, and a failed
 `require` panics at its line. So tests and services call the same helpers the
-circuit does. `zk_kyc`'s tests make the issuer's commitment with
+circuit does. `zkyc`'s tests make the issuer's commitment with
 `id.commitment()`, the very function the circuit checks it with, and
 `pubkey.verify(sig, digest)` checks an ECDSA signature off-circuit. (Calling the
 `#[circuit]` fn itself still checks the circuit through the prover.)
@@ -109,7 +109,7 @@ pub struct Identity { document: Text, born: Date, nationality: Choice<Country>, 
 pub struct Policy { today: Date, born_by: Date, min_net_worth: u64, allowed: Bitfield<Country> }
 
 #[circuit]
-fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Policy>) {
+fn zkyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Policy>) {
     require_eq(id.commitment(), commitment);
     require(id.born <= policy.born_by);
     require(id.net_worth >= policy.min_net_worth);
@@ -119,10 +119,10 @@ fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Polic
 
 // In a test:
 // let policy = Policy::default().on("2026-10-20").min_age(18).worth_at_least(500_000).nationalities([US, GB, FR, DE]);
-// zk_kyc(id, id.commitment(), policy)
+// zkyc(id, id.commitment(), policy)
 ```
 
-`examples/zk_kyc` is this circuit in full. A `bool` input works too: one field
+`examples/zkyc` is this circuit in full. A `bool` input works too: one field
 element, checked to be 0 or 1.
 
 A type `#[input]` doesn't cover implements `Input` by hand, in one impl that
@@ -191,7 +191,7 @@ xark check examples/cube
 
 # Where the constraints go: by source line, function and kind, each kind explained.
 # --html also writes target/xark/<name>/profile.html, the source shaded by cost.
-xark profile examples/zk_kyc --html
+xark profile examples/zkyc --html
 ```
 
 ### Typed clients
@@ -209,7 +209,7 @@ the circuit, which makes its provers and verifiers. What every client shares
 (`Field`, `Proof`, loading xark-wasm and the build output) is xark-wasm's
 `@blueshift-gg/xark-wasm/client`, so the file holds only the circuit, and an app
 imports only the file. Beside it, `xark client` writes the schema the file imports,
-`zk_kyc.schema.ts` (the circuit's `schema.json` as a module's default export, so no
+`zkyc.schema.ts` (the circuit's `schema.json` as a module's default export, so no
 project settings are needed): the two are written together, so they always agree.
 Each type is the one you'd write by hand:
 
@@ -239,11 +239,11 @@ A prover and a verifier are separate, each made from a URL serving a copy of
 run. A proof travels as one blob, `proof.toBytes()`:
 
 ```ts
-import { Country, Field, Identity, Policy, ZkKyc } from "./zk_kyc";
+import { Country, Field, Identity, Policy, Zkyc } from "./zkyc";
 
 // In the app: fetches circuit.xbc, pk.bin, sources.json and client.wasm, and loads
 // xark-wasm (node, web or workerd).
-const prover = await ZkKyc.prover("/circuits/zk_kyc/");
+const prover = await Zkyc.prover("/circuits/zkyc/");
 const id = { document: "A1938274", born: new Date("1990-01-01"), nationality: Country.US, netWorth: 1_000_000, expires: new Date("2030-01-01"), salt: new Field(saltBytes) };
 const commitment = Identity.commitment(id); // the circuit's own Rust (below)
 const policy = Policy.default().on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
@@ -252,7 +252,7 @@ proof.publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date 
 send(proof.toBytes());
 
 // On the server: check it proves the policy you require, not just any.
-const verifier = await ZkKyc.verifier(vkBytes); // or a URL, or { verifyingKey, client }
+const verifier = await Zkyc.verifier(vkBytes); // or a URL, or { verifyingKey, client }
 verifier.verify(body, { commitment, policy: required }); // true
 verifier.decode(body).publicInputs; // what it claims, typed
 ```
@@ -282,7 +282,7 @@ A trait's `impl` works the same way: `impl Default` gives `Policy.default()`.
 
 `xark client` builds the crate's host code once more as `client.wasm` (beside
 `circuit.xbc`; a prover or verifier made from a URL fetches it, or
-`await ZkKyc.ready(url)` loads it alone), with no JS glue, and
+`await Zkyc.ready(url)` loads it alone), with no JS glue, and
 each call runs it: values cross in their natural forms, a Rust panic arrives as an
 exception with its message. Parameters and results are any `Input` type. It
 works from any crate: a gadget that puts `#[input]` on its types and their `impl`s
@@ -299,7 +299,7 @@ drift, and a mistake names its input (`id.document: "…" is longer than 31 byte
 Errors are typed for a UI to act on: an `InputError` carries the input's `path`
 (`"id.document"`), and a `CheckFailed` the failing statement's `site` (`file`,
 `line`, `col`, `text`, the functions it called into).
-`clients/check/{zk_kyc,cube,sha256,merkle}/` hold those examples' generated clients
+`clients/check/{zkyc,cube,sha256,merkle}/` hold those examples' generated clients
 and their vitest tests. `npm test` there (run in CI) builds xark, xark-wasm and each
 example, fails if a committed client is stale (`npm run update` rewrites it),
 typechecks, and runs the tests in Node; a folder with a `<name>.test.ts` is all a new

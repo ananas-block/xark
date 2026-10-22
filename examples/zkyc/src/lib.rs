@@ -103,7 +103,7 @@ impl Policy {
 /// `id` is the identity the issuer committed to as `commitment`, and it meets
 /// `policy`.
 #[circuit]
-pub fn zk_kyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Policy>) {
+pub fn zkyc(id: Private<Identity>, commitment: Public<Field>, policy: Public<Policy>) {
     require_eq(id.commitment(), commitment);
     require(id.born <= policy.born_by);
     require(id.net_worth >= policy.min_net_worth);
@@ -137,7 +137,7 @@ mod tests {
     }
 
     fn check(id: Identity) -> Result<(), xark::prover::ProveError> {
-        zk_kyc(id, id.commitment(), policy())
+        zkyc(id, id.commitment(), policy())
     }
 
     #[test]
@@ -158,16 +158,16 @@ mod tests {
     #[test]
     fn rejects_a_wrong_commitment() {
         let id = holder(US, "1990-01-01", 1_000_000, "2030-01-01");
-        assert!(zk_kyc(id, 1, policy()).is_err());
+        assert!(zkyc(id, 1, policy()).is_err());
     }
 
     #[test]
     fn checks_switch_off_without_a_new_circuit() {
         let id = holder(JP, "2025-01-01", 0, "2026-10-21");
-        zk_kyc(id, id.commitment(), Policy::default().on("2026-10-20")).unwrap();
+        zkyc(id, id.commitment(), Policy::default().on("2026-10-20")).unwrap();
         // With no day either, not even an expired document is refused.
         let expired = holder(JP, "2025-01-01", 0, "2001-01-01");
-        zk_kyc(expired, expired.commitment(), Policy::default()).unwrap();
+        zkyc(expired, expired.commitment(), Policy::default()).unwrap();
     }
 
     #[test]

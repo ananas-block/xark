@@ -2,12 +2,12 @@
 // making a prover or verifier from a circuit's build output. A generated client
 // adds its circuit's types and schema:
 //
-//   import { ZkKyc } from "./zk_kyc"; // generated
-//   const prover = await ZkKyc.prover("/circuits/zk_kyc/");
+//   import { Zkyc } from "./zkyc"; // generated
+//   const prover = await Zkyc.prover("/circuits/zkyc/");
 //   const proof = prover.prove(inputs);
 //   send(proof.toBytes());
 //   // elsewhere
-//   const verifier = await ZkKyc.verifier(vkBytes);
+//   const verifier = await Zkyc.verifier(vkBytes);
 //   verifier.verify(body, required); // true
 //
 // xark-wasm itself is this package's main module, loaded (and initialized, for the

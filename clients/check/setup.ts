@@ -2,7 +2,7 @@
 //
 // Builds the `xark` CLI and xark-wasm's node package (when missing, or with
 // XARK_REBUILD_WASM set). Then, for each example with a folder here (`cube/`,
-// `zk_kyc/`, …): `xark build`, dev keys from `xark setup`, and its client from
+// `zkyc/`, …): `xark build`, dev keys from `xark setup`, and its client from
 // `xark client`, into a temporary directory. `clients.test.ts` checks those
 // against the committed clients; the examples' own tests prove and verify
 // through them.

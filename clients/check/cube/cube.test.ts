@@ -4,7 +4,7 @@ import { artifacts, serve } from "../artifacts";
 import { Circuit } from "@blueshift-gg/xark-wasm/client";
 import { Cube, CubeProver, CubeVerifier, Field } from "./cube";
 import cubeSchema from "./cube.schema.js";
-import { Field as KycField } from "../zk_kyc/zk_kyc";
+import { Field as KycField } from "../zkyc/zkyc";
 
 // The BN254 scalar field modulus: p + 3 would prove as 3 if it wrapped.
 const p = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;

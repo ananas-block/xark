@@ -472,9 +472,9 @@ fn key_shape_mismatch_is_reported() {
     assert!(matches!(res, Err(ProveError::KeyMismatch(_))), "{res:?}");
 }
 
-// ---- real circuit: the ZK-KYC bytecode -------------------------------------------
+// ---- real circuit: the zkyc bytecode -------------------------------------------
 
-const KYC_XBC: &[u8] = include_bytes!("fixtures/zk_kyc.xbc");
+const KYC_XBC: &[u8] = include_bytes!("fixtures/zkyc.xbc");
 const KYC_INPUTS: &[(&str, &str)] = &[
     ("user.id", "3762531230650282305"),
     ("user.dob", "19900101"),

@@ -5,7 +5,7 @@
 //! * an interface per input struct, every value in its natural TypeScript form;
 //! * the inputs, the public inputs as given, and as decoded from a proof;
 //! * the circuit, a runtime `Circuit` that makes its provers and verifiers
-//!   (`ZkKyc.prover(wasm, url)`), with their types (`ZkKycProver`, `ZkKycProof`);
+//!   (`Zkyc.prover(wasm, url)`), with their types (`ZkycProver`, `ZkycProof`);
 //! * the crate's Rust functions (`#[input] impl`), run from `client.wasm`.
 //!
 //! | standard type          | as given                      | decoded       |
@@ -275,7 +275,7 @@ pub fn schema_module(circuit: &str, schema: &serde_json::Value) -> Result<String
     ))
 }
 
-/// The client, importing its schema from `schema_import` (`./zk_kyc.schema.js`).
+/// The client, importing its schema from `schema_import` (`./zkyc.schema.js`).
 pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let circuit = m.circuit.as_str();
     let name = pascal(circuit);

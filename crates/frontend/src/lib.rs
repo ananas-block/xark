@@ -357,7 +357,7 @@ pub fn build_client(
             "cdylib",
             "--config",
             "profile.release.panic=\"abort\"",
-            // Small: a client downloads it (zk_kyc's: 250 KB, 100 KB gzipped). A call
+            // Small: a client downloads it (zkyc's: 250 KB, 100 KB gzipped). A call
             // is a few microseconds at any level.
             "--config",
             "profile.release.opt-level=\"z\"",

@@ -556,7 +556,7 @@ pub type Param = (&'static str, bool, Type);
 /// leaves in proof order.
 ///
 /// ```text
-/// {"version": 2, "xark": "0.3.0", "circuit": "zk_kyc",
+/// {"version": 2, "xark": "0.3.0", "circuit": "zkyc",
 ///  "inputs": [{"name": "id", "visibility": "private", "type": {"ref": "Identity"}}, …],
 ///  "types": {"Identity": {"struct": [{"name": "born", "type": {"ref": "Date"}}, …]},
 ///            "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},

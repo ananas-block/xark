@@ -1,15 +1,15 @@
-// The generated `zk_kyc` client (`xark client`) through xark-wasm. `npm test` runs it,
+// The generated `zkyc` client (`xark client`) through xark-wasm. `npm test` runs it,
 // after setup.ts builds the example and its keys.
 import { artifacts } from "../artifacts";
-import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, ZkKyc, ZkKycProver, ZkKycVerifier } from "./zk_kyc";
+import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, Zkyc, ZkycProver, ZkycVerifier } from "./zkyc";
 
 // Made from the build output, the prover also loads `client.wasm`: the Rust
 // functions (`Policy.default`, `Identity.commitment`) work from then on.
-let prover: ZkKycProver;
-let verifier: ZkKycVerifier;
+let prover: ZkycProver;
+let verifier: ZkycVerifier;
 beforeAll(async () => {
-  prover = await ZkKyc.prover(artifacts("zk_kyc"));
-  verifier = await ZkKyc.verifier(artifacts("zk_kyc"));
+  prover = await Zkyc.prover(artifacts("zkyc"));
+  verifier = await Zkyc.verifier(artifacts("zkyc"));
 });
 
 // The holder's credential, in the circuit's own types: `Text`, `Date`, a `Country`.
@@ -160,14 +160,14 @@ test("names the input at fault", () => {
 });
 
 test("a verifier needs only the verifying key", async () => {
-  const bare = await ZkKyc.verifier(artifacts("zk_kyc").verifyingKey);
+  const bare = await Zkyc.verifier(artifacts("zkyc").verifyingKey);
   expect(bare.verify(prover.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
 });
 
 test("ready() loads the Rust functions on their own", async () => {
-  await expect(ZkKyc.ready("http://127.0.0.1:1/")).rejects.toThrow();
-  await ZkKyc.ready(artifacts("zk_kyc").client!);
+  await expect(Zkyc.ready("http://127.0.0.1:1/")).rejects.toThrow();
+  await Zkyc.ready(artifacts("zkyc").client!);
   expect(Identity.commitment(id)).toEqual(commitment);
   // A client.wasm from another build, without a function this client calls.
-  expect(() => ZkKyc.call("removed_since", [])).toThrow(/client.wasm has no `removed_since`/);
+  expect(() => Zkyc.call("removed_since", [])).toThrow(/client.wasm has no `removed_since`/);
 });

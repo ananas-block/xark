@@ -173,7 +173,7 @@ pub fn run(args: ClientArgs) -> Result<()> {
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
-    // The schema beside the client (`zk_kyc.schema.ts`), which the client imports:
+    // The schema beside the client (`zkyc.schema.ts`), which the client imports:
     // written together, so the two always agree.
     let stem = out
         .file_stem()

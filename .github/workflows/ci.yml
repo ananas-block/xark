@@ -221,6 +221,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generated clients (cube, zk_kyc, sha256, merkle)
+      - name: Generated clients (cube, zkyc, sha256, merkle)
         working-directory: clients/check
         run: npm ci && npm test

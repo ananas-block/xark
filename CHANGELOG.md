@@ -94,7 +94,7 @@ gadgets now check more:
   Checks are sized to the enum: a set splits into one bit per variant, and
   `Choice::require_in(set)` costs about 510 constraints over `Country`.
   `Date::parse`/`Text::parse` return a `Result` for input you didn't write.
-  `examples/zk_kyc` uses them: a private `Identity` checked against a public
+  `examples/zkyc` uses them: a private `Identity` checked against a public
   `Policy` built with `Policy::default().on(today).min_age(18).worth_at_least(500_000)`.
 - **`bool` inputs.** A `bool` parameter or field is one field element, checked to
   be 0 or 1, usable as a condition and a value.
@@ -135,7 +135,7 @@ verification starter, and the `xark-client` npm package is removed.
   and a type (`Country.US` or `"US"`; `"XX"` doesn't compile), named aliases for
   xark's standard types (`Day`, `Text`, `U8` … `U128`), and arrays of up to 16
   elements as tuples, so a wrong length doesn't compile.
-- **Proving and verifying:** `ZkKyc.prover(source)` and `ZkKyc.verifier(source)`,
+- **Proving and verifying:** `Zkyc.prover(source)` and `Zkyc.verifier(source)`,
   from a URL serving the build output or its bytes, each with only the methods it
   can run. They load xark-wasm themselves (node, web or workerd; `{ wasm }` passes
   your own). `prove` returns a `Proof` whose `toBytes()` is one blob to send;
@@ -148,7 +148,7 @@ verification starter, and the `xark-client` npm package is removed.
   `client.wasm`, so `Policy.default().on(day).minAge(18)` and `Identity.commitment(id)` run the
   crate's Rust, chaining as in Rust. A method named like a field stays
   `Policy.method(value, …)`, and `xark client` warns. A Rust panic is an exception
-  with its message. `await ZkKyc.ready(url)` loads `client.wasm` on its own.
+  with its message. `await Zkyc.ready(url)` loads `client.wasm` on its own.
 - **Bytes are a `Uint8Array`**, given and decoded; `fromHex` and `toHex` (exported
   by every client) convert hex.
 - **Field elements** are a `Field` class: `new Field(x)` takes a `bigint`, a safe

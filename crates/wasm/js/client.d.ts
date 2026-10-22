@@ -195,7 +195,7 @@ export class Verifier<PublicInputs, PublicValues, Structs = {}> extends Session<
 
 /** A circuit as its generated client describes it. */
 export interface CircuitSpec<PublicValues> {
-  /** The circuit's name (`zk_kyc`). */
+  /** The circuit's name (`zkyc`). */
   name: string;
   /** Its `schema.json`: the parsed object (as the generated client imports it), or its text. */
   schema: object | string;
