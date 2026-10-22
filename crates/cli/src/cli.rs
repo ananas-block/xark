@@ -164,7 +164,7 @@ pub fn rebuild_if_stale(xark_dir: &std::path::Path) -> anyhow::Result<()> {
 }
 
 /// [`rebuild_if_stale`], and build a circuit that hasn't been built yet: for the
-/// commands that need only the build (`xark client`, `xark inspect`).
+/// commands that need only the build (`xark setup`, `xark client`, `xark inspect`).
 pub fn build_if_needed(xark_dir: &std::path::Path) -> anyhow::Result<()> {
     build_unless_current(xark_dir, true)
 }

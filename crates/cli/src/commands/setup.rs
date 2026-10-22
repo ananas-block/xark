@@ -29,7 +29,8 @@ pub struct SetupArgs {
     #[arg(value_hint = clap::ValueHint::DirPath)]
     pub path: Option<PathBuf>,
 
-    /// Output directory for keys and metadata. Inferred as `target/xark/<name>/`.
+    /// Directory to write the keys and their metadata to (created if missing; a
+    /// warning if it isn't empty). Defaults to `target/xark/<name>/`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
     /// Required to run Groth16 setup with locally generated randomness.
@@ -325,8 +326,9 @@ fn plan_keyed(
 
 pub fn run(args: SetupArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
-    // Keys for a circuit older than its source would prove the wrong thing.
-    crate::cli::rebuild_if_stale(&project.xark_dir)?;
+    // Build first if there's no build yet; keys for a circuit older than its source
+    // would prove the wrong thing.
+    crate::cli::build_if_needed(&project.xark_dir)?;
     let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
     let prof = super::dbg_flag("XARK_BUILD_TIME");
     let form = if args.streamable {
@@ -378,6 +380,15 @@ pub fn run(args: SetupArgs) -> Result<()> {
         );
     }
 
+    // `--out` names a directory of its own: anything already in it may be a key
+    // (or more) this setup replaces.
+    if args.out.is_some() && fs::read_dir(&out_dir).is_ok_and(|mut d| d.next().is_some()) {
+        eprintln!(
+            "{} {} isn't empty: writing the keys there anyway, replacing any already there",
+            crate::style::warn("warning:"),
+            out_dir.display()
+        );
+    }
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("creating output dir {}", out_dir.display()))?;
     let pk_path = out_dir.join("pk.bin");
@@ -557,11 +568,13 @@ pub fn run(args: SetupArgs) -> Result<()> {
             );
         }
     }
-    print_next_steps(&project, &args.path);
+    // Keys written elsewhere (`--out`): `xark prove` must be pointed at them.
+    let key = (pk_path != project.proving_key()).then_some(pk_path.as_path());
+    print_next_steps(&project, &args.path, key);
     Ok(())
 }
 
-fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>) {
+fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, key: Option<&std::path::Path>) {
     // Only the *declared* inputs — never the witnesses the solver derives (e.g.
     // `to_bits` range-check bits). `circuit.xbc`'s header lists them, in order, so
     // nothing is expanded.
@@ -603,10 +616,17 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>) {
         }
         _ => super::inputs_hint(&name_refs),
     };
+    let key = key.map_or_else(String::new, |k| {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        format!(
+            " --proving-key {}",
+            k.strip_prefix(&cwd).unwrap_or(k).display()
+        )
+    });
     println!(
         "\n{}",
         crate::style::next_steps(&[(
-            format!("xark prove {p} {hint}"),
+            format!("xark prove {p}{key} {hint}"),
             "solve the witness and produce a proof",
         )])
     );

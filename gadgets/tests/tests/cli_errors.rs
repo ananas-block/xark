@@ -211,6 +211,31 @@ fn failed_setup_keeps_the_previous_keys() {
     assert!(stray.is_empty(), "{stray:?}");
 }
 
+/// `xark setup --out` writes the keys to a directory of its own, warning when it
+/// already holds something, and points `xark prove` at them.
+#[test]
+fn setup_out_warns_and_names_the_key() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let setup = ["setup", "--insecure-dev-mode", "--out", "keys"];
+    let (ok, out) = run_in(&dir, &setup);
+    assert!(ok && !out.contains("isn't empty"), "{out}");
+    assert!(out.contains("--proving-key keys/pk.bin"), "{out}");
+    let (ok, out) = run_in(&dir, &setup);
+    assert!(ok && out.contains("keys isn't empty"), "{out}");
+    let (ok, out) = run_in(
+        &dir,
+        &[
+            "prove",
+            "--proving-key",
+            "keys/pk.bin",
+            "--inputs",
+            r#"{"x": "3", "y": "9"}"#,
+        ],
+    );
+    assert!(ok && !out.contains("no proving key found"), "{out}");
+}
+
 /// `xark client -o` writes the client where it's told, over whatever is there
 /// (an older client, or a file from an earlier tool), with its schema beside it.
 #[test]
