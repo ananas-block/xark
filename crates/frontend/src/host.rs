@@ -1177,19 +1177,24 @@ impl crate::interp::Host for Host {
             Bin::Or | Bin::Xor if self.disjoint(&la, &lb) => {
                 self.int_result(m, la + lb, wa.max(wb), reg)?
             }
-            // `x & (2^k − 1)`: the low `k` bits.
-            Bin::And
-                if let Some(k) = konst(b)
-                    .or(konst(a))
-                    .and_then(|mask| mask.checked_add(1))
-                    .filter(|p| p.is_power_of_two())
-                    .map(u64::trailing_zeros)
-                    && let Some((low, _)) =
-                        self.split_lc(if konst(b).is_some() { &la } else { &lb }, k) =>
-            {
-                self.int_result(m, low, k.min(if konst(b).is_some() { wa } else { wb }), reg)?
-            }
             Bin::And | Bin::Or | Bin::Xor => {
+                // `x & (2^k − 1)`: the low `k` bits. (Not a match guard: `if let`
+                // guards aren't stable on Rust 1.89, which xark supports.)
+                let (x, mask_wa) = if konst(b).is_some() {
+                    (&la, wa)
+                } else {
+                    (&lb, wb)
+                };
+                if o == Bin::And
+                    && let Some(k) = konst(b)
+                        .or(konst(a))
+                        .and_then(|mask| mask.checked_add(1))
+                        .filter(|p| p.is_power_of_two())
+                        .map(u64::trailing_zeros)
+                    && let Some((low, _)) = self.split_lc(x, k)
+                {
+                    return self.int_result(m, low, k.min(mask_wa), reg);
+                }
                 let n = wa.max(wb).min(reg) as usize;
                 let ba = self.bits_of(&la, n)?;
                 let bb = self.bits_of(&lb, n)?;
