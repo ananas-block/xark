@@ -291,6 +291,9 @@ verification starter, and the `xark-client` npm package is removed.
 
 ### Fixed
 
+- A circuit's generated test function (`zkyc_circuit(...)` in `cargo test`) looks
+  for the build where `xark build` writes it, under the package's name: a crate
+  named `my-circuit` (as `xark init my-circuit` makes it) said "has not been built".
 - `xark ceremony contribute`, `verify` and `finalize` on a directory that isn't a
   ceremony (a typo) say so and how to start one, instead of "No such file or
   directory (os error 2)"; a damaged ceremony key names the file.

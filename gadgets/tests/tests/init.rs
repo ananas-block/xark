@@ -8,7 +8,9 @@ use std::path::Path;
 #[test]
 fn init_then_test() {
     let tmp = tempdir();
-    let dir = tmp.path().join("demo");
+    // A dash: the package is `zk-demo`, its circuit fn `zk_demo`, and the build (named
+    // after the package) is where the generated test function looks.
+    let dir = tmp.path().join("zk-demo");
     let dir_s = dir.to_str().unwrap();
     let (ok, _, err) = run(&["init", dir_s]);
     assert!(ok, "init failed: {err}");
@@ -33,7 +35,7 @@ fn init_then_test() {
         "a circuit crate needs only `xark`:\n{toml}"
     );
     assert!(
-        toml.contains("name = \"demo\""),
+        toml.contains("name = \"zk-demo\""),
         "crate not named after the directory:\n{toml}"
     );
     assert_ne!(
