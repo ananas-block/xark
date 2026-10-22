@@ -284,7 +284,7 @@ pub fn schema_module(circuit: &str, schema: &serde_json::Value) -> Result<String
     ))
 }
 
-/// The client, importing its schema from `schema_import` (`./zkyc.schema.js`).
+/// The client, importing its schema from `schema_import` (`./zkyc.schema`, the `.ts`).
 pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let circuit = m.circuit.as_str();
     let name = pascal(circuit);
@@ -310,10 +310,9 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
          // and `xark client` turns them into the types below. Don't edit this file: change\n\
          // the circuit, then rebuild and rerun `xark client`. Values go in their natural\n\
          // forms (dates, strings, variant names, bytes); xark-wasm encodes them against the\n\
-         // schema (in `{schema_ts}`, written with this file), exactly as `xark prove\n\
+         // schema (in `{schema_import}.ts`, written with this file), exactly as `xark prove\n\
          // --inputs` does.\n",
         sig.join(", "),
-        schema_ts = schema_import.trim_end_matches(".js").to_string() + ".ts",
     );
 
     // The runtime's imports go here, once the body says which it uses.
@@ -633,7 +632,7 @@ mod tests {
     #[test]
     fn generates_natural_types() {
         let m = Model::new(&serde_json::from_str(SCHEMA).unwrap()).unwrap();
-        let ts = generate(&m, "kyc_check.schema.js").unwrap();
+        let ts = generate(&m, "kyc_check.schema").unwrap();
         for want in [
             "fn kyc_check(id: Private<Identity>, born_before: Public<Date>, allowed: Public<Bitfield<Country>>, doc: Private<[u8; 4]>, commitment: Public<Field>)",
             "export const Country = {\n  AD: \"AD\", US: \"US\",\n} as const;\nexport type Country = (typeof Country)[keyof typeof Country];",
@@ -648,7 +647,7 @@ mod tests {
             "export interface KycCheckPublicValues {\n  bornBefore: Day;\n  allowed: Country[];\n  commitment: Field;\n}",
             "    bornBefore: new Date(v.bornBefore),",
             "    commitment: new Field(v.commitment),",
-            "import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema.js\";\nexport { CheckFailed, Field, InputError, fromHex, toHex };",
+            "import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema\";\nexport { CheckFailed, Field, InputError, fromHex, toHex };",
             "  name: \"kyc_check\",\n  schema,\n",
             "export interface KycCheckStructs {\n  Identity: Identity;\n}",
             "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",

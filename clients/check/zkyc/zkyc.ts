@@ -11,7 +11,7 @@
 // --inputs` does.
 
 import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type Text, type U16, type U64, type Verifier } from "@blueshift-gg/xark-wasm/client";
-import schema from "./zkyc.schema.js";
+import schema from "./zkyc.schema";
 export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** A `Country` (an enum in the circuit): `Country.AD`, or its name, `"AD"`. */

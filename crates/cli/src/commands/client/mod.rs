@@ -69,7 +69,10 @@ impl Lang {
     /// The client, importing its schema module (`schema_stem`, a sibling).
     fn generate(self, m: &model::Model, schema_stem: &str) -> Result<String> {
         match self {
-            Lang::Ts => ts::generate(m, &format!("{schema_stem}.js")),
+            // No extension: a bundler resolves it to the `.ts`, and so does tsc's
+            // "bundler" resolution, with no settings (`.ts` needs one, and Turbopack
+            // doesn't read `.js` as `.ts`).
+            Lang::Ts => ts::generate(m, schema_stem),
         }
     }
     /// The schema as a module of the language, and its file's extension.

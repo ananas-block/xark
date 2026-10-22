@@ -11,7 +11,7 @@
 // --inputs` does.
 
 import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type FieldInput, type Json, type Proof, type Prover, type Verifier } from "@blueshift-gg/xark-wasm/client";
-import schema from "./merkle.schema.js";
+import schema from "./merkle.schema";
 export { CheckFailed, Field, InputError, fromHex, toHex };
 
 /** Every input of `merkle`. */
