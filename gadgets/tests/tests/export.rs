@@ -30,6 +30,10 @@ fn exported_verifier_passes_its_own_test() {
     // Again over its own output is fine (regenerating) …
     let (ok, _, err) = run(&["export", out_s, "--out", verifier_s, "--allow-insecure"]);
     assert!(ok, "re-export failed: {err}");
+    assert!(
+        err.contains("isn't empty: writing the verifier crate there anyway"),
+        "{err}"
+    );
     // … but never over a crate it didn't write.
     let mine = tmp.path().join("mine");
     std::fs::create_dir_all(mine.join("src")).unwrap();

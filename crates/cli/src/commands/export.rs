@@ -56,8 +56,9 @@ pub struct ExportArgs {
     /// `target/xark/<name>/public_inputs.bin`.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub public_inputs: Option<PathBuf>,
-    /// Output directory — the root of the generated verifier crate. Inferred as
-    /// `target/xark/<name>/verifier`.
+    /// Output directory — the root of the generated verifier crate (a warning if it
+    /// isn't empty; a `Cargo.toml` or `src/lib.rs` it didn't write is never
+    /// replaced). Inferred as `target/xark/<name>/verifier`.
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
     /// Name for the generated crate. Defaults to the `--out` directory name.
@@ -158,6 +159,9 @@ pub fn run(args: ExportArgs) -> Result<()> {
                 out.join(file).display()
             );
         }
+    }
+    if args.out.is_some() {
+        super::warn_if_not_empty(out, "verifier crate");
     }
     fs::create_dir_all(out.join("src"))
         .with_context(|| format!("creating {}", out.join("src").display()))?;
