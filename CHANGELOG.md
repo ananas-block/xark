@@ -144,7 +144,8 @@ verification starter, and the `xark-client` npm package is removed.
   when the verifier is made.
 - **The circuit's Rust in TypeScript:** `#[input]` on an `impl` makes its methods
   client functions, from any crate; on a trait's `impl` too (`impl Default for
-  Policy` gives `Policy.default()`). `xark client` builds the crate's host code as
+  Policy` gives `Policy.default()`). Parameters may be `Self` or `&T`; a generic
+  function is refused where it's written, since a client couldn't choose its type. `xark client` builds the crate's host code as
   `client.wasm`, so `Policy.default().on(day).minAge(18)` and `Identity.commitment(id)` run the
   crate's Rust, chaining as in Rust. A method named like a field stays
   `Policy.method(value, …)`, and `xark client` warns. A Rust panic is an exception

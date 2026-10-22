@@ -48,7 +48,10 @@ fn a_gadgets_functions_reach_the_client() {
          /// `lo..hi`, checked.\n\
          pub fn new(lo: u32, hi: u32) -> Span { assert!(lo <= hi, \"lo above hi\"); Span { lo, hi } }\n\
          /// How many positions.\n\
-         pub fn len(&self) -> u32 { self.hi - self.lo }\n}\n\
+         pub fn len(&self) -> u32 { self.hi - self.lo }\n\
+         pub fn join(self, other: Self) -> Self { Span { lo: self.lo.min(other.lo), hi: self.hi.max(other.hi) } }\n\
+         pub fn covers(&self, other: &Span) -> bool { self.lo <= other.lo && other.hi <= self.hi }\n\
+         pub fn join_all(self, others: [Self; 2]) -> Span { self.join(others[0]).join(others[1]) }\n}\n\
          #[input]\npub struct Unused { pub x: Field }\n\
          #[input]\nimpl Unused {\npub fn zero() -> Unused { Unused { x: Field::zero() } }\n}\n",
     );
@@ -84,6 +87,10 @@ fn a_gadgets_functions_reach_the_client() {
         // `len` is also a method on the values `new` returns.
         "export class SpanValue {",
         "  len(): number {\n    return Span.len(this);",
+        // `Self` is the type, and `&T` a `T`, in parameters as in results.
+        "  join(span: Span, other: Span): SpanValue {",
+        "  covers(span: Span, other: Span): boolean {",
+        "  joinAll(span: Span, others: readonly [Span, Span]): SpanValue {",
     ] {
         assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
     }
@@ -148,4 +155,23 @@ fn a_client_build_failure_is_an_error() {
     );
     let (ok, out) = xark(&dir, &["client", "--no-functions"]);
     assert!(ok, "client --no-functions failed:\n{out}");
+}
+
+/// A generic exported function is refused where it's written, in any build: a client
+/// couldn't choose its type (and the `client.wasm` build would fail obscurely).
+#[test]
+fn a_generic_function_is_refused() {
+    let tmp = tempdir();
+    let dir = square(
+        tmp.path(),
+        "\nmod generic {\nuse xark::prelude::*;\n\
+         #[input]\npub struct W { pub x: u32 }\n\
+         #[input]\nimpl W {\npub fn with<T: Into<u32>>(self, x: T) -> W { W { x: x.into() } }\n}\n}\n",
+    );
+    let (ok, out) = xark(&dir, &["build"]);
+    assert!(!ok, "build should fail:\n{out}");
+    assert!(
+        out.contains("an exported function can't be generic"),
+        "{out}"
+    );
 }

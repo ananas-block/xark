@@ -450,7 +450,8 @@ fn to_pascal(s: &str) -> String {
 /// TypeScript gets `Policy.default().on(new Date()).minAge(18)`, typed from the
 /// signature, its docs from these comments. Each parameter and the result must be an
 /// `xark::Input` type (`Field`, `uN`, `bool`, `Date`, a struct with `#[input]`, …;
-/// `impl Into<T>` takes a `T`); the receiver may be `self` or `&self`. The block itself compiles as
+/// `impl Into<T>` and `&T` take a `T`, and `Self` is the type); the receiver may be
+/// `self` or `&self`. The block itself compiles as
 /// written; a client build (`--cfg xark_client`) also gives each method a wasm export
 /// taking and returning JSON (see `xark::client`), described in the module's
 /// `xark.exports` section. That works from any crate, so a gadget's types bring their
@@ -905,6 +906,21 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
             continue;
         }
         let name = &f.sig.ident;
+        // A client can't pick a type for a generic: say so here, not in the
+        // `client.wasm` build.
+        if let Some(g) = f
+            .sig
+            .generics
+            .params
+            .iter()
+            .find(|g| !matches!(g, syn::GenericParam::Lifetime(_)))
+        {
+            return Err(syn::Error::new_spanned(
+                g,
+                "an exported function can't be generic (a client can't choose its type): \
+                 take a concrete type, or `impl Into<T>`",
+            ));
+        }
         let cfgs: Vec<&Attribute> = f
             .attrs
             .iter()
@@ -961,15 +977,32 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                             "an exported method's parameters are plain names",
                         ));
                     };
-                    let ty = into_target(&pt.ty).unwrap_or(&pt.ty);
+                    // `&T` is a `T`, lent to the call.
+                    let (ty, by_ref) = match &*pt.ty {
+                        Type::Reference(r) if r.mutability.is_some() => {
+                            return Err(syn::Error::new_spanned(
+                                r,
+                                "an exported function takes `T` or `&T`, not `&mut T`",
+                            ));
+                        }
+                        Type::Reference(r) => (&*r.elem, true),
+                        ty => (ty, false),
+                    };
+                    let ty = into_target(ty).unwrap_or(ty);
+                    // `Self` means nothing in the export, outside the `impl`.
+                    let ty: Type = syn::parse2(replace_self(quote!(#ty), self_ty))?;
                     let v = format_ident!("__a{i}");
                     let pname = pi.ident.to_string();
                     decode.push(quote! { let #v: #ty = ::xark::client::arg(__args, #i, #pname)?; });
-                    call_args.push(quote! { #v });
+                    call_args.push(if by_ref {
+                        quote! { &#v }
+                    } else {
+                        quote! { #v }
+                    });
                     params.push(format!(
                         "{{\"name\":{},\"type\":{}}}",
                         json_str(&pi.ident.to_string()),
-                        json_str(&type_string(ty)),
+                        json_str(&type_string(&ty)),
                     ));
                 }
             }
@@ -1023,6 +1056,23 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
             #(#items)*
         }
     })
+}
+
+/// `tokens` with every `Self` as `self_ty` (`Option<Self>` → `Option<Policy>`).
+fn replace_self(tokens: TokenStream2, self_ty: &Type) -> TokenStream2 {
+    use proc_macro2::{Group, TokenTree};
+    tokens
+        .into_iter()
+        .flat_map(|t| match t {
+            TokenTree::Ident(i) if i == "Self" => quote!(#self_ty),
+            TokenTree::Group(g) => {
+                let mut out = Group::new(g.delimiter(), replace_self(g.stream(), self_ty));
+                out.set_span(g.span());
+                TokenTree::Group(out).into()
+            }
+            t => t.into(),
+        })
+        .collect()
 }
 
 /// `T` of an `impl Into<T>` parameter.
