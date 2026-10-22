@@ -29,6 +29,11 @@ pub fn run(args: InspectArgs) -> Result<()> {
     crate::cli::build_if_needed(&project.xark_dir)?;
     let (prog, fingerprint) = load_backend_r1cs(&project.circuit_xbc())?;
     let prim = load_primitive(&project.circuit_xbc()).ok();
+    // Two fingerprints: the constraint system's (`xark build` prints it), and the
+    // file's, which keys record (`metadata.json`) and `xark prove` checks.
+    let digest = std::fs::read(project.circuit_xbc())
+        .ok()
+        .map(|b| format!("{:032x}", xark_ir::function_decode::stream_digest(&b)));
 
     let num_internal = prog
         .variables
@@ -97,6 +102,7 @@ pub fn run(args: InspectArgs) -> Result<()> {
             "public_inputs": public_names,
             "private_inputs": private_names,
             "derived_witnesses": derived_names,
+            "digest": digest,
             "circuit_hash": fingerprint,
         });
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -140,7 +146,10 @@ pub fn run(args: InspectArgs) -> Result<()> {
         if let Some(w) = num_witness_gen {
             println!("Witness-gen ops:      {w}");
         }
-        println!("Circuit hash (sha256): {fingerprint}");
+        if let Some(d) = &digest {
+            println!("Circuit digest:       {d}  (the R1CS, as `xark build` prints it)");
+        }
+        println!("circuit.xbc sha256:   {fingerprint}  (what keys record)");
     }
     Ok(())
 }
