@@ -263,8 +263,10 @@ hasn't been called.
 | `proofBytes`        | `Uint8Array` \| `ArrayBuffer` |
 | `publicInputsBytes` | `Uint8Array` \| `ArrayBuffer` |
 
-Returns `true` if valid, `false` if well-formed but not verifying. Throws on
-deserialization errors.
+`proofBytes` is either form: compressed (128 bytes, as `prove` returns it) or
+on-chain (256 bytes, as an exported Solana verifier reads it; `solanaProof(proof)`
+converts). Returns `true` if valid, `false` if well-formed but not verifying.
+Throws on deserialization errors.
 
 ### `decode_public_inputs(publicInputsBytes)` → `string[]`
 
