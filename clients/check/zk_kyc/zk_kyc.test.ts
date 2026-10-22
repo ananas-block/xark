@@ -160,4 +160,6 @@ test("ready() loads the Rust functions on their own", async () => {
   await expect(ZkKyc.ready("http://127.0.0.1:1/")).rejects.toThrow();
   await ZkKyc.ready(artifacts("zk_kyc").client!);
   expect(Identity.commitment(id)).toEqual(commitment);
+  // A client.wasm from another build, without a function this client calls.
+  expect(() => ZkKyc.call("removed_since", [])).toThrow(/client.wasm has no `removed_since`/);
 });

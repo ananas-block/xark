@@ -312,6 +312,11 @@ export class Circuit {
       );
     }
     const x = rust.instance.exports;
+    if (typeof x[name] !== "function") {
+      throw new Error(
+        `client.wasm has no \`${name}\`: it's from another build of ${this.name}; serve the client.wasm \`xark client\` wrote with this client`,
+      );
+    }
     const input = new TextEncoder().encode(JSON.stringify(args.map((a, i) => plain(a, `argument ${i + 1}`))));
     const ptr = x.xark_alloc(input.length);
     new Uint8Array(x.memory.buffer, ptr, input.length).set(input);
