@@ -165,7 +165,7 @@ xark test examples/cube
 # Like every command, it defaults to the current directory: inside the crate,
 # plain `xark client` is enough.
 xark client examples/cube
-# → examples/cube/target/xark/cube/cube.ts, and the cube.schema.json it imports
+# → examples/cube/target/xark/cube/cube.ts, and the cube.schema.ts it imports
 
 # Generate Groth16 keys. With no .ptau this produces an INSECURE dev key
 # (single-party OsRng); pass --ptau-file (or run `xark ceremony`) for production.

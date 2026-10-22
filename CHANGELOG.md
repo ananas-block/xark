@@ -213,8 +213,6 @@ verification starter, and the `xark-client` npm package is removed.
   changed), and `xark export` warns that its keys may be for an older circuit.
 - **`xark setup --out <dir>`** warns when the directory isn't empty, and its next
   step points `xark prove` at the key there (`--proving-key <dir>/pk.bin`).
-- **A build clears the last one's debug output** (`circuit.json`, `r1cs.json`,
-  `graph.dot` from `--emit-json`), so none is left describing an older circuit.
 
 ### Added
 

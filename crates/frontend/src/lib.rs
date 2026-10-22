@@ -202,14 +202,6 @@ pub fn write_outputs_in(
 ) -> std::io::Result<()> {
     use std::io::Write;
     std::fs::create_dir_all(out_dir)?;
-    // A previous build's debug output would describe the circuit as it was: clear
-    // it, whether or not this build writes it again.
-    for f in ["circuit.json", "r1cs.json", "graph.dot"] {
-        match std::fs::remove_file(out_dir.join(f)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-            _ => {}
-        }
-    }
     if emit_json {
         let mut w = std::io::BufWriter::new(std::fs::File::create(out_dir.join("circuit.json"))?);
         xark_ir::primitive::write_json(&out.primitive, &mut w)?;
