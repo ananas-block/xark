@@ -175,3 +175,45 @@ fn a_generic_function_is_refused() {
         "{out}"
     );
 }
+
+/// A tuple struct's fields (`"0"`) and raw identifiers (`r#type`) give a client
+/// that compiles: quoted keys are read as `v["0"]`, and names lose their `r#`.
+#[test]
+fn tuple_structs_and_raw_identifiers() {
+    let tmp = tempdir();
+    let dir = square(
+        tmp.path(),
+        "\nmod odd {\nuse xark::prelude::*;\n\
+         #[input]\npub struct Pair(pub u32, pub u32);\n\
+         #[input]\npub struct Tagged { pub r#type: u32, pub pair: Pair }\n\
+         #[input]\nimpl Pair {\n\
+         pub fn swap(self) -> Pair { Pair(self.1, self.0) }\n\
+         pub fn r#with(self, r#first: u32) -> Pair { Pair(r#first, self.1) }\n}\n\
+         #[circuit]\npub fn odd(t: Private<Tagged>, r#ref: Public<Pair>) {\n\
+         require_eq(Field::from(t.r#type + t.pair.0), Field::from(r#ref.0));\n}\n}\n",
+    );
+    // The crate's own circuit and this one: build the one named `odd`.
+    let lib = dir.join("src/lib.rs");
+    let text = std::fs::read_to_string(&lib).unwrap();
+    std::fs::write(&lib, text.replacen("#[circuit]", "", 1)).unwrap();
+    let (ok, out) = xark(&dir, &["build"]);
+    assert!(ok, "build failed:\n{out}");
+    let (ok, out) = xark(&dir, &["client", "-o", "client/"]);
+    assert!(ok, "client failed:\n{out}");
+    let ts = std::fs::read_to_string(dir.join("client/odd.ts")).unwrap();
+    let schema = std::fs::read_to_string(dir.join("client/odd.schema.ts")).unwrap();
+    assert!(
+        !ts.contains("r#") && !schema.contains("r#"),
+        "{ts}\n{schema}"
+    );
+    for want in [
+        "this[\"0\"] = v[\"0\"];",
+        "\"0\": v[\"0\"],",
+        "  type: U32;",
+        "  ref: Pair;",
+        "  with(first: U32): PairValue {",
+    ] {
+        assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
+    }
+    assert!(!ts.contains("v.\"") && !ts.contains("this.\""), "{ts}");
+}

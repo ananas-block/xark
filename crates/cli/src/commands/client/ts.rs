@@ -46,6 +46,15 @@ fn ts_key(name: &str) -> String {
     prop(&camel(name))
 }
 
+/// Property `key` (a [`ts_key`]) of `obj`: `obj.key`, or `obj["0"]` for a quoted one.
+fn member(obj: &str, key: &str) -> String {
+    if key.starts_with('"') {
+        format!("{obj}[{key}]")
+    } else {
+        format!("{obj}.{key}")
+    }
+}
+
 /// `name` as a TS property key, unchanged: bare when it's an identifier.
 fn prop(name: &str) -> String {
     let ident = name
@@ -389,7 +398,7 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     for f in m.public() {
         let k = ts_key(&f.name);
         let _ = writeln!(body, "  {k}: {};", value(&f.ty, &mut value_structs));
-        let _ = writeln!(decode, "    {k}: {},", revive(&f.ty, &format!("v.{k}")));
+        let _ = writeln!(decode, "    {k}: {},", revive(&f.ty, &member("v", &k)));
     }
     body.push_str("}\n\n");
     decode.push_str("  };\n}\n\n");
@@ -407,7 +416,7 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
         for f in &m.structs[&r] {
             let k = ts_key(&f.name);
             let _ = writeln!(fields, "  {k}: {};", value(&f.ty, &mut value_structs));
-            let _ = writeln!(revived, "    {k}: {},", revive(&f.ty, &format!("v.{k}")));
+            let _ = writeln!(revived, "    {k}: {},", revive(&f.ty, &member("v", &k)));
         }
         let (doc, open, close) = match methods.get(&r) {
             Some(_) => (
@@ -426,7 +435,10 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
             Some(body) => {
                 let assign: String = m.structs[&r]
                     .iter()
-                    .map(|f| format!("    this.{k} = v.{k};\n", k = ts_key(&f.name)))
+                    .map(|f| {
+                        let k = ts_key(&f.name);
+                        format!("    {} = {};\n", member("this", &k), member("v", &k))
+                    })
                     .collect();
                 let _ = writeln!(
                     structs,

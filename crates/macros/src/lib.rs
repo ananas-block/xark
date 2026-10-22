@@ -23,6 +23,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use syn::ext::IdentExt;
 use syn::{
     Attribute, Data, DataEnum, DataStruct, DeriveInput, Expr, ExprLit, FnArg, GenericArgument,
     ImplItem, ItemFn, ItemImpl, Lit, LitInt, LitStr, Pat, PathArguments, ReturnType, Type,
@@ -125,13 +126,13 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
         }
     };
 
-    let fn_name_lit = LitStr::new(&fn_ident.to_string(), fn_ident.span());
+    let fn_name_lit = LitStr::new(&fn_ident.unraw().to_string(), fn_ident.span());
     // `(name, public, TYPE)` per parameter: the circuit's `schema.json`.
     let schema_params: Vec<TokenStream2> = params
         .iter()
         .map(|p| {
             let (ty, public) = (&p.ty, p.wrapper == "Public");
-            let lit = LitStr::new(&p.name.to_string(), p.name.span());
+            let lit = LitStr::new(&p.name.unraw().to_string(), p.name.span());
             quote! { (#lit, #public, <#ty as ::xark::Input>::TYPE) }
         })
         .collect();
@@ -147,7 +148,7 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
         }
     });
     let wasm_args = params.iter().map(|p| &p.name);
-    let entry_name = fn_ident.to_string();
+    let entry_name = fn_ident.unraw().to_string();
     let entry_len = entry_name.len();
     let entry_bytes = syn::LitByteStr::new(entry_name.as_bytes(), fn_ident.span());
     let wasm_main = quote! {
@@ -170,14 +171,14 @@ fn circuit_impl(func: &ItemFn) -> syn::Result<TokenStream2> {
         }
     };
 
-    let struct_name = format_ident!("{}Inputs", to_pascal(&fn_ident.to_string()));
+    let struct_name = format_ident!("{}Inputs", to_pascal(&fn_ident.unraw().to_string()));
     let field_defs = params.iter().map(|p| {
         let (name, ty) = (&p.name, &p.ty);
         quote! { pub #name: #ty }
     });
     let leaves = params.iter().map(|p| {
         let name = &p.name;
-        let lit = LitStr::new(&name.to_string(), name.span());
+        let lit = LitStr::new(&name.unraw().to_string(), name.span());
         quote! { out.extend(::xark::input::leaves(&self.#name, #lit)); }
     });
 
@@ -603,13 +604,13 @@ fn struct_input(
              hand (a `TYPE`, and `read`/`write` of the fields in order)",
         ));
     }
-    let name_lit = LitStr::new(&name.to_string(), name.span());
+    let name_lit = LitStr::new(&name.unraw().to_string(), name.span());
     let fields: Vec<(String, TokenStream2, &Type)> = data
         .fields
         .iter()
         .enumerate()
         .map(|(i, f)| match &f.ident {
-            Some(id) => (id.to_string(), quote! { #id }, &f.ty),
+            Some(id) => (id.unraw().to_string(), quote! { #id }, &f.ty),
             None => {
                 let idx = syn::Index::from(i);
                 (i.to_string(), quote! { #idx }, &f.ty)
@@ -850,9 +851,11 @@ fn enum_input(input: &DeriveInput, data: &DataEnum) -> syn::Result<TokenStream2>
             ));
         }
     }
-    let name_lit = LitStr::new(&name.to_string(), name.span());
+    let name_lit = LitStr::new(&name.unraw().to_string(), name.span());
     let idents: Vec<&syn::Ident> = data.variants.iter().map(|v| &v.ident).collect();
-    let names = idents.iter().map(|i| LitStr::new(&i.to_string(), i.span()));
+    let names = idents
+        .iter()
+        .map(|i| LitStr::new(&i.unraw().to_string(), i.span()));
     Ok(quote! {
         #[automatically_derived]
         impl ::xark::Enum for #name {
@@ -992,7 +995,7 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                     // `Self` means nothing in the export, outside the `impl`.
                     let ty: Type = syn::parse2(replace_self(quote!(#ty), self_ty))?;
                     let v = format_ident!("__a{i}");
-                    let pname = pi.ident.to_string();
+                    let pname = pi.ident.unraw().to_string();
                     decode.push(quote! { let #v: #ty = ::xark::client::arg(__args, #i, #pname)?; });
                     call_args.push(if by_ref {
                         quote! { &#v }
@@ -1001,7 +1004,7 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                     });
                     params.push(format!(
                         "{{\"name\":{},\"type\":{}}}",
-                        json_str(&pi.ident.to_string()),
+                        json_str(&pi.ident.unraw().to_string()),
                         json_str(&type_string(&ty)),
                     ));
                 }
@@ -1017,12 +1020,14 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
                 ));
             }
         };
-        let export = format!("{type_name}.{name}");
+        // Named as written, without a raw identifier's `r#`.
+        let fn_name = name.unraw().to_string();
+        let export = format!("{type_name}.{fn_name}");
         let desc = format!(
             "{{\"export\":{},\"type\":{},\"name\":{},\"self\":{},\"params\":[{}],\"returns\":{},\"doc\":{}}}\n",
             json_str(&export),
             json_str(&type_name),
-            json_str(&name.to_string()),
+            json_str(&fn_name),
             receiver.map_or("null".to_string(), json_str),
             params.join(","),
             json_str(&returns),
@@ -1030,8 +1035,8 @@ fn export_impl(block: &ItemImpl) -> syn::Result<TokenStream2> {
         );
         let bytes = syn::LitByteStr::new(desc.as_bytes(), name.span());
         let len = desc.len();
-        let shim = format_ident!("__xark_export_{}_{}", ident_part(&type_name), name);
-        let stat = format_ident!("__XARK_EXPORT_{}_{}", ident_part(&type_name), name);
+        let shim = format_ident!("__xark_export_{}_{}", ident_part(&type_name), fn_name);
+        let stat = format_ident!("__XARK_EXPORT_{}_{}", ident_part(&type_name), fn_name);
         let export_lit = LitStr::new(&export, name.span());
         items.push(quote! {
             #(#cfgs)*
