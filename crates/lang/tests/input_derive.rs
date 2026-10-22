@@ -260,7 +260,7 @@ fn host_schema_is_the_built_schema() {
     assert_eq!(built, host);
 }
 
-/// `#[xark::input]` leaves the block as written outside a client build, and its
+/// `#[input]` on an `impl` leaves the block as written outside a client build, and its
 /// values cross in their natural JSON forms (`xark::client`), as a client sees them.
 mod exported {
     use xark::prelude::*;
@@ -271,7 +271,7 @@ mod exported {
         pub to: Date,
     }
 
-    #[xark::input]
+    #[input]
     impl Window {
         /// From `from` on, with no end.
         pub fn starting(from: impl Into<Date>) -> Window {

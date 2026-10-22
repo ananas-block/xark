@@ -66,7 +66,7 @@
 // rejected `+=` on `Field`; the wasm frontend accepts both).
 #![allow(clippy::assign_op_pattern)]
 
-use xark::{Field, require_eq};
+use xark::{Field, input, require_eq};
 
 /// Scalar bit-length (see module docs). Kept in sync with the `128usize` loop
 /// literals below (loop bounds must be integer literals in the subset).
@@ -224,7 +224,7 @@ pub fn multi_scalar_mul(scalars: [Field; K], points: [[Field; 2]; K]) -> [Field;
 /// field is exactly BN254's scalar field (the circuit `Field`), so a point needs
 /// no non-native limbs — `x`/`y` are ordinary field elements. Flattens to the
 /// leaves `<name>.x` / `<name>.y`.
-#[xark::input]
+#[input]
 pub struct Affine {
     pub x: Field,
     pub y: Field,
@@ -254,7 +254,7 @@ mod host {
 /// A committed relaxed-R1CS (Nova) instance: commitments to the witness `W` and
 /// the error `E`, the slack `u` and the public `x`. Flattens (and so hashes, via
 /// `to_fields`) as `[cw.x, cw.y, ce.x, ce.y, u, x]`.
-#[xark::input]
+#[input]
 pub struct Instance {
     pub cw: Affine,
     pub ce: Affine,
@@ -266,7 +266,7 @@ pub struct Instance {
 /// as two 127-bit limbs, `lo + hi·2^127`, both below the field, so the split is
 /// injective. On the host it comes from the whole number (a decimal / `0x`-hex
 /// string, its 32 big-endian bytes, an integer); see [`wide_scalar_mul`].
-#[xark::input(number(bits = 127))]
+#[input(number(bits = 127))]
 pub struct WideScalar {
     /// `[lo, hi]`.
     pub limbs: [Field; 2],
