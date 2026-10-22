@@ -87,11 +87,12 @@ pub enum Command {
     /// Export a self-contained Solana verifier crate.
     Export(export::ExportArgs),
     /// Generate a typed TypeScript client from the build's `schema.json` (prove +
-    /// verify through xark-wasm; no setup or proof needed).
+    /// verify through xark-wasm; builds the circuit if needed, no setup or proof).
     Client(client::ClientArgs),
     /// Phase-2 MPC ceremony for trusted setup.
     Ceremony(ceremony::CeremonyArgs),
-    /// Print circuit statistics (variables, constraints, public inputs).
+    /// Print circuit statistics (variables, constraints, public inputs), building
+    /// the circuit first if it's missing or stale.
     Inspect(inspect::InspectArgs),
     /// Profile a circuit: attribute each constraint to its source line, function
     /// chain, and kind, then print a sorted drill-down.

@@ -160,11 +160,26 @@ fn shown(path: &std::path::Path) -> std::path::PathBuf {
 /// when it's stale, saying why: so a command never uses a circuit older than its
 /// source. A build directory elsewhere (`--out`) is left as it is.
 pub fn rebuild_if_stale(xark_dir: &std::path::Path) -> anyhow::Result<()> {
-    if !xark_dir.join("circuit.xbc").exists() {
-        return Ok(()); // a missing build is the command's own error
-    }
-    let Some(why) = stale_build(xark_dir, "circuit.xbc", None) else {
-        return Ok(());
+    build_unless_current(xark_dir, false)
+}
+
+/// [`rebuild_if_stale`], and build a circuit that hasn't been built yet: for the
+/// commands that need only the build (`xark client`, `xark inspect`).
+pub fn build_if_needed(xark_dir: &std::path::Path) -> anyhow::Result<()> {
+    build_unless_current(xark_dir, true)
+}
+
+fn build_unless_current(xark_dir: &std::path::Path, missing_too: bool) -> anyhow::Result<()> {
+    let why = if !xark_dir.join("circuit.xbc").exists() {
+        if !missing_too {
+            return Ok(()); // a missing build is the command's own error
+        }
+        "no build found".to_string()
+    } else {
+        let Some(why) = stale_build(xark_dir, "circuit.xbc", None) else {
+            return Ok(());
+        };
+        why
     };
     let krate = xark_dir
         .parent()

@@ -102,9 +102,9 @@ every operation's circuit meaning unambiguous.
 
 Circuit crates are tested with **`xark test`**: it builds the `target/xark/` artifacts first, then
 runs the crate's tests, which load the built circuit and check the witness solves. Bare `cargo test`
-also works: a test whose circuit is missing, or older than the crate's `src/` or `Cargo.toml`,
-rebuilds it with the `xark` on `PATH` (`$XARK` if set) first. It doesn't see changes in path
-dependencies, so prefer `xark test` when editing a gadget crate. A `#[circuit]`-style test expecting failure asserts the solve is `Err`. Run `xark build` then
+also works: a test whose circuit is missing, or older than any source it was built from (the
+crate's `src/` and `Cargo.toml`, and its path dependencies, gadget crates included), rebuilds it
+with the `xark` on `PATH` (`$XARK` if set) first. A `#[circuit]`-style test expecting failure asserts the solve is `Err`. Run `xark build` then
 `xark prove <dir> --inputs '{"x": "42", …}'` to prove end-to-end; `--inputs` takes inline JSON or a
 file (a JSON object, or `name = value` lines), with array elements under their flat names (`path[0]`).
 

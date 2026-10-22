@@ -204,7 +204,8 @@ verification starter, and the `xark-client` npm package is removed.
   circuit has changed since (and the field and `xark` are the same). `xark prove` and
   `xark setup` rebuild a circuit older than its source, saying which file changed
   (so a proof or key is never of the old circuit; `prove` then asks for `xark setup`
-  if the circuit changed), and `xark export` warns that its keys may be for an older
+  if the circuit changed), `xark client` and `xark inspect` build a circuit that's
+  missing or stale, and `xark export` warns that its keys may be for an older
   circuit.
 
 ### Added

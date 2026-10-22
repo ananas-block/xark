@@ -73,6 +73,46 @@ fn check_reuses_a_current_build() {
 }
 
 #[test]
+fn client_builds_a_missing_or_stale_circuit() {
+    let tmp = tempdir();
+    let dir = cube(tmp.path());
+    let out = tmp.path().join("client/cube.ts");
+    let client = [
+        "client",
+        ".",
+        "--no-functions",
+        "--out",
+        out.to_str().unwrap(),
+    ];
+    let (ok, err) = xark(&dir, &client);
+    assert!(ok && err.contains("no build found"), "{err}");
+    edit(&dir, "secret", "seed");
+    let (ok, err) = xark(&dir, &client);
+    assert!(ok && err.contains("changed since it was built"), "{err}");
+    let schema = std::fs::read_to_string(out.with_file_name("cube.schema.ts")).unwrap();
+    assert!(
+        schema.contains("seed") && !schema.contains("secret"),
+        "{schema}"
+    );
+}
+
+#[test]
+fn inspect_rebuilds_a_stale_circuit() {
+    let tmp = tempdir();
+    let dir = cube(tmp.path());
+    let (ok, err) = xark(&dir, &["inspect", "."]);
+    assert!(ok && err.contains("no build found"), "{err}");
+    let (ok, err) = xark(&dir, &["inspect", "."]);
+    assert!(ok && !err.contains("building circuit"), "{err}");
+    edit(&dir, "pub fn cube", "// edited\npub fn cube");
+    let (ok, err) = xark(&dir, &["inspect", "."]);
+    assert!(
+        ok && err.contains("src/lib.rs changed since it was built"),
+        "{err}"
+    );
+}
+
+#[test]
 fn prove_rebuilds_a_stale_circuit_and_asks_for_new_keys() {
     let tmp = tempdir();
     let dir = cube(tmp.path());
