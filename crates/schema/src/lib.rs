@@ -803,15 +803,25 @@ pub fn camel(s: &str) -> String {
 fn integer(v: &Value) -> Result<BigUint, String> {
     match v {
         // `1e3` parses as a float; take it if it is a whole, exactly representable number.
-        Value::Number(n) => n
-            .as_u64()
-            .or_else(|| {
-                n.as_f64()
-                    .filter(|f| f.fract() == 0.0 && (0.0..9.0e15).contains(f))
-                    .map(|f| f as u64)
-            })
-            .map(BigUint::from)
-            .ok_or_else(|| format!("{n} is not a non-negative integer")),
+        Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                return Ok(BigUint::from(u));
+            }
+            let f = n.as_f64().unwrap_or(f64::NAN);
+            if f < 0.0 {
+                Err(format!("{n} is negative"))
+            } else if f.fract() != 0.0 {
+                Err(format!("{n} is not a whole number"))
+            } else if f < 9.0e15 {
+                Ok(BigUint::from(f as u64))
+            } else {
+                // Past 2^64 serde_json keeps only a float: the digits are already gone.
+                Err(format!(
+                    "{n} is too large to write as a JSON number exactly: put it in quotes \
+                     (\"123…\", or \"0x…\")"
+                ))
+            }
+        }
         Value::String(s) => {
             let t = s.trim();
             match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
@@ -1045,6 +1055,23 @@ mod tests {
         assert_eq!((d("k.limbs[0]"), d("k.limbs[1]")), ("0".into(), "1".into())); // 2^86
         assert_eq!((d("h.hi"), d("h.lo")), ("2".into(), "3".into()));
         assert_eq!((d("msg[0]"), d("msg[1]")), ("97".into(), "98".into()));
+    }
+
+    #[test]
+    fn json_numbers_say_what_is_wrong() {
+        let n = |text: &str| integer(&serde_json::from_str(text).unwrap());
+        assert_eq!(n("1e6").unwrap(), BigUint::from(1_000_000u32));
+        assert_eq!(n("18446744073709551615").unwrap(), BigUint::from(u64::MAX));
+        assert_eq!(n("-1").unwrap_err(), "-1 is negative");
+        assert_eq!(n("1.5").unwrap_err(), "1.5 is not a whole number");
+        // Past u64, the digits are gone before the codec sees them: ask for quotes.
+        for big in ["18446744073709551616", "1e20"] {
+            assert!(n(big).unwrap_err().contains("put it in quotes"), "{big}");
+        }
+        assert_eq!(
+            n("\"18446744073709551616\"").unwrap(),
+            BigUint::from(1u128 << 64)
+        );
     }
 
     #[test]
