@@ -213,6 +213,10 @@ verification starter, and the `xark-client` npm package is removed.
   changed), and `xark export` warns that its keys may be for an older circuit.
 - **`xark setup --out <dir>`** warns when the directory isn't empty, and its next
   step points `xark prove` at the key there (`--proving-key <dir>/pk.bin`).
+- **`xark prove --out` is a directory** (it was the proof's path, with
+  `public_inputs.bin` put beside it): `proof.bin` and `public_inputs.bin` go there,
+  with a warning if it isn't empty, and the next steps point `xark verify` and
+  `xark export` at them.
 
 ### Added
 

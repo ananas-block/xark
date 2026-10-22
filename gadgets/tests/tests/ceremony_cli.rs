@@ -95,15 +95,21 @@ fn ceremony_keys_prove_and_verify() {
 
     let (pk, vk) = (cer.join("proving_key.bin"), cer.join("verifying_key.bin"));
     let proof = tmp.path().join("proof").join("proof.bin");
-    step(&[
+    let log = step(&[
         "prove",
         "--inputs",
         r#"{"secret": "3", "result": "27"}"#,
         "--proving-key",
         pk.to_str().unwrap(),
         "--out",
-        proof.to_str().unwrap(),
+        proof.parent().unwrap().to_str().unwrap(),
     ]);
+    // Its next step verifies with the ceremony's verifying key, and this proof.
+    assert!(
+        log.contains(&format!("--verifying-key {}", vk.display()))
+            && log.contains(&format!("--proof {}", proof.display())),
+        "{log}"
+    );
     let verify = |public: &str| {
         xark(
             &[

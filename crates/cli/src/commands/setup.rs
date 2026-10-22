@@ -382,12 +382,8 @@ pub fn run(args: SetupArgs) -> Result<()> {
 
     // `--out` names a directory of its own: anything already in it may be a key
     // (or more) this setup replaces.
-    if args.out.is_some() && fs::read_dir(&out_dir).is_ok_and(|mut d| d.next().is_some()) {
-        eprintln!(
-            "{} {} isn't empty: writing the keys there anyway, replacing any already there",
-            crate::style::warn("warning:"),
-            out_dir.display()
-        );
+    if args.out.is_some() {
+        super::warn_if_not_empty(&out_dir, "keys");
     }
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("creating output dir {}", out_dir.display()))?;
@@ -617,11 +613,7 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, key: Option<&
         _ => super::inputs_hint(&name_refs),
     };
     let key = key.map_or_else(String::new, |k| {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        format!(
-            " --proving-key {}",
-            k.strip_prefix(&cwd).unwrap_or(k).display()
-        )
+        format!(" --proving-key {}", super::shown(k))
     });
     println!(
         "\n{}",

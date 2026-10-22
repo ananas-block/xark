@@ -54,7 +54,7 @@ xark ceremony finalize --ceremony-dir ceremony/
 
 # --- prove + verify with the finalized keys ---
 xark prove --inputs '{"secret": "3", "result": "27"}' \
- --proving-key ceremony/proving_key.bin --out proof/proof.bin
+ --proving-key ceremony/proving_key.bin --out proof/
 xark verify --verifying-key ceremony/verifying_key.bin --proof proof/proof.bin \
  --public-inputs proof/public_inputs.bin
 # => ✅ Proof verified

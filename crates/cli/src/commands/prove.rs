@@ -42,8 +42,10 @@ pub struct ProveArgs {
     /// Proving key. Inferred as `target/xark/<name>/pk.bin` when omitted.
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     pub proving_key: Option<PathBuf>,
-    /// Output path for the proof. Inferred as `target/xark/<name>/proof.bin`.
-    #[arg(long, value_hint = clap::ValueHint::FilePath)]
+    /// Directory to write the proof (`proof.bin`) and its public inputs
+    /// (`public_inputs.bin`) to (created if missing; a warning if it isn't empty).
+    /// Defaults to `target/xark/<name>/`.
+    #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<PathBuf>,
     /// Reproducible-randomness escape hatch for test fixtures **only**. Groth16
     /// proof randomness blinds the witness — making it reproducible leaks
@@ -111,11 +113,8 @@ pub fn run(args: ProveArgs) -> Result<()> {
         .proving_key
         .clone()
         .unwrap_or_else(|| project.proving_key());
-    let proof_out = args.out.clone().unwrap_or_else(|| project.proof());
-    let out_dir = proof_out
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
+    let proof_out = out_dir.join("proof.bin");
 
     // Auto-pipeline: let a newcomer `xark prove` straight after writing a
     // circuit. Builds and/or sets up on demand, but only when the default
@@ -376,6 +375,9 @@ fn write_outputs(
         public_inputs: public.clone(),
     };
 
+    if args.out.is_some() {
+        super::warn_if_not_empty(out_dir, "proof");
+    }
     fs::create_dir_all(out_dir)
         .with_context(|| format!("creating output dir {}", out_dir.display()))?;
     bundle.write_proof(proof_out)?;
@@ -406,16 +408,43 @@ fn write_outputs(
     );
 
     let p = super::path_arg(&args.path);
+    // A proof written elsewhere (`--out`), or made with another key: point
+    // `verify` and `export` at them.
+    let mut files = String::new();
+    // The verifying key beside a `--proving-key`: `xark setup`'s or a ceremony's.
+    if let Some(vk) = args
+        .proving_key
+        .as_ref()
+        .and_then(|pk| pk.parent())
+        .and_then(|d| {
+            ["vk.bin", "verifying_key.bin"]
+                .map(|f| d.join(f))
+                .into_iter()
+                .find(|vk| vk.exists())
+        })
+    {
+        files += &format!(" --verifying-key {}", super::shown(&vk));
+    }
+    if args.out.is_some() {
+        files += &format!(
+            " --proof {} --public-inputs {}",
+            super::shown(proof_out),
+            super::shown(&public_path)
+        );
+    }
     println!(
         "\n{}",
         crate::style::next_steps(&[
-            (format!("xark verify {p}"), "check this proof locally"),
+            (
+                format!("xark verify {p}{files}"),
+                "check this proof locally"
+            ),
             (
                 format!("xark client {p}"),
                 "generate a typed TypeScript client (prove + verify in JS)",
             ),
             (
-                format!("xark export {p}"),
+                format!("xark export {p}{files}"),
                 "generate the on-chain Solana verifier crate",
             ),
         ])

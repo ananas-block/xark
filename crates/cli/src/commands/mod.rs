@@ -307,6 +307,27 @@ pub fn path_arg(path: &Option<std::path::PathBuf>) -> String {
     }
 }
 
+/// Warn that `--out` directory `dir` isn't empty (when it holds anything): what a
+/// command writes there replaces any file of the same name.
+pub fn warn_if_not_empty(dir: &std::path::Path, what: &str) {
+    if std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some()) {
+        eprintln!(
+            "{} {} isn't empty: writing the {what} there anyway, replacing any already there",
+            crate::style::warn("warning:"),
+            dir.display()
+        );
+    }
+}
+
+/// `path` as a command line takes it: relative to the current directory when under it.
+pub fn shown(path: &std::path::Path) -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    path.strip_prefix(&cwd)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
 /// The circuit's `schema.json`, if the build wrote a current one (for summaries
 /// and hints).
 pub fn load_schema(xark_dir: &std::path::Path) -> Option<xark_schema::Schema> {

@@ -236,6 +236,31 @@ fn setup_out_warns_and_names_the_key() {
     assert!(ok && !out.contains("no proving key found"), "{out}");
 }
 
+/// `xark prove --out` writes the proof and its public inputs to a directory of its
+/// own, warning when it already holds something, and points `xark verify` at them.
+#[test]
+fn prove_out_is_a_directory() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let prove = [
+        "prove",
+        "--inputs",
+        r#"{"x": "3", "y": "9"}"#,
+        "--out",
+        "proofs",
+    ];
+    let (ok, out) = run_in(&dir, &prove);
+    assert!(ok && !out.contains("isn't empty"), "{out}");
+    assert!(dir.join("proofs/proof.bin").exists() && dir.join("proofs/public_inputs.bin").exists());
+    let verify = "xark verify . --proof proofs/proof.bin --public-inputs proofs/public_inputs.bin";
+    assert!(out.contains(verify), "{out}");
+    let (ok, out) = run_in(&dir, &prove);
+    assert!(ok && out.contains("proofs isn't empty"), "{out}");
+    let args: Vec<&str> = verify.split(' ').skip(1).collect();
+    let (ok, out) = run_in(&dir, &args);
+    assert!(ok && out.contains("Proof verified"), "{out}");
+}
+
 /// `xark client -o` writes the client where it's told, over whatever is there
 /// (an older client, or a file from an earlier tool), with its schema beside it.
 #[test]
