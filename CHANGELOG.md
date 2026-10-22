@@ -215,12 +215,12 @@ verification starter, and the `xark-client` npm package is removed.
   rebuild one older than its source, saying which file changed (so a proof or key is
   never of the old circuit; `prove` then asks for `xark setup` if the circuit
   changed), and `xark export` warns that its keys may be for an older circuit.
-- **`xark setup --out <dir>`** warns when the directory isn't empty, and its next
-  step points `xark prove` at the key there (`--proving-key <dir>/pk.bin`).
-- **`xark prove --out` is a directory** (it was the proof's path, with
-  `public_inputs.bin` put beside it): `proof.bin` and `public_inputs.bin` go there,
-  with a warning if it isn't empty, and the next steps point `xark verify` and
-  `xark export` at them.
+- **`--out` is a directory** for `xark setup`, `xark prove` and `xark export`, with
+  a warning when it isn't empty (`prove --out` was the proof's path, with
+  `public_inputs.bin` put beside it; `export` still never replaces a `Cargo.toml` or
+  `src/lib.rs` it didn't write). Their next steps point at what they wrote there:
+  `--proving-key <dir>/pk.bin` after `setup`, `--proof` and `--public-inputs` (and
+  the key beside a `--proving-key`) after `prove`.
 - **A key fits every build of its circuit.** Keys record the circuit digest
   (`metadata.json`'s `digest`) beside `circuit.xbc`'s hash. `prove`, `verify` and
   `export` accept a key from another build with the same digest, such as the same
@@ -229,11 +229,6 @@ verification starter, and the `xark-client` npm package is removed.
   `xark setup`. A minimized key's `r1cs.stream` is marked with the digest too, so
   `prove` doesn't rebuild its rows for another build and xark-wasm doesn't refuse
   them. `xark inspect` shows both fingerprints.
-- Builds of one crate at once (an editor's `xark check` beside `xark build` in a
-  terminal) no longer fail with "reading …/<crate>.wasm: No such file or
-  directory": each holds the build directory until it has read its `.wasm`.
-- `xark export --out` warns when the directory isn't empty, as `setup` and `prove`
-  do (it already refused to replace a `Cargo.toml` or `src/lib.rs` it didn't write).
 
 ### Added
 
@@ -276,6 +271,9 @@ verification starter, and the `xark-client` npm package is removed.
 
 ### Fixed
 
+- Builds of one crate at once (an editor's `xark check` beside `xark build` in a
+  terminal) no longer fail with "reading …/<crate>.wasm: No such file or
+  directory": each holds the build directory until it has read its `.wasm`.
 - `require_eq` accepts an integer or decimal string on either side
   (`require_eq(7u64, x)` compiles).
 - The verifier docs no longer suggest `verify_strict` makes proof bytes safe as a
