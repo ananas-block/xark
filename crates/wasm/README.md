@@ -278,6 +278,17 @@ const { publicInputs } = prove(xbc, pk, { secret: "3", result: "27" });
 decode_public_inputs(publicInputs); // ["27"]
 ```
 
+### `solanaProof(proofBytes)` → `Uint8Array`
+
+A proof in either form as an exported Solana verifier (`xark export`) reads it:
+256 bytes, little-endian, `-A || B || C`. What a client's `proof.toBytes()` returns.
+
+### `circuitDigest(circuitXbc)` → `string`
+
+The circuit digest of a `circuit.xbc`, as `xark build` prints it: the same for every
+build of the circuit, whichever Rust compiled it. A client pins a prover to it with
+`prover(from, { digest })`.
+
 ### Typed clients (`@blueshift-gg/xark-wasm/client`)
 
 What every client `xark client` generates shares, as plain JavaScript with types:
