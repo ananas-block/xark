@@ -15,6 +15,11 @@ use xark_backend::{keys::Groth16Keys, proof::ProofBundle, verify};
 
 use crate::xark_project::XarkProject;
 
+/// When `path` was last written, if it can be read.
+fn fs_modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
     /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
@@ -87,6 +92,17 @@ pub fn run(args: VerifyArgs) -> Result<()> {
         }
     );
     if !ok {
+        // The usual cause: keys remade (`xark setup`) since this proof.
+        if let (Some(proved), Some(keyed)) = (fs_modified(&proof_path), fs_modified(&vk_path))
+            && proved < keyed
+        {
+            eprintln!(
+                "{} {} is older than {} (made before the last `xark setup`?): run `xark prove` again",
+                crate::style::warn("hint:"),
+                proof_path.display(),
+                vk_path.display()
+            );
+        }
         std::process::exit(2);
     }
     let p = super::path_arg(&args.path);

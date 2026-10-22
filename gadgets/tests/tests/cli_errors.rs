@@ -261,6 +261,27 @@ fn prove_out_is_a_directory() {
     assert!(ok && out.contains("Proof verified"), "{out}");
 }
 
+/// A proof that fails against keys made after it (`xark setup` again, no new
+/// `xark prove`) says so.
+#[test]
+fn verify_names_a_proof_older_than_the_key() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let (ok, out) = run_in(&dir, &["prove", "--inputs", r#"{"x": "3", "y": "9"}"#]);
+    assert!(ok, "{out}");
+    let (ok, out) = run_in(&dir, &["verify"]);
+    assert!(ok && !out.contains("hint:"), "{out}");
+    std::thread::sleep(std::time::Duration::from_millis(1100)); // coarse file times
+    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    assert!(ok, "{out}");
+    let (ok, out) = run_in(&dir, &["verify"]);
+    assert!(!ok, "{out}");
+    assert!(
+        out.contains("is older than") && out.contains("run `xark prove` again"),
+        "{out}"
+    );
+}
+
 /// `xark client -o` writes the client where it's told, over whatever is there
 /// (an older client, or a file from an earlier tool), with its schema beside it.
 #[test]
