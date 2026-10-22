@@ -149,12 +149,14 @@ jobs:
         run: cd crates/lang && cargo test --release --no-fail-fast
 
   wasm-smoke:
-    # The xark-wasm prover package against host artifacts: build + setup + prove
-    # `examples/cube` natively, then check the wasm build reproduces the public
-    # inputs byte-for-byte.
+    # The xark-wasm prover package (`npm test` in crates/wasm): against host
+    # artifacts for `examples/cube`, the wasm build must reproduce the public
+    # inputs byte-for-byte; against `examples/sha256` (a 2^16 domain), the
+    # streaming prover with and without workers, both key layouts, and the
+    # wrong-key guard.
     name: xark-wasm smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -164,26 +166,38 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
-      - name: Build cube
-        run: cargo run --release -p xark-cli -- build examples/cube --out target/test-out/cube
+      - name: Build xark
+        run: cargo build --release -p xark-cli --bin xark
 
-      - name: Generate proving + verifying keys for cube
-        run: cargo run --release -p xark-cli -- setup target/test-out/cube
-
-      - name: Generate host proof + public inputs for cube
+      - name: Build, set up and prove cube
         # The smoke test cross-checks the wasm-generated public inputs against
         # the host's (same circuit, same witness — must be byte-identical).
-        run: cargo run --release -p xark-cli -- prove target/test-out/cube --inputs '{"secret":"3","result":"27"}'
+        run: |
+          target/release/xark setup examples/cube --insecure-dev-mode
+          target/release/xark prove examples/cube --inputs '{"secret":"3","result":"27"}'
+
+      - name: Build sha256 and its three keys
+        # The streaming test's prerequisites (crates/wasm/tests/streaming.test.cjs).
+        run: |
+          x=target/release/xark
+          k=examples/sha256/target/xark
+          $x setup examples/sha256 --insecure-dev-mode --deterministic-rng 7
+          $x setup examples/sha256 --insecure-dev-mode --deterministic-rng 7 --r1cs-form reduced --out $k/sha256-streamable
+          $x setup examples/sha256 --insecure-dev-mode --deterministic-rng 7 --out $k/sha256-smooth
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
 
       - name: Build xark-wasm node package
-        run: cd crates/wasm && wasm-pack build --target nodejs --dev --out-dir dist/node
+        run: cd crates/wasm && wasm-pack build --target nodejs --release --out-dir dist/node
 
-      - name: Run xark-wasm smoke test
-        run: CIRCUIT_ARTIFACTS_DIR=target/test-out/cube node --test crates/wasm/tests/wasm-smoke.test.cjs
+      - name: Run xark-wasm tests
+        run: cd crates/wasm && npm test
 
   clients:
     # `xark client` for the representative examples must match the committed
