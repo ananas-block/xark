@@ -328,7 +328,7 @@ pub fn run(args: SetupArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
     // Build first if there's no build yet; keys for a circuit older than its source
     // would prove the wrong thing.
-    crate::cli::build_if_needed(&project.xark_dir)?;
+    crate::cli::build_if_needed(&project.xark_dir, true)?;
     let out_dir = args.out.clone().unwrap_or_else(|| project.xark_dir.clone());
     let prof = super::dbg_flag("XARK_BUILD_TIME");
     let form = if args.streamable {

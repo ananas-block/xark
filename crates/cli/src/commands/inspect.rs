@@ -26,7 +26,7 @@ pub struct InspectArgs {
 
 pub fn run(args: InspectArgs) -> Result<()> {
     let project = XarkProject::resolve(args.path.clone())?;
-    crate::cli::build_if_needed(&project.xark_dir)?;
+    crate::cli::build_if_needed(&project.xark_dir, false)?;
     let (prog, fingerprint) = load_backend_r1cs(&project.circuit_xbc())?;
     let prim = load_primitive(&project.circuit_xbc()).ok();
     // Two fingerprints: the constraint system's (`xark build` prints it; a key fits

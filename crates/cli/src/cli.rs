@@ -22,13 +22,23 @@ pub fn cmd_build_command(args: &[String]) -> i32 {
     let code = cmd_build(args);
     if code == 0 {
         let dir = args.first().map_or(".", String::as_str);
-        eprintln!(
-            "\n{}",
-            crate::style::next_steps(&[(
+        // Keys are BN254's: over another field, what's left is counting constraints.
+        let field = args
+            .iter()
+            .position(|a| a == "--field")
+            .and_then(|i| args.get(i + 1))
+            .filter(|f| !matches!(f.as_str(), "bn254" | "bn128"));
+        let step = match field {
+            Some(f) => (
+                format!("xark profile {dir} --field {f}"),
+                "where the constraints go, over this field",
+            ),
+            None => (
                 format!("xark setup {dir}"),
                 "generate the proving/verifying keys",
-            )])
-        );
+            ),
+        };
+        eprintln!("\n{}", crate::style::next_steps(&[step]));
     }
     code
 }
@@ -165,25 +175,62 @@ fn shown(path: &std::path::Path) -> std::path::PathBuf {
 
 /// Rebuild the circuit in the build directory `xark_dir` (`<crate>/target/xark/<name>/`)
 /// when it's stale, saying why: so a command never uses a circuit older than its
-/// source. A build directory elsewhere (`--out`) is left as it is.
+/// source. A build directory elsewhere (`--out`) is left as it is. A build over
+/// another field (`--field`) counts as stale: `xark prove` needs BN254's.
 pub fn rebuild_if_stale(xark_dir: &std::path::Path) -> anyhow::Result<()> {
-    build_unless_current(xark_dir, false)
+    build_unless_current(xark_dir, false, true)
 }
 
 /// [`rebuild_if_stale`], and build a circuit that hasn't been built yet: for the
 /// commands that need only the build (`xark setup`, `xark client`, `xark inspect`).
-pub fn build_if_needed(xark_dir: &std::path::Path) -> anyhow::Result<()> {
-    build_unless_current(xark_dir, true)
+/// `bn254`: the command needs a BN254 circuit (keys, proofs and clients are BN254's);
+/// `xark inspect` takes one built over any field.
+pub fn build_if_needed(xark_dir: &std::path::Path, bn254: bool) -> anyhow::Result<()> {
+    build_unless_current(xark_dir, true, bn254)
 }
 
-fn build_unless_current(xark_dir: &std::path::Path, missing_too: bool) -> anyhow::Result<()> {
+fn build_unless_current(
+    xark_dir: &std::path::Path,
+    missing_too: bool,
+    bn254: bool,
+) -> anyhow::Result<()> {
+    build_unless_current_in(xark_dir, missing_too, bn254)?;
+    if bn254 {
+        require_bn254(&xark_dir.join("circuit.xbc"))?;
+    }
+    Ok(())
+}
+
+/// Refuse a `circuit.xbc` built over another field than BN254 (`xark build
+/// --field`): Groth16 keys, proofs and clients are BN254's. No check when it's
+/// missing (the command's own error).
+pub fn require_bn254(xbc: &std::path::Path) -> anyhow::Result<()> {
+    let Ok(bytes) = std::fs::read(xbc) else {
+        return Ok(());
+    };
+    match xark_ir::function_decode::stream_field(&bytes) {
+        Some(f) if f.name != "bn254" => anyhow::bail!(
+            "{} was built over another field ({}): Groth16 keys, proofs and clients are \
+             BN254's. Rebuild it with `xark build` (no `--field`)",
+            xbc.display(),
+            f.modulus_decimal
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn build_unless_current_in(
+    xark_dir: &std::path::Path,
+    missing_too: bool,
+    bn254: bool,
+) -> anyhow::Result<()> {
     let why = if !xark_dir.join("circuit.xbc").exists() {
         if !missing_too {
             return Ok(()); // a missing build is the command's own error
         }
         "no build found".to_string()
     } else {
-        let Some(why) = stale_build(xark_dir, "circuit.xbc", None) else {
+        let Some(why) = stale_build(xark_dir, "circuit.xbc", bn254.then_some("bn254")) else {
             return Ok(());
         };
         why

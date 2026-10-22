@@ -123,6 +123,7 @@ fn run_init(args: InitArgs) -> Result<()> {
     }
     // The build's `circuit.xbc`, loaded as `xark setup` does.
     let project = XarkProject::resolve(args.path.clone())?;
+    crate::cli::require_bn254(&project.circuit_xbc())?;
     let (prog, hash) = load_backend_r1cs(&project.circuit_xbc())?;
     let digest = fs::read(project.circuit_xbc())
         .ok()

@@ -212,6 +212,33 @@ fn field_must_be_bn254_or_a_prime() {
     }
 }
 
+/// A circuit built over another field is for counting constraints: its next step
+/// is `xark profile`, `xark setup` rebuilds it for BN254 (keys are BN254's), and one
+/// built elsewhere (`--out`) is refused rather than given meaningless keys.
+#[test]
+fn keys_are_for_bn254_builds() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    let (ok, out) = run_in(&dir, &["build", ".", "--field", "7"]);
+    assert!(ok && out.contains("xark profile . --field 7"), "{out}");
+    assert!(!out.contains("xark setup"), "{out}");
+    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    assert!(
+        ok && out.contains("built for another field than bn254"),
+        "{out}"
+    );
+    let (ok, out) = run_in(&dir, &["build", ".", "--field", "7", "--out", "other"]);
+    assert!(ok, "{out}");
+    let (ok, out) = run_in(&dir, &["setup", "other", "--insecure-dev-mode"]);
+    assert!(
+        !ok && out.contains("was built over another field (7)"),
+        "{out}"
+    );
+    // `inspect` reads it as built.
+    let (ok, out) = run_in(&dir, &["inspect", "other"]);
+    assert!(ok && out.contains("custom"), "{out}");
+}
+
 /// A failed setup leaves the previous keys and metadata as they were (never a
 /// new key beside old metadata), and no temporary files.
 #[test]

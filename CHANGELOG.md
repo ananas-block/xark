@@ -207,7 +207,10 @@ verification starter, and the `xark-client` npm package is removed.
   `profile.html`: the same breakdown, the costliest lines opening onto their call
   chains, and the circuit's source with each line shaded by what it costs.
 - `--field` (`xark build`, `xark profile`) takes `bn254` or a prime modulus in
-  decimal; anything else (a typo, a composite) is an error before building.
+  decimal; anything else (a typo, a composite) is an error before building. A build
+  over another field suggests `xark profile` next, and `setup`, `prove` and `client`
+  rebuild it for BN254 (keys, proofs and clients are BN254's), or refuse one built
+  elsewhere (`--out`); `inspect` reads it as built.
 - `xark clean` also removes the wasm build caches (`target/xark-wasm`, and
   `target/xark-client` from `xark client`).
 - **Builds are reused while current, and never used stale.** `xark check
