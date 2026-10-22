@@ -112,8 +112,14 @@ impl Model {
     }
 
     fn field(&mut self, schema: &Value, f: &Value) -> Result<Field> {
+        let name = f["name"].as_str().unwrap_or_default();
+        // `{ __proto__: … }` sets an object's prototype in JavaScript: such a value
+        // could never be passed in, or read back.
+        if xark_schema::camel(name) == "__proto__" {
+            bail!("an input or field named `{name}` can't be a JavaScript property: rename it");
+        }
         Ok(Field {
-            name: f["name"].as_str().unwrap_or_default().to_string(),
+            name: name.to_string(),
             ty: self.ty(schema, &f["type"])?,
             rust: rust_type(&f["type"]),
         })

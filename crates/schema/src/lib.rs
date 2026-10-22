@@ -782,12 +782,15 @@ fn describe(ty: &Value) -> String {
     ty["ref"].as_str().unwrap_or("?").to_string()
 }
 
-/// `born_before` → `bornBefore`.
+/// `born_before` → `bornBefore`. Underscores before the first letter or after the
+/// last stay as written (`_reserved`, `__proto__`); a run between words is one break.
 pub fn camel(s: &str) -> String {
-    let mut out = String::new();
+    let start = s.len() - s.trim_start_matches('_').len();
+    let end = s.trim_end_matches('_').len().max(start);
+    let mut out = String::from(&s[..start]);
     let mut up = false;
-    for (i, c) in s.chars().enumerate() {
-        if c == '_' && i > 0 && i + 1 < s.len() {
+    for c in s[start..end].chars() {
+        if c == '_' {
             up = true;
         } else if up {
             out.extend(c.to_uppercase());
@@ -796,6 +799,7 @@ pub fn camel(s: &str) -> String {
             out.push(c);
         }
     }
+    out.push_str(&s[end..]);
     out
 }
 
@@ -1060,6 +1064,23 @@ mod tests {
         assert_eq!((d("k.limbs[0]"), d("k.limbs[1]")), ("0".into(), "1".into())); // 2^86
         assert_eq!((d("h.hi"), d("h.lo")), ("2".into(), "3".into()));
         assert_eq!((d("msg[0]"), d("msg[1]")), ("97".into(), "98".into()));
+    }
+
+    #[test]
+    fn camel_keeps_outer_underscores() {
+        for (snake, want) in [
+            ("born_before", "bornBefore"),
+            ("net_worth_2", "netWorth2"),
+            ("a__b", "aB"),
+            ("_reserved", "_reserved"),
+            ("__proto__", "__proto__"),
+            ("x_", "x_"),
+            ("_", "_"),
+            ("naïve_é", "naïveÉ"),
+            ("ü_", "ü_"),
+        ] {
+            assert_eq!(camel(snake), want, "{snake}");
+        }
     }
 
     #[test]

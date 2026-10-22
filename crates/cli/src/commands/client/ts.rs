@@ -432,6 +432,16 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
             &close[1..],
         );
         match methods.get(&r) {
+            Some(_)
+                if m.structs[&r]
+                    .iter()
+                    .any(|f| ts_key(&f.name) == "constructor") =>
+            {
+                anyhow::bail!(
+                    "`{r}` has a field named `constructor` and Rust methods: its client \
+                     class can't have that field. Rename the field"
+                );
+            }
             Some(body) => {
                 let assign: String = m.structs[&r]
                     .iter()

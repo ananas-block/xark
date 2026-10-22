@@ -217,3 +217,53 @@ fn tuple_structs_and_raw_identifiers() {
     }
     assert!(!ts.contains("v.\"") && !ts.contains("this.\""), "{ts}");
 }
+
+/// A circuit (module `m`, `#[circuit] fn m`) of input struct `S` with `fields`, and
+/// with Rust methods when `methods`: its `xark client` result and the client's text.
+fn client_for(fields: &str, methods: bool) -> (bool, String) {
+    let tmp = tempdir();
+    let imp = if methods {
+        "#[input]\nimpl S {\npub fn same(self) -> S { self }\n}\n"
+    } else {
+        ""
+    };
+    let dir = square(
+        tmp.path(),
+        &format!(
+            "\nmod m {{\nuse xark::prelude::*;\n\
+             #[input]\npub struct S {{ {fields} }}\n{imp}\
+             #[circuit]\npub fn m(s: Private<S>, n: Public<u32>) {{ let _ = s; require_eq(Field::from(n), Field::from(n)); }}\n}}\n"
+        ),
+    );
+    let lib = dir.join("src/lib.rs");
+    let text = std::fs::read_to_string(&lib).unwrap();
+    std::fs::write(&lib, text.replacen("#[circuit]", "", 1)).unwrap();
+    let (ok, out) = xark(&dir, &["build"]);
+    assert!(ok, "build failed:\n{out}");
+    let (ok, out) = xark(&dir, &["client", "-o", "client/"]);
+    let ts = std::fs::read_to_string(dir.join("client/m.ts")).unwrap_or_default();
+    (ok, out + &ts)
+}
+
+/// Underscores around a name are kept (`_reserved`); names JavaScript can't hold as
+/// a plain property are refused, saying so, rather than generating a broken client.
+#[test]
+fn names_javascript_cant_hold_are_refused() {
+    let (ok, out) = client_for("pub _reserved: u32, pub net_worth: u32", false);
+    assert!(
+        ok && out.contains("  _reserved: U32;") && out.contains("  netWorth: U32;"),
+        "{out}"
+    );
+    let (ok, out) = client_for("pub __proto__: u32", false);
+    assert!(
+        !ok && out.contains("`__proto__` can't be a JavaScript property"),
+        "{out}"
+    );
+    let (ok, out) = client_for("pub constructor: u32", true);
+    assert!(
+        !ok && out.contains("field named `constructor` and Rust methods"),
+        "{out}"
+    );
+    let (ok, out) = client_for("pub constructor: u32", false);
+    assert!(ok && out.contains("  constructor: U32;"), "{out}");
+}
