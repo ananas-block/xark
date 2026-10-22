@@ -1455,6 +1455,20 @@ pub fn stream_digest(b: &[u8]) -> u128 {
     acc
 }
 
+/// [`stream_digest`] as `xark build` prints it (32 hex digits). A key's
+/// `metadata.json` `digest` and a minimized key's `r1cs.stream` record it: every
+/// build of a circuit has it, whichever Rust compiled `circuit.xbc`.
+pub fn stream_digest_hex(b: &[u8]) -> String {
+    format!("{:032x}", stream_digest(b))
+}
+
+/// Whether an `r1cs.stream` recording `fingerprint` holds rows for the circuit in
+/// `xbc`: its file hash (`xbc_sha256`, how row files were first marked) or its
+/// digest (how they are now, so another build of the circuit keeps its rows).
+pub fn row_file_fits(fingerprint: &str, xbc_sha256: &str, xbc: &[u8]) -> bool {
+    fingerprint == xbc_sha256 || fingerprint == stream_digest_hex(xbc)
+}
+
 /// **Build-time faithfulness gate, streamed.** Verify that the just-built compact
 /// artifact `blob` expands byte-identically to the flat lowering (`r1cs` +
 /// `prim`) — same R1CS rows, same (pruned) witness ops, same (pruned) var table —

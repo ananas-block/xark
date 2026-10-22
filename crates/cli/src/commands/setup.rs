@@ -395,7 +395,12 @@ pub fn run(args: SetupArgs) -> Result<()> {
         circuit
             .validate()
             .map_err(|e| anyhow::anyhow!("malformed circuit: {e}"))?;
-        write_row_file(&out_dir, &hash, circuit);
+        // Marked with the digest, not the file's hash: another build of the same
+        // circuit (another Rust version) keeps using the rows.
+        let digest = fs::read(project.circuit_xbc())
+            .map(|b| super::r1cs_digest(&b))
+            .unwrap_or_else(|_| hash.clone());
+        write_row_file(&out_dir, &digest, circuit);
     }
     let compress = if args.uncompressed {
         Compress::No

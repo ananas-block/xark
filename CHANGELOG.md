@@ -226,7 +226,9 @@ verification starter, and the `xark-client` npm package is removed.
   `export` accept a key from another build with the same digest, such as the same
   circuit compiled by another Rust version (which can store repeats differently,
   as 1.89 does for the Ed25519 and P-256 examples), instead of asking for a new
-  `xark setup`. `xark inspect` shows both fingerprints.
+  `xark setup`. A minimized key's `r1cs.stream` is marked with the digest too, so
+  `prove` doesn't rebuild its rows for another build and xark-wasm doesn't refuse
+  them. `xark inspect` shows both fingerprints.
 - Builds of one crate at once (an editor's `xark check` beside `xark build` in a
   terminal) no longer fail with "reading …/<crate>.wasm: No such file or
   directory": each holds the build directory until it has read its `.wasm`.

@@ -653,7 +653,7 @@ pub fn rows_for_key(
         .collect();
     if let Some(rows) = cached
         && let Ok(src) = xark_groth16::RowFileSource::new(rows)
-        && src.file().fingerprint() == fingerprint
+        && xark_ir::function_decode::row_file_fits(src.file().fingerprint(), &fingerprint, xbc)
     {
         return Ok(Box::new(src));
     }
@@ -661,7 +661,8 @@ pub fn rows_for_key(
         .map_err(|e| format!("parsing circuit.xbc: {e}"))?
         .into_r1cs();
     let circuit = XarkCircuit::for_setup(reduced);
-    let rows = xark_ir::r1cs_stream::encode(&fingerprint, circuit.prog());
+    let digest = xark_ir::function_decode::stream_digest_hex(xbc);
+    let rows = xark_ir::r1cs_stream::encode(&digest, circuit.prog());
     drop(circuit);
     Ok(Box::new(
         xark_groth16::RowFileSource::new(rows).map_err(|e| format!("r1cs: {e}"))?,

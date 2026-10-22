@@ -276,7 +276,11 @@ fn row_source(xbc: &[u8], options: &JsValue) -> Result<Box<dyn ConstraintSource>
             let bytes = to_bytes(r1cs.unchecked_ref(), "r1cs.stream")?;
             let src = RowFileSource::new(bytes)
                 .map_err(|e| js_error(&format!("parsing r1cs.stream: {e}")))?;
-            if src.file().fingerprint() != crate::sha256_hex(xbc) {
+            if !xark_ir::function_decode::row_file_fits(
+                src.file().fingerprint(),
+                &crate::sha256_hex(xbc),
+                xbc,
+            ) {
                 return Err(js_error(
                     "r1cs.stream was written for a different circuit.xbc — re-run `xark setup`",
                 ));

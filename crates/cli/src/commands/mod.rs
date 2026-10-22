@@ -613,7 +613,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// The R1CS digest of a `circuit.xbc` (what `xark build` prints): the same for every
 /// build of a circuit, whichever Rust compiled it.
 pub fn r1cs_digest(xbc: &[u8]) -> String {
-    format!("{:032x}", xark_ir::function_decode::stream_digest(xbc))
+    xark_ir::function_decode::stream_digest_hex(xbc)
 }
 
 /// How a key (by the `metadata.json` beside it) relates to a `circuit.xbc`.

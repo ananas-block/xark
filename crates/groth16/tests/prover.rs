@@ -1255,3 +1255,28 @@ fn key_header_versions_parse() {
     // A future version is refused, not misparsed.
     assert!(KeyFormat::parse(b"XKPK\x03\x00........", false).is_err());
 }
+
+/// An `r1cs.stream` holds rows for a `circuit.xbc` it names by file hash (how row
+/// files were first marked) or by circuit digest (how setup marks them now, so
+/// another build of the circuit, from another Rust version, keeps its rows).
+#[test]
+fn a_row_file_fits_by_file_hash_or_digest() {
+    use xark_ir::function_decode::{row_file_fits, stream_digest_hex};
+    let digest = stream_digest_hex(KYC_XBC);
+    assert!(row_file_fits(
+        "hash-of-this-file",
+        "hash-of-this-file",
+        KYC_XBC
+    ));
+    assert!(row_file_fits(&digest, "hash-of-another-build", KYC_XBC));
+    assert!(!row_file_fits(
+        "hash-of-another-circuit",
+        "hash-of-this-file",
+        KYC_XBC
+    ));
+    assert!(!row_file_fits(
+        &"0".repeat(32),
+        "hash-of-this-file",
+        KYC_XBC
+    ));
+}

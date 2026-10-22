@@ -260,7 +260,11 @@ fn prove_streaming(
                 .map_err(|e| e.to_string())
                 .and_then(|rf| xark_groth16::RowFileSource::new(rf).map_err(|e| e.to_string()))
                 .and_then(|src| {
-                    if src.file().fingerprint() == fingerprint {
+                    if xark_ir::function_decode::row_file_fits(
+                        src.file().fingerprint(),
+                        &fingerprint,
+                        &bytes,
+                    ) {
                         Ok(src)
                     } else {
                         Err("written for a different circuit.xbc".into())
@@ -280,7 +284,8 @@ fn prove_streaming(
                         .map_err(|e| anyhow::anyhow!(e))?
                         .into_r1cs();
                     let circuit = XarkCircuit::for_setup(reduced);
-                    let rows = xark_ir::r1cs_stream::encode(&fingerprint, circuit.prog());
+                    let digest = super::r1cs_digest(&bytes);
+                    let rows = xark_ir::r1cs_stream::encode(&digest, circuit.prog());
                     drop(circuit);
                     if args.cache {
                         fs::write(&path, &rows)
