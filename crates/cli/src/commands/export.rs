@@ -408,18 +408,23 @@ updates.
 {name} = {{ path = "path/to/{name}" }}   # or a git/published source
 ```
 
+The proof comes in the instruction data (256 bytes: a client's `proof.toBytes()`);
+the public inputs are what your program requires, from its own state (a policy, a
+root, a nullifier), each 32 bytes little-endian:
+
 ```rust
-// instruction_data = proof (256 B) || public_inputs ({n} * 32 B)
-if {ident}::verify_instruction_data(instruction_data) {{
-    // proof valid — proceed
+let Some(proof) = instruction_data.first_chunk::<256>() else {{
+    return Err(ProgramError::InvalidInstructionData);
+}};
+let proof = {ident}::Proof::from_le_bytes(proof);
+let public_inputs: [[u8; 32]; {n}] = [/* from your program's state */];
+if !{ident}::verify(&proof, &public_inputs) {{
+    return Err(ProgramError::InvalidArgument);
 }}
 ```
 
-Or, with proof and public inputs already separated:
-
-```rust
-let ok = {ident}::verify(&proof, &public_inputs); // public_inputs: &[[u8; 32]; {n}]
-```
+When the transaction does carry the public inputs too (`proof || public_inputs`),
+`{ident}::verify_instruction_data(instruction_data)` checks both.
 
 ## Replay protection
 
@@ -433,7 +438,8 @@ or context the proof is for, and record *that* on-chain.
 `cargo test` in this crate verifies the bundled sample proof against the
 embedded VK. `instruction_data.bin` is that proof as your program receives it
 (`proof || public_inputs`): send those bytes as an instruction's data, in a
-transaction built however your client builds them.
+transaction built however your client builds them. A TypeScript client from
+`xark client` sends a proof in this format: `proof.toBytes()`.
 "#
     )
 }

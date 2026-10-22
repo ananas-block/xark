@@ -145,10 +145,11 @@ verification starter, and the `xark-client` npm package is removed.
 - **Proving and verifying:** `Zkyc.prover(source)` and `Zkyc.verifier(source)`,
   from a URL serving the build output or its bytes, each with only the methods it
   can run. They load xark-wasm themselves (node, web or workerd; `{ wasm }` passes
-  your own). `prove` returns a `Proof` whose `toBytes()` is one blob to send;
-  `verifier.verify(bytes, required)` checks it proves the public inputs you
-  require, and `verifier.decode(bytes)` reads them. A malformed verifying key fails
-  when the verifier is made.
+  your own). `prove` returns a `Proof`: `toBytes()` is the proof as an exported
+  Solana verifier reads it (256 bytes, `Proof::from_le_bytes` on chain), and
+  `toBytesCompressed()` is half the size; `verifier.verify(bytes, required)` reads
+  either and checks it proves the public inputs you require. A malformed verifying
+  key fails when the verifier is made.
 - **The circuit's Rust in TypeScript:** `#[input]` on an `impl` makes its methods
   client functions, from any crate; on a trait's `impl` too (`impl Default for
   Policy` gives `Policy.default()`). Parameters may be `Self` or `&T`; a generic
@@ -164,6 +165,11 @@ verification starter, and the `xark-client` npm package is removed.
   for big-endian) or another `Field`, and throws unless it's below the modulus. A
   field input (`FieldInput`) also takes a plain integer, checked the same way, and a
   number past 2^53 is refused rather than rounded.
+- **One proof format for Solana and everywhere else:** a client's `toBytes()` is
+  byte for byte what `xark export` makes of the same proof, and `xark verify`
+  (`--proof`) and xark-wasm's `verify` read a proof in either form (xark-wasm's
+  `solanaProof` converts; the encoders and the checked decoder are
+  `xark_groth16::solana`, re-exported from `xark_backend::solana`).
 - **Pinning a prover:** `Circuit.digest` is the circuit the client was generated
   from, and `prover(from, { digest })` refuses a `circuit.xbc` with another one
   (xark-wasm's `circuitDigest` computes it).

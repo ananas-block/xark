@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-const outDir = (example: string) => join(__dirname, "..", "..", "examples", example, "target", "xark", example);
+export const outDir = (example: string) => join(__dirname, "..", "..", "examples", example, "target", "xark", example);
 
 export function artifacts(example: string) {
   const dir = outDir(example);

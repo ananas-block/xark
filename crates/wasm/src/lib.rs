@@ -282,11 +282,31 @@ fn verify_with(
     proof_bytes: &Bytes,
     public_inputs_bytes: &Bytes,
 ) -> Result<bool, js_sys::Error> {
-    let proof_bytes = to_bytes(proof_bytes, "proof")?;
+    let proof = read_proof(proof_bytes)?;
     let public_inputs_bytes = to_bytes(public_inputs_bytes, "public inputs")?;
-    let proof = deserialize_bytes::<Proof<Bn254>>(&proof_bytes, "proof")?;
     let public: Vec<Fr> = deserialize_bytes(&public_inputs_bytes, "public inputs")?;
     xark_groth16::verify(vk, &public, &proof).map_err(|e| js_error(&format!("verifying: {e}")))
+}
+
+/// A proof in either form: the on-chain one (256 bytes, what an exported Solana
+/// verifier reads) or the compressed one (128 bytes, as [`prove`] returns it).
+fn read_proof(proof_bytes: &Bytes) -> Result<Proof<Bn254>, js_sys::Error> {
+    let bytes = to_bytes(proof_bytes, "proof")?;
+    if bytes.len() == xark_groth16::solana::PROOF_BYTES {
+        return xark_groth16::solana::decode_proof_le(&bytes)
+            .map_err(|e| js_error(&format!("reading proof: {e}")));
+    }
+    deserialize_bytes::<Proof<Bn254>>(&bytes, "proof")
+}
+
+/// A proof (either form) in the on-chain format an exported Solana verifier reads:
+/// 256 bytes, `-A || B || C`, little-endian. The same bytes as `xark export`'s
+/// `proof.solana.bin` for that proof.
+#[wasm_bindgen(js_name = solanaProof)]
+pub fn solana_proof(proof_bytes: &Bytes) -> Result<Vec<u8>, js_sys::Error> {
+    Ok(xark_groth16::solana::assemble_proof_bytes_le(&read_proof(
+        proof_bytes,
+    )?))
 }
 
 /// The circuit digest of a `circuit.xbc` (what `xark build` prints, and a key's

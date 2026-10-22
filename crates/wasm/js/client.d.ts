@@ -85,9 +85,13 @@ export type U128 = bigint | number;
  */
 export type FieldInput = Field | bigint | number | string;
 
-/** A proof and the public inputs it proves. */
+/**
+ * A proof and the public inputs it proves. Send `toBytes()` (or the smaller
+ * `toBytesCompressed()`) with the public inputs a verifier checks it against;
+ * an exported Solana verifier reads `toBytes()` as it is.
+ */
 export class Proof<PublicValues> {
-  /** The Groth16 proof. */
+  /** The Groth16 proof, compressed (`toBytesCompressed()`). */
   readonly proofBytes: Uint8Array;
   /** The public inputs, decoded. */
   readonly publicInputs: PublicValues;
@@ -95,10 +99,13 @@ export class Proof<PublicValues> {
   readonly publicInputBytes: Uint8Array;
   constructor(proofBytes: Uint8Array, publicInputs: PublicValues, publicInputBytes: Uint8Array);
   /**
-   * The proof and its public inputs as one blob to send: a verifier's `verify`
-   * and `decode` read it.
+   * The proof as an exported Solana verifier (`xark export`) reads it, e.g. with
+   * `Proof::from_le_bytes`: 256 bytes, little-endian, `A` negated. A `Verifier`
+   * reads it too. Throws for a `Proof` not made by a prover.
    */
   toBytes(): Uint8Array;
+  /** The proof compressed, 128 bytes (each point by `x` and a sign bit): a `Verifier` reads it. */
+  toBytesCompressed(): Uint8Array;
 }
 
 /** The parts of `@blueshift-gg/xark-wasm` a client uses (any of its builds). */
@@ -116,6 +123,10 @@ export interface Wasm {
     verify(proof: Uint8Array, publicInputs: Uint8Array): boolean;
   };
   poseidon2(inputs: string[]): string;
+  /** The circuit digest of a `circuit.xbc` (what `xark build` prints). */
+  circuitDigest(circuit: Uint8Array): string;
+  /** A proof (either form) as an exported Solana verifier reads it (256 bytes). */
+  solanaProof(proof: Uint8Array): Uint8Array;
 }
 
 /** `client.wasm`, the circuit's Rust functions: its bytes, or the compiled module. */
@@ -167,11 +178,6 @@ export class Session<PublicInputs, PublicValues, Structs> {
   /** Canonical public-input bytes, decoded. */
   decodePublicInputs(bytes: Uint8Array): PublicValues;
   /**
-   * A `Proof` from `proof.toBytes()`, with its public inputs decoded. This doesn't
-   * verify it: `verify` does. Throws if `bytes` isn't a serialized proof.
-   */
-  decode(bytes: Uint8Array): Proof<PublicValues>;
-  /**
    * A value's field elements in input order, as `to_fields()` gives them in Rust:
    * hash them as the circuit does with `poseidon2`.
    */
@@ -195,13 +201,14 @@ export class Prover<Inputs, PublicInputs, PublicValues, Structs = {}> extends Se
 export class Verifier<PublicInputs, PublicValues, Structs = {}> extends Session<PublicInputs, PublicValues, Structs> {
   private constructor();
   /**
-   * Whether `proof` (a `Proof`, or its `toBytes()`) is valid. With `publicInputs`,
-   * whether it proves those: pass the ones you require (a policy, a root), or a
-   * proof of other public inputs passes. A malformed or invalid proof is `false`;
+   * Whether `proof` proves `publicInputs`: pass the ones you require (a policy, a
+   * root). A proof's bytes (`toBytes()` or `toBytesCompressed()`) need them; a
+   * `Proof` defaults to its own. A malformed or invalid proof is `false`;
    * `publicInputs` that don't fit the circuit's types throw an `InputError` (a
    * mistake in the caller, not a bad proof).
    */
-  verify(proof: Proof<PublicValues> | Uint8Array, publicInputs?: PublicInputs | Uint8Array): boolean;
+  verify(proof: Proof<PublicValues>, publicInputs?: PublicInputs | Uint8Array): boolean;
+  verify(proof: Uint8Array, publicInputs: PublicInputs | Uint8Array): boolean;
 }
 
 /** A circuit as its generated client describes it. */

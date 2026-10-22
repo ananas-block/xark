@@ -236,7 +236,8 @@ for the other order). Decoded public inputs and Rust functions return `Field`s.
 
 A prover and a verifier are separate, each made from a URL serving a copy of
 `target/xark/<circuit>/` or from the bytes, so each has only the methods it can
-run. A proof travels as one blob, `proof.toBytes()`:
+run. A proof travels as its bytes, `proof.toBytes()`; the verifier brings the public
+inputs it requires:
 
 ```ts
 import { Country, Field, Identity, Policy, Zkyc } from "./zkyc";
@@ -249,13 +250,18 @@ const commitment = Identity.commitment(id); // the circuit's own Rust (below)
 const policy = Policy.default().on(new Date()).minAge(18).nationalities([Country.US, Country.GB, "FR", "DE"]);
 const proof = prover.prove({ id, commitment, policy });
 proof.publicInputs.policy.allowed; // ["DE", "FR", "GB", "US"]: decoded, a Date stays a Date
-send(proof.toBytes());
+send(proof.toBytes(), commitment);
 
 // On the server: check it proves the policy you require, not just any.
 const verifier = await Zkyc.verifier(vkBytes); // or a URL, or { verifyingKey, client }
-verifier.verify(body, { commitment, policy: required }); // true
-verifier.decode(body).publicInputs; // what it claims, typed
+verifier.verify(bytes, { commitment, policy: required }); // true
 ```
+
+`proof.toBytes()` is the proof as the Solana verifier `xark export` generates reads
+it (256 bytes; `Proof::from_le_bytes` on chain), so a program checks it against
+public inputs it supplies itself, such as its policy or a root in its state.
+`proof.toBytesCompressed()` is half the size, for anywhere else; a verifier reads
+either.
 
 To be sure the prover runs the circuit the client was generated from, and not
 whatever a deployment serves, pin it: `Zkyc.prover(url, { digest: Zkyc.digest })`

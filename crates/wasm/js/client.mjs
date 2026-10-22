@@ -121,32 +121,30 @@ function typed(f) {
 }
 
 /**
- * A proof and the public inputs it proves, decoded and as their canonical bytes.
- * `toBytes()` is the one blob to send; a verifier reads it back.
+ * A proof and the public inputs it proves. `toBytes()` is the proof as an exported
+ * Solana verifier (`xark export`) reads it; `toBytesCompressed()` is half the size.
+ * A verifier takes either, with the public inputs it requires.
  */
 export class Proof {
-  constructor(proofBytes, publicInputs, publicInputBytes) {
+  #wasm;
+  constructor(proofBytes, publicInputs, publicInputBytes, wasm) {
+    /** The proof, compressed (`toBytesCompressed()`). */
     this.proofBytes = proofBytes;
     this.publicInputs = publicInputs;
     this.publicInputBytes = publicInputBytes;
+    this.#wasm = wasm;
   }
 
-  /** The proof's length (u32, little-endian), the proof, then the public inputs. */
+  /** The proof in the on-chain format: 256 bytes, little-endian, `A` negated. */
   toBytes() {
-    const out = new Uint8Array(4 + this.proofBytes.length + this.publicInputBytes.length);
-    new DataView(out.buffer).setUint32(0, this.proofBytes.length, true);
-    out.set(this.proofBytes, 4);
-    out.set(this.publicInputBytes, 4 + this.proofBytes.length);
-    return out;
+    if (!this.#wasm) throw new Error("this Proof wasn't made by a prover: make it with one");
+    return this.#wasm.solanaProof(this.proofBytes);
   }
-}
 
-/** `Proof.toBytes()` output, split back into its parts. */
-function splitProof(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 4) throw new Error("not a serialized proof: too short");
-  const n = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
-  if (4 + n > bytes.length) throw new Error("not a serialized proof: its lengths don't add up");
-  return { proofBytes: bytes.slice(4, 4 + n), publicInputBytes: bytes.slice(4 + n) };
+  /** The proof compressed: 128 bytes (each point by `x` and a sign bit). */
+  toBytesCompressed() {
+    return this.proofBytes.slice();
+  }
 }
 
 /**
@@ -405,12 +403,6 @@ class Session {
     return this.circuit.decodePublic(JSON.parse(this.codec.decodePublicValues(bytes)));
   }
 
-  /** A `Proof` from its `toBytes()`, with its public inputs decoded (not verified). */
-  decode(bytes) {
-    const { proofBytes, publicInputBytes } = splitProof(bytes);
-    return new Proof(proofBytes, this.decodePublicInputs(publicInputBytes), publicInputBytes);
-  }
-
   fields(type, value) {
     return typed(() => this.codec.valueFields(type, toJson(value))).map((f) => new Field(f));
   }
@@ -431,7 +423,7 @@ export class Prover extends Session {
     const { proof, publicInputs } = typed(() =>
       this.wasm.prove(circuit, provingKey, this.codec.encodeInputs(toJson(inputs)), sources),
     );
-    return new Proof(proof.slice(), this.decodePublicInputs(publicInputs), publicInputs.slice());
+    return new Proof(proof.slice(), this.decodePublicInputs(publicInputs), publicInputs.slice(), this.wasm);
   }
 }
 
@@ -443,22 +435,20 @@ export class Verifier extends Session {
   }
 
   verify(proof, publicInputs) {
-    let parts;
-    try {
-      parts = proof instanceof Uint8Array ? splitProof(proof) : proof;
-    } catch {
-      return false; // not a serialized proof
+    const bytes = proof instanceof Uint8Array ? proof : proof.proofBytes;
+    if (proof instanceof Uint8Array && publicInputs === undefined) {
+      throw new TypeError("verify(bytes, publicInputs): a proof's bytes don't carry its public inputs; pass the ones it must prove");
     }
     const inputs =
       publicInputs === undefined
-        ? parts.publicInputBytes
+        ? proof.publicInputBytes
         : publicInputs instanceof Uint8Array
           ? publicInputs
           : this.encodePublicInputs(publicInputs);
     try {
-      return this.key.verify(parts.proofBytes, inputs);
+      return this.key.verify(bytes, inputs);
     } catch {
-      return false; // a malformed proof, or public inputs of the wrong shape
+      return false; // a malformed proof
     }
   }
 }

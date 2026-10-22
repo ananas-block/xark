@@ -497,9 +497,9 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
          * ```ts\n \
          * const prover = await {name}.prover(\"/circuits/{circuit}/\");\n \
          * const proof = prover.prove(inputs);\n \
-         * send(proof.toBytes());\n \
+         * send(proof.toBytes()); // the proof; an exported Solana verifier reads it as is\n \
          * const verifier = await {name}.verifier(vkBytes);\n \
-         * verifier.verify(proof.toBytes()); // true\n \
+         * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require\n \
          * ```\n \
          */\n\
          export const {name} = new Circuit<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>({{\n  \

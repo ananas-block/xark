@@ -280,7 +280,8 @@ decode_public_inputs(publicInputs); // ["27"]
 
 What every client `xark client` generates shares, as plain JavaScript with types:
 `Field` (a field element, checked when it's made), `Proof` (a proof and its public
-inputs; `toBytes()` is the one blob to send), and `Circuit`, which a generated file
+inputs; `toBytes()` is the proof as an exported Solana verifier reads it,
+`toBytesCompressed()` half the size), and `Circuit`, which a generated file
 instantiates with its circuit's schema to make a `Prover` or a `Verifier` from a
 URL serving the build output or from its bytes. It loads this package's main
 module for the platform itself (running `init()` for the web build) the first time

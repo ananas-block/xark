@@ -150,9 +150,9 @@ export interface ZkycStructs {
  * ```ts
  * const prover = await Zkyc.prover("/circuits/zkyc/");
  * const proof = prover.prove(inputs);
- * send(proof.toBytes());
+ * send(proof.toBytes()); // the proof; an exported Solana verifier reads it as is
  * const verifier = await Zkyc.verifier(vkBytes);
- * verifier.verify(proof.toBytes()); // true
+ * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require
  * ```
  */
 export const Zkyc = new Circuit<ZkycInputs, ZkycPublicInputs, ZkycPublicValues, ZkycStructs>({

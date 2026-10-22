@@ -1,7 +1,11 @@
 // The generated `cube` client (`xark client`) through xark-wasm. `npm test` runs it,
 // after setup.ts builds the example and its keys.
-import { artifacts, serve } from "../artifacts";
-import { Circuit } from "@blueshift-gg/xark-wasm/client";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { artifacts, outDir, serve } from "../artifacts";
+import { Circuit, Proof } from "@blueshift-gg/xark-wasm/client";
 import { Cube, CubeProver, CubeVerifier, Field } from "./cube";
 import cubeSchema from "./cube.schema.js";
 import { Field as KycField } from "../zkyc/zkyc";
@@ -28,21 +32,22 @@ test("proves and verifies", () => {
   expect(verifier.verify(proof, { result: 28 })).toBe(false);
 });
 
-test("a proof travels as one blob", () => {
+test("a proof travels as its bytes, on-chain or compressed", () => {
   const proof = prover.prove(inputs);
-  const blob = proof.toBytes();
-  expect(verifier.verify(blob)).toBe(true);
-  expect(verifier.decode(blob)).toEqual(proof);
-  expect(verifier.verify(blob, { result: new Field(28) })).toBe(false);
-  const tampered = blob.slice();
-  tampered[tampered.length - 32] ^= 1; // the public input, 27 → 26
-  expect(verifier.decode(tampered).publicInputs.result.equals(26)).toBe(true);
-  expect(verifier.verify(tampered)).toBe(false);
-  expect(verifier.verify(blob.slice(0, 10))).toBe(false);
-  const garbled = blob.slice();
-  garbled[10] ^= 0xff; // inside the proof: malformed, so not a valid proof
-  expect(verifier.verify(garbled)).toBe(false);
-  expect(() => verifier.decode(blob.slice(0, 10))).toThrow(/not a serialized proof/);
+  const [onChain, compressed] = [proof.toBytes(), proof.toBytesCompressed()];
+  expect([onChain.length, compressed.length]).toEqual([256, 128]);
+  // A verifier reads either, against the public inputs it requires.
+  for (const bytes of [onChain, compressed]) {
+    expect(verifier.verify(bytes, { result: 27 })).toBe(true);
+    expect(verifier.verify(bytes, { result: new Field(28) })).toBe(false);
+    expect(verifier.verify(bytes.slice(0, 10), { result: 27 })).toBe(false);
+    const garbled = bytes.slice();
+    garbled[10] ^= 0xff; // inside the proof: malformed, or another proof
+    expect(verifier.verify(garbled, { result: 27 })).toBe(false);
+  }
+  // The bytes don't carry the public inputs: asking without them is a mistake.
+  // @ts-expect-error: proof bytes need their public inputs (tsc checks this line)
+  expect(() => verifier.verify(onChain)).toThrow(/don't carry its public inputs/);
 });
 
 test("a broken verifying key fails when the verifier is made", async () => {
@@ -119,4 +124,27 @@ test("a client from another xark release says so", () => {
   expect(() => circuit("0.3.7")).not.toThrow(); // the same release
   expect(() => circuit(undefined)).not.toThrow(); // before 0.3, schemas didn't say
   expect(cubeSchema.xark).toMatch(/^0\.3\./);
+});
+
+test("toBytes() is the proof an exported Solana verifier reads", () => {
+  const proof = prover.prove(inputs);
+  // Byte for byte what `xark export` makes of the same proof (its proof.solana.bin).
+  const dir = mkdtempSync(join(tmpdir(), "xark-solana-"));
+  writeFileSync(join(dir, "proof.bin"), proof.toBytesCompressed());
+  writeFileSync(join(dir, "public_inputs.bin"), proof.publicInputBytes);
+  const root = join(__dirname, "..", "..", "..");
+  const xark = join(process.env.CARGO_TARGET_DIR ?? join(root, "target"), "release", "xark");
+  execFileSync(xark, [
+    "export", outDir("cube"), "--allow-insecure",
+    "--proof", join(dir, "proof.bin"), "--public-inputs", join(dir, "public_inputs.bin"),
+    "--out", join(dir, "verifier"),
+  ], { stdio: "pipe" });
+  expect(proof.toBytes()).toEqual(new Uint8Array(readFileSync(join(dir, "verifier", "proof.solana.bin"))));
+  // Its public input, as the program would supply it: the `Field`'s 32 LE bytes.
+  const onChainInputs = new Uint8Array(readFileSync(join(dir, "verifier", "public_inputs.solana.bin")));
+  expect(proof.publicInputs.result.toBytes()).toEqual(onChainInputs);
+  // A Proof made by hand has no xark-wasm to convert it; its compressed bytes are as given.
+  const byHand = new Proof(proof.proofBytes, proof.publicInputs, proof.publicInputBytes);
+  expect(() => byHand.toBytes()).toThrow(/make it with one/);
+  expect(byHand.toBytesCompressed()).toEqual(proof.toBytesCompressed());
 });

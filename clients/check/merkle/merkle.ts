@@ -39,9 +39,9 @@ export interface MerklePublicValues {
  * ```ts
  * const prover = await Merkle.prover("/circuits/merkle/");
  * const proof = prover.prove(inputs);
- * send(proof.toBytes());
+ * send(proof.toBytes()); // the proof; an exported Solana verifier reads it as is
  * const verifier = await Merkle.verifier(vkBytes);
- * verifier.verify(proof.toBytes()); // true
+ * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require
  * ```
  */
 export const Merkle = new Circuit<MerkleInputs, MerklePublicInputs, MerklePublicValues, {}>({

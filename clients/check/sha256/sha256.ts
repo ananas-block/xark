@@ -40,9 +40,9 @@ export interface Sha256PublicValues {
  * ```ts
  * const prover = await Sha256.prover("/circuits/sha256/");
  * const proof = prover.prove(inputs);
- * send(proof.toBytes());
+ * send(proof.toBytes()); // the proof; an exported Solana verifier reads it as is
  * const verifier = await Sha256.verifier(vkBytes);
- * verifier.verify(proof.toBytes()); // true
+ * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require
  * ```
  */
 export const Sha256 = new Circuit<Sha256Inputs, Sha256PublicInputs, Sha256PublicValues, {}>({

@@ -25,6 +25,7 @@ pub mod push;
 pub mod qap;
 pub mod r1cs;
 pub mod setup;
+pub mod solana;
 pub mod spill;
 pub mod transcode;
 pub mod types;

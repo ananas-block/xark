@@ -87,7 +87,7 @@ test("proves a compliant holder", () => {
   // public inputs only say what it proves.
   const sent = proof.toBytes();
   expect(verifier.verify(sent, { commitment, policy })).toBe(true);
-  expect(verifier.decode(sent).publicInputs.policy.allowed).toEqual(["DE", "FR", "GB", "US"]);
+  expect(proof.publicInputs.policy.allowed).toEqual(["DE", "FR", "GB", "US"]);
   expect(verifier.verify(sent, { commitment, policy: { ...policy, allowed: ["US", "GB"] } })).toBe(false);
 });
 
