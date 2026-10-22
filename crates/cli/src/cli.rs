@@ -62,6 +62,13 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
             _ => {}
         }
     }
+    let field = match crate::commands::parse_field(&field) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
     let Some(crate_dir) = crate_dir else {
         eprintln!("error: `xark build <crate-dir>` requires a crate directory");
         return 2;

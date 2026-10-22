@@ -195,6 +195,23 @@ fn commands_find_the_crate_from_a_subdirectory() {
     assert!(!ok && out_log.contains("no Cargo.toml in src"), "{out_log}");
 }
 
+/// `--field` takes `bn254` or a prime modulus; anything else stops before building.
+#[test]
+fn field_must_be_bn254_or_a_prime() {
+    let tmp = tempdir();
+    let dir = copy_example(tmp.path(), "arithmetic_square");
+    for (field, why) in [("banana", "isn't a field xark knows"), ("9", "isn't prime")] {
+        for cmd in ["build", "profile"] {
+            let (ok, out) = run_in(&dir, &[cmd, ".", "--field", field]);
+            assert!(
+                !ok && out.contains(why),
+                "`xark {cmd} --field {field}`:\n{out}"
+            );
+            assert!(!out.contains("building circuit"), "{out}");
+        }
+    }
+}
+
 /// A failed setup leaves the previous keys and metadata as they were (never a
 /// new key beside old metadata), and no temporary files.
 #[test]

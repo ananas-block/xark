@@ -183,8 +183,9 @@ pub struct BuildArgs {
     /// default: `<crate>/target/xark/<name>/`).
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<String>,
-    /// Field the circuit is defined over.
-    #[arg(long, default_value = "bn254")]
+    /// Field the circuit is defined over: `bn254` (the one Groth16 keys and proofs
+    /// use), or a prime modulus in decimal (to count constraints over another field).
+    #[arg(long, default_value = "bn254", value_parser = parse_field)]
     pub field: String,
     /// Also write `circuit.json` and `r1cs.json`, human-readable views of the
     /// circuit for debugging. Every command reads `circuit.xbc`; the JSON is
@@ -297,6 +298,15 @@ fn looks_like_path(s: &str) -> bool {
 }
 
 // Shared helpers for the backend commands.
+
+/// `--field`: `bn254` (or `bn128`), or a prime modulus in decimal; normalized.
+pub fn parse_field(s: &str) -> std::result::Result<String, String> {
+    let f = xark_ir::FieldSpec::parse(s)?;
+    Ok(match f.name.as_str() {
+        "bn254" => "bn254".into(),
+        _ => f.modulus_decimal.unwrap_or_default(),
+    })
+}
 
 /// Render the path argument the user passed (for the guided "Next:" hints) so
 /// suggested commands are copy-pasteable. Falls back to `.` when none was given.

@@ -25,8 +25,8 @@ pub struct ProfileArgs {
     /// (default: `<crate>/target/xark/<pkg>/`).
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     pub out: Option<String>,
-    /// Field the circuit is defined over.
-    #[arg(long, default_value = "bn254")]
+    /// Field the circuit is defined over: `bn254`, or a prime modulus in decimal.
+    #[arg(long, default_value = "bn254", value_parser = super::parse_field)]
     pub field: String,
     /// Emit the aggregated drill-down as JSON instead of the human-readable tree.
     #[arg(long, default_value_t = false)]
