@@ -75,7 +75,8 @@ function fieldValue(x) {
   }
   if (typeof x === "string") {
     const s = x.trim();
-    if (!/^(\d+|0x[0-9a-fA-F]+)$/.test(s)) {
+    // As the Rust codec reads it: decimal, or 0x/0X hex.
+    if (!/^(\d+|0[xX][0-9a-fA-F]+)$/.test(s)) {
       throw new SyntaxError(`Field: ${JSON.stringify(x)} is not a decimal or 0x-hex integer`);
     }
     return BigInt(s);

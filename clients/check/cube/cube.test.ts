@@ -63,8 +63,14 @@ test("refuses bad inputs", () => {
 test("a Field is checked when it's made", () => {
   // Every form is the same element.
   const three = new Field(3);
-  for (const x of [3n, "3", " 3 ", "0x03", new Uint8Array([3]), new Uint8Array(32).fill(3, 0, 1), three]) {
+  for (const x of [3n, "3", " 3 ", "0x03", "0X03", new Uint8Array([3]), new Uint8Array(32).fill(3, 0, 1), three]) {
     expect(new Field(x).value).toBe(3n);
+  }
+  // A string reads as the prover reads it: decimal or 0x/0X hex, nothing else.
+  expect(prover.prove({ ...inputs, secret: "0X03" }).publicInputs.result.equals(27)).toBe(true);
+  for (const x of ["1_000", "+3", "0x", "3.0"]) {
+    expect(() => new Field(x)).toThrow(/not a decimal or 0x-hex integer/);
+    expect(() => prover.prove({ ...inputs, secret: x })).toThrow(/not a decimal or 0x-hex number/);
   }
   // Bytes are little-endian, as proofs and Rust's `Field::from_le_bytes` have them.
   expect(new Field(new Uint8Array([1, 2])).value).toBe(0x0201n);

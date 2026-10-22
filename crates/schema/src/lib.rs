@@ -822,13 +822,18 @@ fn integer(v: &Value) -> Result<BigUint, String> {
                 ))
             }
         }
+        // Decimal digits, or `0x`/`0X` and hex digits; nothing else (no `+`, no `_`):
+        // the client's `Field` reads the same.
         Value::String(s) => {
             let t = s.trim();
-            match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-                Some(h) => BigUint::parse_bytes(h.as_bytes(), 16),
-                None => BigUint::parse_bytes(t.as_bytes(), 10),
-            }
-            .ok_or_else(|| format!("{s:?} is not a decimal or 0x-hex number"))
+            let (digits, radix) = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+                Some(h) => (h, 16),
+                None => (t, 10),
+            };
+            Some(digits)
+                .filter(|d| !d.is_empty() && d.chars().all(|c| c.is_digit(radix)))
+                .and_then(|d| BigUint::parse_bytes(d.as_bytes(), radix))
+                .ok_or_else(|| format!("{s:?} is not a decimal or 0x-hex number"))
         }
         other => Err(format!("expected a number, got {other}")),
     }
@@ -1072,6 +1077,24 @@ mod tests {
             n("\"18446744073709551616\"").unwrap(),
             BigUint::from(1u128 << 64)
         );
+        // A string: decimal, or 0x/0X hex, spaces around it ignored; nothing else.
+        for (s, v) in [("\" 27 \"", 27u32), ("\"0x1b\"", 27), ("\"0X1B\"", 27)] {
+            assert_eq!(n(s).unwrap(), BigUint::from(v), "{s}");
+        }
+        for s in [
+            "\"1_000\"",
+            "\"+27\"",
+            "\"0x\"",
+            "\"\"",
+            "\"0x1g\"",
+            "\"-1\"",
+        ] {
+            assert!(
+                n(s).unwrap_err()
+                    .contains("is not a decimal or 0x-hex number"),
+                "{s}"
+            );
+        }
     }
 
     #[test]

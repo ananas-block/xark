@@ -103,8 +103,14 @@ pub fn field_input_decimal(s: &str) -> Result<String, String> {
         Some(h) => BigInt::parse_bytes(h.as_bytes(), 16)
             .filter(|_| h.bytes().all(|b| b.is_ascii_hexdigit()))
             .ok_or_else(|| format!("invalid hex value {s:?}"))?,
-        None => BigInt::parse_bytes(t.as_bytes(), 10)
-            .filter(|_| !t.is_empty())
+        // Digits only (no `+` or `_`), as the input codec and the client read it; a
+        // `-` goes on to be refused as below zero.
+        None => Some(t)
+            .filter(|t| {
+                let d = t.strip_prefix('-').unwrap_or(t);
+                !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit())
+            })
+            .and_then(|t| BigInt::parse_bytes(t.as_bytes(), 10))
             .ok_or_else(|| format!("{s:?} is not a decimal or 0x-hex number"))?,
     };
     let modulus = BigInt::parse_bytes(BN254_MODULUS, 10).expect("BN254_MODULUS is a valid decimal");
@@ -881,6 +887,16 @@ mod tests {
     use xark_ir::primitive::{Expression, MulTerm, Var, VarRole, WitnessGen};
     use xark_ir::r1cs::{DebugInfo, R1csConstraint};
     use xark_ir::{FieldConst, LinearCombination as Lc, Variable as IrVar};
+
+    #[test]
+    fn field_strings_read_as_the_codec_reads_them() {
+        for s in ["27", " 27 ", "0x1b", "0X1B"] {
+            assert_eq!(field_input_decimal(s).unwrap(), "27", "{s}");
+        }
+        for s in ["+27", "1_000", "-1", "", "0x", "0x1g", "27.0"] {
+            assert!(field_input_decimal(s).is_err(), "{s:?} was accepted");
+        }
+    }
 
     // Circuit: prove `out == a * b` for public `out`, private `a`, `b`.
     // Derived `t = a*b` (witness-gen Product), pinned by `a·b = t` and `t = out`.

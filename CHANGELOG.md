@@ -118,6 +118,8 @@ gadgets now check more:
 - **Typed host inputs.** The validator `#[circuit]` generates (and its `<Fn>Inputs`
   struct) takes typed values: a `Field` anything that converts (`cube(3, 27)`, an
   `ark_bn254::Fr`, a decimal or `0x`-hex string), a gadget type its natural form.
+  A number string reads the same everywhere (`--inputs`, the host validator, a
+  client's `Field`): decimal digits or `0x`/`0X` hex, nothing else (no `+` or `_`).
   Input structs can hold gadget types, and parameters can be arrays of them.
 - **One dependency per circuit crate.** `xark` re-exports the prover as
   `xark::prover` (host builds), so a circuit crate needs only `xark`.
