@@ -191,8 +191,9 @@ pub fn circuit_crate(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// `xark build <circuit-crate> --out <out>` with an isolated `CARGO_TARGET_DIR`
-/// (so cargo can't replay a cached, non-extracting compile). Returns
+/// `xark build <circuit-crate> --out <out>`. The wasm build itself is the crate's
+/// own `target/xark-wasm` (xark sets it, whatever `CARGO_TARGET_DIR` says), shared
+/// by every test that builds the crate; xark locks it per build. Returns
 /// `(success, stderr)`.
 pub fn xark_build(name: &str, out: &Path, target: &Path) -> (bool, String) {
     let o = Command::new(xark_bin())
@@ -270,9 +271,8 @@ pub fn xark_prove(out: &Path, inputs: &[(&str, &str)]) -> (bool, String) {
     (o.status.success(), combined)
 }
 
-/// `xark check --inputs '{...}' --out <out>` on a circuit crate, with an isolated
-/// `CARGO_TARGET_DIR` (so cargo can't replay a cached, non-extracting compile
-/// and nothing lands in the committed example's `target/`). Runs the
+/// `xark check --inputs '{...}' --out <out>` on a circuit crate (its wasm build in
+/// the crate's own `target/xark-wasm`, as for [`xark_build`]). Runs the
 /// witness-based under-constrained soundness check — build + solve + analyze,
 /// **no** setup/prove. Returns `(success, combined stdout+stderr)`.
 pub fn xark_check_input(

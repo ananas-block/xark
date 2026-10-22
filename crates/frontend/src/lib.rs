@@ -334,6 +334,7 @@ pub fn build_client(
 ) -> Result<Vec<u8>, String> {
     let name = package_name(crate_dir)?;
     ensure_wasm_target(crate_dir)?;
+    let _lock = lock_build(target_dir)?;
     let status = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()))
         .current_dir(crate_dir)
         .env("RUSTFLAGS", "--cfg xark_client")
@@ -444,6 +445,7 @@ pub fn build_crate_with(
 ) -> Result<Vec<u8>, String> {
     let name = package_name(crate_dir)?;
     ensure_wasm_target(crate_dir)?;
+    let _lock = lock_build(target_dir)?;
     let mut cmd = std::process::Command::new(std::env::var("CARGO").unwrap_or("cargo".into()));
     cmd.current_dir(crate_dir)
         .env("RUSTFLAGS", "--cfg xark")
@@ -511,6 +513,20 @@ pub fn build_crate_with(
         .join("wasm32-unknown-unknown/release")
         .join(format!("{}.wasm", name.replace('-', "_")));
     std::fs::read(&wasm).map_err(|e| format!("reading {}: {e}", wasm.display()))
+}
+
+/// Hold `target_dir` for one build, from cargo's start until its `.wasm` is read.
+/// Cargo locks only its own run: another build of the crate (an editor's `xark
+/// check` beside a terminal's `xark build`) could otherwise replace the `.wasm`
+/// while this one reads it ("No such file or directory"). Released when dropped.
+fn lock_build(target_dir: &std::path::Path) -> Result<std::fs::File, String> {
+    std::fs::create_dir_all(target_dir)
+        .map_err(|e| format!("creating {}: {e}", target_dir.display()))?;
+    let path = target_dir.join(".xark-build-lock");
+    let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    file.lock()
+        .map_err(|e| format!("locking {}: {e}", path.display()))?;
+    Ok(file)
 }
 
 /// Make sure the ambient toolchain has the `wasm32-unknown-unknown` standard library,

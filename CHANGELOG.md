@@ -220,6 +220,9 @@ verification starter, and the `xark-client` npm package is removed.
   `public_inputs.bin` put beside it): `proof.bin` and `public_inputs.bin` go there,
   with a warning if it isn't empty, and the next steps point `xark verify` and
   `xark export` at them.
+- Builds of one crate at once (an editor's `xark check` beside `xark build` in a
+  terminal) no longer fail with "reading …/<crate>.wasm: No such file or
+  directory": each holds the build directory until it has read its `.wasm`.
 - `xark export --out` warns when the directory isn't empty, as `setup` and `prove`
   do (it already refused to replace a `Cargo.toml` or `src/lib.rs` it didn't write).
 

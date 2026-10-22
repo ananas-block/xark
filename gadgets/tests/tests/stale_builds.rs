@@ -101,6 +101,33 @@ fn a_build_writes_deps_last() {
     }
 }
 
+/// Builds of one crate at once (an editor's `xark check` beside a terminal's `xark
+/// build`) each read a whole `.wasm`: none finds it mid-replacement.
+#[test]
+fn concurrent_builds_of_a_crate_all_succeed() {
+    let tmp = tempdir();
+    let dir = cube(tmp.path());
+    for round in 0..2 {
+        if round > 0 {
+            edit(&dir, "pub fn cube", "// edited\npub fn cube");
+        }
+        let builds: Vec<_> = (0..4)
+            .map(|i| {
+                Command::new(xark_bin())
+                    .args(["build", ".", "--out", &format!("out{i}")])
+                    .current_dir(&dir)
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .expect("spawn xark build")
+            })
+            .collect();
+        for b in builds {
+            let o = b.wait_with_output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        }
+    }
+}
+
 #[test]
 fn client_builds_a_missing_or_stale_circuit() {
     let tmp = tempdir();
