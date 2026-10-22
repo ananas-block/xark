@@ -259,7 +259,9 @@ verifier.decode(body).publicInputs; // what it claims, typed
 
 To be sure the prover runs the circuit the client was generated from, and not
 whatever a deployment serves, pin it: `Zkyc.prover(url, { digest: Zkyc.digest })`
-refuses any other circuit (`Zkyc.digest` is the digest `xark build` printed).
+refuses any other circuit (`Zkyc.digest` is the digest `xark build` printed). The
+check is one pass over the circuit when the prover is made (about 2 s for Ed25519 in
+node), not per proof.
 
 `Policy.default().on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
 not a TypeScript copy of it: the same `#[input]`, on an `impl` block, makes its

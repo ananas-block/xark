@@ -154,6 +154,8 @@ export interface LoadOptions {
    * prints; the generated client's `digest` is the one it was generated from).
    * Another circuit is refused, so a deployment can't swap the circuit under an app.
    * Every build of one circuit has the same digest, whichever Rust compiled it.
+   * Checking costs one pass over the circuit when the prover is made (about 2 s for
+   * Ed25519 in node), not per proof.
    */
   digest?: string;
 }
