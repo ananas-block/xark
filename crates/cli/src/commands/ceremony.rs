@@ -292,6 +292,9 @@ fn run_finalize(args: FinalizeArgs) -> Result<()> {
 
     let mut metadata = KeyMetadata::new_dev(circuit_hash.to_string(), num_pi, 0);
     metadata.digest = circuit_meta["digest"].as_str().map(str::to_string);
+    let vk = fs::read(dir.join("verifying_key.bin")).context("reading verifying_key.bin")?;
+    let vk_sha256 = super::sha256_hex(&vk);
+    metadata.verifying_key_sha256 = Some(vk_sha256.clone());
     metadata.setup_mode = format!(
         "phase2-from-ptau+mpc[{} contributors]",
         read_contribution_count(dir)?
@@ -299,6 +302,7 @@ fn run_finalize(args: FinalizeArgs) -> Result<()> {
     metadata.production_safe = true;
     fs::write(&meta_path, serde_json::to_string_pretty(&metadata)?)?;
     println!("Finalized; metadata.json written.");
+    println!("verifying key sha256: {vk_sha256}  (pin a client's verifier to it: {{ keyHash }})");
     Ok(())
 }
 

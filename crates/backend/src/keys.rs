@@ -172,6 +172,10 @@ pub struct KeyMetadata {
     /// this same digest, and its key still fits. `None` on older keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// SHA-256 of `vk.bin`: what a client pins its verifier to
+    /// (`verifier(from, { keyHash })`). `None` on older keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verifying_key_sha256: Option<String>,
     pub backend_version: String,
     pub created_at: String,
     pub num_public_inputs: usize,
@@ -212,6 +216,7 @@ impl KeyMetadata {
             production_safe: false,
             circuit_hash,
             digest: None,
+            verifying_key_sha256: None,
             backend_version: env!("CARGO_PKG_VERSION").into(),
             created_at: chrono::Utc::now().to_rfc3339(),
             num_public_inputs,

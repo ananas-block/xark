@@ -297,6 +297,21 @@ fn setup_out_warns_and_names_the_key() {
     let (ok, out) = run_in(&dir, &setup);
     assert!(ok && !out.contains("isn't empty"), "{out}");
     assert!(out.contains("--proving-key keys/pk.bin"), "{out}");
+    // It names the verifying key's sha256 (what a client pins its verifier to), and
+    // records it.
+    use sha2::{Digest, Sha256};
+    let vk_sha = hex::encode(Sha256::digest(
+        std::fs::read(dir.join("keys/vk.bin")).unwrap(),
+    ));
+    assert!(
+        out.contains(&format!("verifying key sha256: {vk_sha}")),
+        "{out}"
+    );
+    let meta = std::fs::read_to_string(dir.join("keys/metadata.json")).unwrap();
+    assert!(
+        meta.contains(&format!("\"verifying_key_sha256\": \"{vk_sha}\"")),
+        "{meta}"
+    );
     let (ok, out) = run_in(&dir, &setup);
     assert!(ok && out.contains("keys isn't empty"), "{out}");
     let (ok, out) = run_in(

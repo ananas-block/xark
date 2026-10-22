@@ -522,6 +522,8 @@ pub fn run(args: SetupArgs) -> Result<()> {
     drop(keyed);
 
     canonical_write_to_file(&vk, &vk_tmp)?;
+    let vk_sha256 = super::sha256_hex(&fs::read(&vk_tmp)?);
+    metadata.verifying_key_sha256 = Some(vk_sha256.clone());
     fs::write(&meta_tmp, serde_json::to_string_pretty(&metadata)?)
         .with_context(|| format!("writing {}", meta_tmp.display()))?;
     // The old metadata goes first: until the new one is in place, the keys have
@@ -543,6 +545,10 @@ pub fn run(args: SetupArgs) -> Result<()> {
     println!("Wrote {}", pk_path.display());
     println!("Wrote {}", vk_path.display());
     println!("Wrote {}", meta_path.display());
+    println!(
+        "verifying key sha256: {vk_sha256}  {}",
+        crate::style::dim("# pin a client's verifier to it: { keyHash }")
+    );
     if ptau_path.is_some() {
         println!(
             "{}",

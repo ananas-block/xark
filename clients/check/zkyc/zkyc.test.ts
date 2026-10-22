@@ -1,7 +1,9 @@
 // The generated `zkyc` client (`xark client`) through xark-wasm. `npm test` runs it,
 // after setup.ts builds the example and its keys.
 import { Circuit } from "@blueshift-gg/xark-wasm/client";
-import { artifacts, serve } from "../artifacts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { artifacts, outDir, serve } from "../artifacts";
 import schema from "./zkyc.schema.js";
 import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, Zkyc, ZkycProver, ZkycVerifier } from "./zkyc";
 
@@ -208,4 +210,19 @@ test("a prover pinned to the client's circuit refuses another", async () => {
   // Not a circuit at all: said so, not a crash.
   const bogus = { ...artifacts("zkyc"), circuit: new Uint8Array([1, 2, 3]) };
   await expect(Zkyc.prover(bogus, { digest: Zkyc.digest })).rejects.toThrow(/not a circuit.xbc/);
+});
+
+test("a verifier pinned to a verifying key refuses another", async () => {
+  // `xark setup` records the key's sha256 (and prints it).
+  const meta = JSON.parse(readFileSync(join(outDir("zkyc"), "metadata.json"), "utf8"));
+  const keyHash: string = meta.verifying_key_sha256;
+  expect(keyHash).toMatch(/^[0-9a-f]{64}$/);
+  const vk = artifacts("zkyc").verifyingKey;
+  for (const pin of [keyHash, keyHash.toUpperCase()]) {
+    const pinned = await Zkyc.verifier(vk, { keyHash: pin });
+    expect(pinned.verify(prover.prove({ id, commitment, policy }), { commitment, policy })).toBe(true);
+  }
+  await expect(Zkyc.verifier(vk, { keyHash: "0".repeat(64) })).rejects.toThrow(
+    new RegExp(`has sha256 ${keyHash}, not the 0{64} this verifier is pinned to`),
+  );
 });

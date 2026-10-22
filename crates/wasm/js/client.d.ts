@@ -127,6 +127,8 @@ export interface Wasm {
   circuitDigest(circuit: Uint8Array): string;
   /** A proof (either form) as an exported Solana verifier reads it (256 bytes). */
   solanaProof(proof: Uint8Array): Uint8Array;
+  /** Lowercase hex SHA-256 of `bytes`. */
+  sha256Hex(bytes: Uint8Array): string;
 }
 
 /** `client.wasm`, the circuit's Rust functions: its bytes, or the compiled module. */
@@ -169,6 +171,12 @@ export interface LoadOptions {
    * Ed25519 in node), not per proof.
    */
   digest?: string;
+  /**
+   * A verifier only: the sha256 its `vk.bin` must have (`xark setup` prints it, and
+   * `metadata.json` records it as `verifying_key_sha256`). Another key is refused,
+   * so a deployment can't swap the key under an app.
+   */
+  keyHash?: string;
 }
 
 /** What provers and verifiers share. */

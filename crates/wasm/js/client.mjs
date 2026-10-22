@@ -318,6 +318,16 @@ export class Circuit {
         ? { verifyingKey: from }
         : from;
     if (!parts.verifyingKey) throw new Error(`a ${this.name} verifier needs \`verifyingKey\` (vk.bin)`);
+    // Pinned (`options.keyHash`): this exact verifying key, and no other.
+    if (options?.keyHash !== undefined) {
+      const got = wasm.sha256Hex(parts.verifyingKey);
+      if (got !== options.keyHash.toLowerCase()) {
+        throw new Error(
+          `the ${this.name} verifying key has sha256 ${got}, not the ${options.keyHash} this verifier is pinned to: ` +
+            `deploy the vk.bin of that setup (\`xark setup\` prints its sha256), or pin the new one`,
+        );
+      }
+    }
     await loadClient(this, parts.client, from);
     return new Verifier(this, wasm, parts);
   }

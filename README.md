@@ -267,7 +267,8 @@ To be sure the prover runs the circuit the client was generated from, and not
 whatever a deployment serves, pin it: `Zkyc.prover(url, { digest: Zkyc.digest })`
 refuses any other circuit (`Zkyc.digest` is the digest `xark build` printed). The
 check is one pass over the circuit when the prover is made (about 2 s for Ed25519 in
-node), not per proof.
+node), not per proof. A verifier pins its key the same way: `Zkyc.verifier(vk, {
+keyHash })` refuses any other `vk.bin` (`xark setup` prints its sha256).
 
 `Policy.default().on(…).minAge(18)` and `Identity.commitment(id)` are the crate's Rust,
 not a TypeScript copy of it: the same `#[input]`, on an `impl` block, makes its

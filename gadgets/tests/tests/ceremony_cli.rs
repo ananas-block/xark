@@ -71,7 +71,20 @@ fn ceremony_keys_prove_and_verify() {
     ]);
     let log = step(&["ceremony", "verify", "--ceremony-dir", cer_s]);
     assert!(log.contains("alice") && log.contains("bob"), "{log}");
-    step(&["ceremony", "finalize", "--ceremony-dir", cer_s]);
+    let log = step(&["ceremony", "finalize", "--ceremony-dir", cer_s]);
+    // The final verifying key's sha256 (a client pins its verifier to it): printed
+    // and recorded.
+    {
+        use sha2::{Digest, Sha256};
+        let vk = std::fs::read(cer.join("verifying_key.bin")).unwrap();
+        let sha = hex::encode(Sha256::digest(vk));
+        assert!(
+            log.contains(&format!("verifying key sha256: {sha}")),
+            "{log}"
+        );
+        let meta = std::fs::read_to_string(cer.join("metadata.json")).unwrap();
+        assert!(meta.contains(&sha), "{meta}");
+    }
     // A finalized ceremony takes no more contributions …
     let (ok, log) = xark(
         &[

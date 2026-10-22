@@ -283,6 +283,12 @@ decode_public_inputs(publicInputs); // ["27"]
 A proof in either form as an exported Solana verifier (`xark export`) reads it:
 256 bytes, little-endian, `-A || B || C`. What a client's `proof.toBytes()` returns.
 
+### `sha256Hex(bytes)` → `string`
+
+Lowercase hex SHA-256: a `vk.bin`'s is what `xark setup` prints, and what a client
+pins a verifier to with `verifier(from, { keyHash })`. Works where WebCrypto
+doesn't (a page served over plain HTTP).
+
 ### `circuitDigest(circuitXbc)` → `string`
 
 The circuit digest of a `circuit.xbc`, as `xark build` prints it: the same for every

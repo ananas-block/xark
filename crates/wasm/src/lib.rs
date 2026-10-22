@@ -309,6 +309,13 @@ pub fn solana_proof(proof_bytes: &Bytes) -> Result<Vec<u8>, js_sys::Error> {
     )?))
 }
 
+/// Lowercase hex SHA-256 of `bytes`: a verifying key's, as `xark setup` prints it, to
+/// pin a verifier to (without WebCrypto, which pages served over plain HTTP lack).
+#[wasm_bindgen(js_name = sha256Hex)]
+pub fn sha256_hex_js(bytes: &Bytes) -> Result<String, js_sys::Error> {
+    Ok(sha256_hex(&to_bytes(bytes, "bytes")?))
+}
+
 /// The circuit digest of a `circuit.xbc` (what `xark build` prints, and a key's
 /// `metadata.json` records): the same for every build of the circuit, whichever Rust
 /// compiled it, and different for any other circuit.

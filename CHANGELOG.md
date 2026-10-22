@@ -172,7 +172,10 @@ verification starter, and the `xark-client` npm package is removed.
   `xark_groth16::solana`, re-exported from `xark_backend::solana`).
 - **Pinning a prover:** `Circuit.digest` is the circuit the client was generated
   from, and `prover(from, { digest })` refuses a `circuit.xbc` with another one
-  (xark-wasm's `circuitDigest` computes it).
+  (xark-wasm's `circuitDigest` computes it). A verifier pins its verifying key:
+  `verifier(from, { keyHash })` refuses a `vk.bin` with another sha256, which
+  `xark setup` and `xark ceremony finalize` print and record in `metadata.json`
+  (`verifying_key_sha256`).
 - **Typed errors:** a refused input throws an `InputError` with its `path` in the
   caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
   fail a check a `CheckFailed` with the statement's `site` (file, line, column,
