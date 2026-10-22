@@ -149,9 +149,9 @@ function splitProof(bytes) {
 
 /**
  * JSON for xark-wasm: `bigint`s and `Field`s as decimal, a `Date` as its UTC day,
- * a `Uint8Array` as its list of bytes (little-endian, where it's an integer). A value
- * that can't be sent (an invalid `Date`, a number past 2^53) throws an `InputError`
- * naming where it is.
+ * a `Uint8Array` as its list of bytes (little-endian, where it's an integer), a `Set`
+ * as a list. A value that can't be sent (an invalid `Date`, a number past 2^53, a
+ * `Map`) throws an `InputError` naming where it is.
  */
 export function toJson(value) {
   return JSON.stringify(plain(value, ""));
@@ -171,7 +171,20 @@ function plain(v, path) {
   if (typeof v === "number" && !Number.isSafeInteger(v)) refuse(`${v} is not a safe integer (pass a bigint)`);
   if (v instanceof Uint8Array) return Array.from(v);
   if (v !== null && typeof v === "object" && typeof v.toJSON === "function") return v.toJSON();
-  if (Array.isArray(v)) return v.map((x, i) => plain(x, `${path}[${i}]`));
+  // A `Set` is a list (`new Set(["US", "GB"])` for a set of countries).
+  if (Array.isArray(v) || v instanceof Set) return Array.from(v, (x, i) => plain(x, `${path}[${i}]`));
+  // Objects that would otherwise go as `{}` (or as `{"0": …}`), not as what they hold.
+  if (
+    v instanceof Map ||
+    v instanceof WeakMap ||
+    v instanceof WeakSet ||
+    v instanceof Promise ||
+    v instanceof RegExp ||
+    v instanceof ArrayBuffer ||
+    ArrayBuffer.isView(v)
+  ) {
+    refuse(`a ${v.constructor.name} can't be sent${ArrayBuffer.isView(v) ? " (bytes are a Uint8Array)" : ""}`);
+  }
   if (v !== null && typeof v === "object") {
     const out = {};
     for (const [k, x] of Object.entries(v)) {
@@ -266,6 +279,8 @@ export class Circuit {
     this.decodePublic = spec.decodePublic;
     this.hasClient = spec.client;
     this.rust = undefined;
+    /** A URL a prover or verifier was made from that had no `client.wasm`. */
+    this.missingAt = undefined;
   }
 
   async prover(from, options) {
@@ -276,7 +291,7 @@ export class Circuit {
     if (!parts.circuit || !parts.provingKey) {
       throw new Error(`a ${this.name} prover needs \`circuit\` (circuit.xbc) and \`provingKey\` (pk.bin)`);
     }
-    if (parts.client) await this.ready(parts.client);
+    await loadClient(this, parts.client, from);
     return new Prover(this, wasm, parts);
   }
 
@@ -288,7 +303,7 @@ export class Circuit {
         ? { verifyingKey: from }
         : from;
     if (!parts.verifyingKey) throw new Error(`a ${this.name} verifier needs \`verifyingKey\` (vk.bin)`);
-    if (parts.client) await this.ready(parts.client);
+    await loadClient(this, parts.client, from);
     return new Verifier(this, wasm, parts);
   }
 
@@ -301,11 +316,17 @@ export class Circuit {
     }
     const module = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
     this.rust = { module, instance: await WebAssembly.instantiate(module, {}) };
+    this.missingAt = undefined;
   }
 
   /** Call one of the circuit's Rust functions with JSON arguments; its result, as JSON. */
   call(name, args) {
     const rust = this.rust;
+    if (!rust && this.missingAt) {
+      throw new Error(
+        `${name} runs from client.wasm, and there was none at ${this.missingAt}: serve the client.wasm \`xark client\` wrote beside the other files`,
+      );
+    }
     if (!rust) {
       throw new Error(
         `${name} runs from client.wasm: load it first with the circuit's \`ready(url)\` (making a prover or verifier from a URL does it)`,
@@ -333,6 +354,12 @@ export class Circuit {
     if ("err" in out) throw "path" in out ? new InputError(out.err, out.path) : new Error(out.err);
     return out.ok;
   }
+}
+
+/** Load the `client.wasm` a prover or verifier was made with; remember a URL that had none. */
+async function loadClient(circuit, client, from) {
+  if (client) return circuit.ready(client);
+  if (circuit.hasClient && isLocation(from)) circuit.missingAt = String(from);
 }
 
 /** The string a Rust function handed over (`ptr << 32 | len`), freed. */

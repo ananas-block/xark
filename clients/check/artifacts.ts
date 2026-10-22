@@ -22,13 +22,19 @@ export function artifacts(example: string) {
   };
 }
 
-/** Serve an example's build output over HTTP on a free local port, as an app would. */
-export async function serve(example: string): Promise<{ url: string; close: () => Promise<void> }> {
+/**
+ * Serve an example's build output over HTTP on a free local port, as an app would,
+ * leaving out the files in `without`.
+ */
+export async function serve(
+  example: string,
+  without: string[] = [],
+): Promise<{ url: string; close: () => Promise<void> }> {
   const dir = outDir(example);
   const server = createServer(async (req, res) => {
     const name = (req.url ?? "/").slice(1);
     try {
-      if (name.includes("/") || name.includes("..")) throw new Error("no");
+      if (name.includes("/") || name.includes("..") || without.includes(name)) throw new Error("no");
       res.end(await readFile(join(dir, name)));
     } catch {
       res.statusCode = 404;

@@ -1,6 +1,8 @@
 // The generated `zkyc` client (`xark client`) through xark-wasm. `npm test` runs it,
 // after setup.ts builds the example and its keys.
-import { artifacts } from "../artifacts";
+import { Circuit } from "@blueshift-gg/xark-wasm/client";
+import { artifacts, serve } from "../artifacts";
+import schema from "./zkyc.schema.js";
 import { CheckFailed, Country, Field, Identity, InputError, Policy, PolicyValue, Zkyc, ZkycProver, ZkycVerifier } from "./zkyc";
 
 // Made from the build output, the prover also loads `client.wasm`: the Rust
@@ -170,4 +172,27 @@ test("ready() loads the Rust functions on their own", async () => {
   expect(Identity.commitment(id)).toEqual(commitment);
   // A client.wasm from another build, without a function this client calls.
   expect(() => Zkyc.call("removed_since", [])).toThrow(/client.wasm has no `removed_since`/);
+});
+
+test("a Set goes as a list; a Map is refused", () => {
+  // Plain JS (or `any`): a Set of countries is the policy's list.
+  const allowed = new Set([Country.US, Country.GB, "FR", "DE"]) as unknown as Country[];
+  const proof = prover.prove({ id, commitment, policy: { ...policy, allowed } });
+  expect(verifier.verify(proof, { commitment, policy })).toBe(true);
+  const map = new Map([["US", true]]) as unknown as Country[];
+  expect(() => prover.prove({ id, commitment, policy: { ...policy, allowed: map } })).toThrow(
+    expect.objectContaining({ name: "InputError", path: "policy.allowed", message: expect.stringMatching(/a Map can't be sent/) }),
+  );
+});
+
+test("a URL without client.wasm says so when a Rust function is called", async () => {
+  // A circuit of its own: the shared `Zkyc` has loaded client.wasm already.
+  const circuit = new Circuit({ name: "zkyc", schema, decodePublic: (v) => v, client: true });
+  const server = await serve("zkyc", ["client.wasm"]);
+  try {
+    await circuit.verifier(server.url);
+    expect(() => circuit.call("Policy.default", [])).toThrow(/there was none at http:\/\/127\.0\.0\.1/);
+  } finally {
+    await server.close();
+  }
 });

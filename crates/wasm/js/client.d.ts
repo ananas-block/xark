@@ -188,7 +188,9 @@ export class Verifier<PublicInputs, PublicValues, Structs = {}> extends Session<
   /**
    * Whether `proof` (a `Proof`, or its `toBytes()`) is valid. With `publicInputs`,
    * whether it proves those: pass the ones you require (a policy, a root), or a
-   * proof of other public inputs passes.
+   * proof of other public inputs passes. A malformed or invalid proof is `false`;
+   * `publicInputs` that don't fit the circuit's types throw an `InputError` (a
+   * mistake in the caller, not a bad proof).
    */
   verify(proof: Proof<PublicValues> | Uint8Array, publicInputs?: PublicInputs | Uint8Array): boolean;
 }

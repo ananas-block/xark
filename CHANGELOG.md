@@ -160,7 +160,9 @@ verification starter, and the `xark-client` npm package is removed.
 - **Typed errors:** a refused input throws an `InputError` with its `path` in the
   caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
   fail a check a `CheckFailed` with the statement's `site` (file, line, column,
-  text, the functions it called into).
+  text, the functions it called into). A JS `Set` goes as a list; a value that
+  can't be sent (a `Map`, an `ArrayBuffer`) is an `InputError` too, not `{}`.
+  `verify` is `false` for a bad proof and throws for public inputs that don't fit.
 - **Hashing as the circuit does:** `prover.fields("Identity", id)` gives a value's
   field elements and `prover.poseidon2(fields)` hashes them.
 - The shared code is xark-wasm's `@blueshift-gg/xark-wasm/client`, and every value
