@@ -124,6 +124,9 @@ fn run_init(args: InitArgs) -> Result<()> {
     // The build's `circuit.xbc`, loaded as `xark setup` does.
     let project = XarkProject::resolve(args.path.clone())?;
     let (prog, hash) = load_backend_r1cs(&project.circuit_xbc())?;
+    let digest = fs::read(project.circuit_xbc())
+        .ok()
+        .map(|b| super::r1cs_digest(&b));
     let num_pi = num_public_inputs(&prog);
     let circuit = XarkCircuit::for_setup(prog);
 
@@ -181,6 +184,7 @@ fn run_init(args: InitArgs) -> Result<()> {
         args.out.join("circuit_meta.json"),
         serde_json::to_string_pretty(&serde_json::json!({
             "circuit_hash": hash,
+            "digest": digest,
             "num_public_inputs": num_pi,
         }))?,
     )?;
@@ -284,6 +288,7 @@ fn run_finalize(args: FinalizeArgs) -> Result<()> {
         .ok_or_else(|| anyhow!("circuit_meta.json missing circuit_hash"))?;
 
     let mut metadata = KeyMetadata::new_dev(circuit_hash.to_string(), num_pi, 0);
+    metadata.digest = circuit_meta["digest"].as_str().map(str::to_string);
     metadata.setup_mode = format!(
         "phase2-from-ptau+mpc[{} contributors]",
         read_contribution_count(dir)?

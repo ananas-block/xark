@@ -29,8 +29,8 @@ pub fn run(args: InspectArgs) -> Result<()> {
     crate::cli::build_if_needed(&project.xark_dir)?;
     let (prog, fingerprint) = load_backend_r1cs(&project.circuit_xbc())?;
     let prim = load_primitive(&project.circuit_xbc()).ok();
-    // Two fingerprints: the constraint system's (`xark build` prints it), and the
-    // file's, which keys record (`metadata.json`) and `xark prove` checks.
+    // Two fingerprints: the constraint system's (`xark build` prints it; a key fits
+    // every build with it), and this build's file's. Keys record both.
     let digest = std::fs::read(project.circuit_xbc())
         .ok()
         .map(|b| format!("{:032x}", xark_ir::function_decode::stream_digest(&b)));
@@ -149,7 +149,7 @@ pub fn run(args: InspectArgs) -> Result<()> {
         if let Some(d) = &digest {
             println!("Circuit digest:       {d}  (the R1CS, as `xark build` prints it)");
         }
-        println!("circuit.xbc sha256:   {fingerprint}  (what keys record)");
+        println!("circuit.xbc sha256:   {fingerprint}  (this build's file)");
     }
     Ok(())
 }

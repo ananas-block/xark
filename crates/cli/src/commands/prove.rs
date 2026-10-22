@@ -233,17 +233,21 @@ fn prove_streaming(
     let t = std::time::Instant::now();
     let bytes = std::fs::read(xbc).with_context(|| format!("reading {}", xbc.display()))?;
     let fingerprint = super::sha256_hex(&bytes);
-    // A key made for another build can't prove this one: say so, rather than
-    // failing the self-verification below.
-    if let Some(keyed) =
-        key_meta(pk_path, "circuit_hash").and_then(|h| h.as_str().map(str::to_string))
-        && keyed != fingerprint
-    {
-        anyhow::bail!(
+    // A key made for another circuit can't prove this one: say so, rather than
+    // failing the self-verification below. One made from another build of the same
+    // circuit (another Rust version) fits.
+    match super::key_fit(pk_path, &bytes) {
+        super::KeyFit::Different => anyhow::bail!(
             "the proving key {} was made for a different build of the circuit \
              (the circuit changed since `xark setup`): run `xark setup` again",
             pk_path.display()
-        );
+        ),
+        super::KeyFit::SameCircuit => eprintln!(
+            "note: {} was made from another build of this circuit (the same constraints, \
+             compiled differently, e.g. by another Rust version); proving with it",
+            pk_path.display()
+        ),
+        super::KeyFit::Same => {}
     }
     // Whether the rows came without re-running the minimize (the `cached=` marker).
     let mut cached = true;

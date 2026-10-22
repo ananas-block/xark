@@ -418,6 +418,9 @@ pub fn run(args: SetupArgs) -> Result<()> {
         Ok(std::io::BufWriter::with_capacity(1 << 20, f))
     };
     let mut metadata = KeyMetadata::new_dev(hash, num_pi, num_constraints);
+    metadata.digest = fs::read(project.circuit_xbc())
+        .ok()
+        .map(|b| super::r1cs_digest(&b));
     metadata.r1cs_form = Some(form_name.to_string());
     let rows = keyed.with_source(|src| src.num_constraints() + src.layout().num_instance());
     let domain_size = kind.size(rows);

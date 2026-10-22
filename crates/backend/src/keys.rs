@@ -165,7 +165,13 @@ pub struct KeyMetadata {
     pub curve: String,
     pub setup_mode: String,
     pub production_safe: bool,
+    /// SHA-256 of the `circuit.xbc` the key was made from.
     pub circuit_hash: String,
+    /// The R1CS digest of that circuit (what `xark build` prints). Another build of
+    /// the same circuit (another Rust version) can have another `circuit_hash` but
+    /// this same digest, and its key still fits. `None` on older keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
     pub backend_version: String,
     pub created_at: String,
     pub num_public_inputs: usize,
@@ -205,6 +211,7 @@ impl KeyMetadata {
             setup_mode: "insecure-dev-mode".into(),
             production_safe: false,
             circuit_hash,
+            digest: None,
             backend_version: env!("CARGO_PKG_VERSION").into(),
             created_at: chrono::Utc::now().to_rfc3339(),
             num_public_inputs,

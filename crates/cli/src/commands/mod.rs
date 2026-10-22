@@ -610,19 +610,50 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// Refuse a key made for a different build of the circuit: the `circuit_hash` in
-/// the `metadata.json` beside `key` against `circuit.xbc`'s. No check when either
-/// is missing (keys copied without their metadata, or shipped without the build).
-pub fn ensure_key_matches_circuit(key: &std::path::Path, xbc: &std::path::Path) -> Result<()> {
-    let keyed = key
+/// The R1CS digest of a `circuit.xbc` (what `xark build` prints): the same for every
+/// build of a circuit, whichever Rust compiled it.
+pub fn r1cs_digest(xbc: &[u8]) -> String {
+    format!("{:032x}", xark_ir::function_decode::stream_digest(xbc))
+}
+
+/// How a key (by the `metadata.json` beside it) relates to a `circuit.xbc`.
+#[derive(Debug, PartialEq)]
+pub enum KeyFit {
+    /// Made from this very file, or nothing to compare (no metadata, or no build).
+    Same,
+    /// Made from another build of the same constraint system (another Rust version
+    /// laid out `circuit.xbc` differently): it fits. The prover's self-check still
+    /// catches a key whose rows turn out not to.
+    SameCircuit,
+    /// Made for a different circuit.
+    Different,
+}
+
+/// Whether the key at `key` was made for the circuit in `xbc` (its bytes).
+pub fn key_fit(key: &std::path::Path, xbc: &[u8]) -> KeyFit {
+    let Some(meta) = key
         .parent()
         .and_then(|dir| std::fs::read_to_string(dir.join("metadata.json")).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("circuit_hash")?.as_str().map(str::to_string));
-    let (Some(keyed), Ok(bytes)) = (keyed, std::fs::read(xbc)) else {
+    else {
+        return KeyFit::Same;
+    };
+    let field = |k: &str| meta.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    match (field("circuit_hash"), field("digest")) {
+        (None, _) => KeyFit::Same,
+        (Some(h), _) if h == sha256_hex(xbc) => KeyFit::Same,
+        (_, Some(d)) if d == r1cs_digest(xbc) => KeyFit::SameCircuit,
+        _ => KeyFit::Different,
+    }
+}
+
+/// Refuse a key made for a different circuit (see [`key_fit`]). No check when the
+/// metadata or the build is missing (keys copied alone, or shipped without the build).
+pub fn ensure_key_matches_circuit(key: &std::path::Path, xbc: &std::path::Path) -> Result<()> {
+    let Ok(bytes) = std::fs::read(xbc) else {
         return Ok(());
     };
-    if keyed != sha256_hex(&bytes) {
+    if key_fit(key, &bytes) == KeyFit::Different {
         anyhow::bail!(
             "the key {} was made for a different build of the circuit (the circuit \
              changed since `xark setup`): run `xark setup` and `xark prove` again",

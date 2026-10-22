@@ -134,12 +134,32 @@ fn stale_proving_key_is_named() {
     assert!(ok, "build failed: {err}");
     let (ok, err) = xark_setup(&out);
     assert!(ok, "setup failed: {err}");
-    // As if the circuit had been rebuilt with a change since setup.
     let meta = out.join("metadata.json");
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+    // As if another Rust had built the same circuit: another `circuit.xbc`, the
+    // same R1CS digest. The key fits.
+    let saved = m.clone();
     m["circuit_hash"] = "00".repeat(32).into();
     std::fs::write(&meta, m.to_string()).unwrap();
+    let (ok, err) = xark_prove(&out, &[("x", "3"), ("y", "9")]);
+    assert!(
+        ok && err.contains("made from another build of this circuit"),
+        "{err}"
+    );
+    // As if the circuit had been rebuilt with a change since setup: refused.
+    m["digest"] = "00".repeat(16).into();
+    std::fs::write(&meta, m.to_string()).unwrap();
+    let (ok, err) = xark_prove(&out, &[("x", "3"), ("y", "9")]);
+    assert!(
+        !ok && err.contains("different build of the circuit"),
+        "{err}"
+    );
+    // A key from before `digest` was recorded: the file's hash alone decides.
+    let mut old = saved;
+    old.as_object_mut().unwrap().remove("digest");
+    old["circuit_hash"] = "00".repeat(32).into();
+    std::fs::write(&meta, old.to_string()).unwrap();
     let (ok, err) = xark_prove(&out, &[("x", "3"), ("y", "9")]);
     assert!(
         !ok && err.contains("different build of the circuit"),
@@ -412,6 +432,7 @@ fn export_and_verify_check_the_key() {
     let mut m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
     m["circuit_hash"] = "00".repeat(32).into();
+    m["digest"] = "00".repeat(16).into();
     std::fs::write(&meta, m.to_string()).unwrap();
     for cmd in [&["export", o, "--allow-insecure"][..], &["verify", o]] {
         let (ok, stdout, err) = run(cmd);

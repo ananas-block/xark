@@ -221,6 +221,12 @@ verification starter, and the `xark-client` npm package is removed.
   `public_inputs.bin` put beside it): `proof.bin` and `public_inputs.bin` go there,
   with a warning if it isn't empty, and the next steps point `xark verify` and
   `xark export` at them.
+- **A key fits every build of its circuit.** Keys record the circuit digest
+  (`metadata.json`'s `digest`) beside `circuit.xbc`'s hash. `prove`, `verify` and
+  `export` accept a key from another build with the same digest, such as the same
+  circuit compiled by another Rust version (which can store repeats differently,
+  as 1.89 does for the Ed25519 and P-256 examples), instead of asking for a new
+  `xark setup`. `xark inspect` shows both fingerprints.
 - Builds of one crate at once (an editor's `xark check` beside `xark build` in a
   terminal) no longer fail with "reading …/<crate>.wasm: No such file or
   directory": each holds the build directory until it has read its `.wasm`.
