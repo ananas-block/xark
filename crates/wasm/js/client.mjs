@@ -70,6 +70,7 @@ export class Field {
 function fieldValue(x) {
   if (typeof x === "bigint") return x;
   if (typeof x === "number") {
+    if (!Number.isInteger(x)) throw new RangeError(`Field: ${x} is not an integer`);
     if (!Number.isSafeInteger(x)) throw new RangeError(`Field: ${x} is not a safe integer (pass a bigint)`);
     return BigInt(x);
   }
@@ -169,6 +170,7 @@ function plain(v, path) {
   }
   if (typeof v === "bigint") return v.toString();
   // A number past 2^53 has already lost digits: refuse it rather than prove another.
+  if (typeof v === "number" && !Number.isInteger(v)) refuse(`${v} is not an integer`);
   if (typeof v === "number" && !Number.isSafeInteger(v)) refuse(`${v} is not a safe integer (pass a bigint)`);
   if (v instanceof Uint8Array) return Array.from(v);
   if (v !== null && typeof v === "object" && typeof v.toJSON === "function") return v.toJSON();
@@ -198,6 +200,7 @@ function plain(v, path) {
 
 /** Hex (`0x` optional, as xark-wasm writes bytes) to bytes. Throws on anything else. */
 export function fromHex(s) {
+  if (typeof s !== "string") throw new TypeError(`fromHex: expected a string, got ${s === null ? "null" : typeof s}`);
   const h = s.startsWith("0x") || s.startsWith("0X") ? s.slice(2) : s;
   if (h.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(h)) {
     throw new SyntaxError(`fromHex: ${JSON.stringify(s)} is not hex bytes`);
@@ -207,6 +210,7 @@ export function fromHex(s) {
 
 /** Bytes as `0x`-hex. */
 export function toHex(bytes) {
+  if (!(bytes instanceof Uint8Array)) throw new TypeError("toHex: expected a Uint8Array");
   return "0x" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 

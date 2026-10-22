@@ -56,6 +56,7 @@ test("refuses bad inputs", () => {
   expect(() => prover.prove({ ...inputs, secret: p + 3n })).toThrow(/secret/);
   expect(() => prover.prove({ ...inputs, secret: -1 })).toThrow(/secret/);
   expect(() => prover.prove({ ...inputs, secret: 2 ** 53 + 2 })).toThrow(/`secret`: .* is not a safe integer/);
+  expect(() => prover.prove({ ...inputs, secret: 1.5 })).toThrow(/`secret`: 1.5 is not an integer/);
   expect(() => prover.prove({ ...inputs, secret: "three" })).toThrow(/secret/);
   expect(prover.prove({ secret: new Field(3), result: 27n }).publicInputs.result.equals(27)).toBe(true);
 });
@@ -86,7 +87,7 @@ test("a Field is checked when it's made", () => {
   expect(() => new Field(new Uint8Array(32).fill(0xff))).toThrow(/not below the field's modulus/);
   expect(() => new Field(-1)).toThrow(/negative/);
   expect(() => new Field(2 ** 53)).toThrow(/not a safe integer/);
-  expect(() => new Field(1.5)).toThrow(/not a safe integer/);
+  expect(() => new Field(1.5)).toThrow(/1.5 is not an integer/);
   for (const s of ["", "-1", "1e3", "0x", "12abc"]) expect(() => new Field(s)).toThrow(/not a decimal or 0x-hex/);
   expect(() => new Field(new Uint8Array(33))).toThrow(/at most 32/);
   // @ts-expect-error: not a field element's form (tsc checks this line)

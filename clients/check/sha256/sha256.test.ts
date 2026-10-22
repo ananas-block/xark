@@ -29,6 +29,10 @@ test("proves a preimage", () => {
   const asHex: Parameters<Sha256Prover["prove"]>[0] = { msg: "0x616263", digest };
   expect(asHex.msg).toBe("0x616263");
   expect(() => fromHex("0x6g")).toThrow(/not hex bytes/);
+  // Only bytes go to hex, and only a string comes from it (plain JS gets a clear error).
+  expect(() => toHex("ab" as unknown as Uint8Array)).toThrow(/expected a Uint8Array/);
+  expect(() => toHex([300] as unknown as Uint8Array)).toThrow(/expected a Uint8Array/);
+  expect(() => fromHex(123 as unknown as string)).toThrow(/expected a string, got number/);
   expect(fromHex("616263")).toEqual(msg);
 });
 
