@@ -1,6 +1,7 @@
 //! Dev tool: build a circuit crate with the stable frontend and fingerprint it.
 //!
-//! `cargo run -p xark-frontend --release --example stablec -- <crate-dir> [--compare other.xbc]`
+//! `cargo run -p xark-frontend --release --example stablec -- <crate-dir> [--compare other.xbc]
+//! [--out circuit.xbc]` (`--out` keeps the built `circuit.xbc`, to compare against later).
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -41,9 +42,14 @@ fn main() {
         });
     let t_lower = t.elapsed();
     let xbc = &out.xbc;
-    let out_dir = dir.join("target/xark-stable");
-    std::fs::create_dir_all(&out_dir).unwrap();
-    std::fs::write(out_dir.join("circuit.xbc"), xbc).unwrap();
+    if let Some(path) = args
+        .iter()
+        .position(|a| a == "--out")
+        .and_then(|i| args.get(i + 1))
+    {
+        std::fs::write(path, xbc).unwrap_or_else(|e| panic!("writing {path}: {e}"));
+        println!("wrote {path}");
+    }
     let digest = xark_ir::function_decode::stream_digest(xbc);
     // Faithfulness: the compact artifact must expand to exactly the flat lowering.
     match xark_ir::function_decode::verify_blob_matches(xbc, &out.r1cs, &out.primitive) {

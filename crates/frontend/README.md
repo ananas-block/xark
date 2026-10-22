@@ -171,21 +171,22 @@ and name the rewrite behind each difference from the models. Diagnostics: `XARK_
 
 ## Source locations (`xark profile`, `xark check`)
 
-`profile`/`check`/`test` build the module with DWARF line tables. While lowering, each
+Every build (`build`, `profile`, `check`, `test`) carries DWARF line tables. While lowering, each
 emitted constraint records the wasm call stack it came from (`(function, pc)` per frame,
 interned; only when profiling), and a lowering error records where execution stopped.
 `debuginfo.rs` maps those through `addr2line` — inlined frames included — to the line in
 the `#[circuit]` fn plus the chain of functions below it, down to the `xark` API call
 (arithmetic operator impls elided).
 `xark check` reports a rejection as a rustc-style diagnostic at the innermost user line
-(a cargo `compiler-message` with `--message-format=json`, for rust-analyzer). Without
-line tables (a plain `xark build`), errors name the wasm functions instead.
+(a cargo `compiler-message` with `--message-format=json`, for rust-analyzer). A module
+without line tables (`BuildOptions { line_tables: false, .. }`) gets errors naming the
+wasm functions instead.
 
 ## Dev tool
 
 ```bash
 cargo run -p xark-frontend --release --example stablec -- examples/ed25519 \
-    [--compare other/circuit.xbc]          # digest, sizes, timing; faithfulness check
+    [--compare other/circuit.xbc] [--out circuit.xbc]   # digest, sizes, timing; faithfulness check
 XARK_FRONTEND_TIME=1 …                     # phase timings
 cargo test --release --test snapshot                 # (in crates/lang) the snapshot suite
 cargo run -p xark-frontend --release --example xbcstat -- a.xbc b.xbc   # sizes
