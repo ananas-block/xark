@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ark_bn254::Fr;
 use clap::Args;
 
@@ -52,15 +52,21 @@ pub fn run(args: VerifyArgs) -> Result<()> {
         .unwrap_or_else(|| project.verifying_key());
     let proof_path = args.proof.clone().unwrap_or_else(|| project.proof());
 
-    let vk = Groth16Keys::read_verifying_key(&vk_path).with_context(|| {
-        format!(
-            "reading verifying key {} (run `xark setup` first?)",
-            vk_path.display()
-        )
-    })?;
+    let vk = super::read_artifact(
+        &vk_path,
+        "verifying key",
+        "xark setup",
+        "run `xark setup` first?",
+        || Groth16Keys::read_verifying_key(&vk_path),
+    )?;
     super::ensure_key_matches_circuit(&vk_path, &project.circuit_xbc())?;
-    let proof = ProofBundle::read_proof(&proof_path)
-        .with_context(|| format!("reading proof {}", proof_path.display()))?;
+    let proof = super::read_artifact(
+        &proof_path,
+        "proof",
+        "xark prove",
+        "run `xark prove` first?",
+        || ProofBundle::read_proof(&proof_path),
+    )?;
 
     // Public inputs: from `--inputs` values (recomputed) when given, else from
     // the `public_inputs.bin` the prover wrote.
@@ -70,14 +76,13 @@ pub fn run(args: VerifyArgs) -> Result<()> {
                 .public_inputs
                 .clone()
                 .unwrap_or_else(|| project.public_inputs());
-            // The hint only when the file is missing: a corrupt one isn't fixed by it.
-            let hint = if path.exists() {
-                ""
-            } else {
-                " (pass --inputs <JSON|FILE> or run `xark prove` first)"
-            };
-            read_public_inputs(&path)
-                .with_context(|| format!("reading {}{hint}", path.display()))?
+            super::read_artifact(
+                &path,
+                "public inputs file",
+                "xark prove",
+                "pass --inputs <JSON|FILE> or run `xark prove` first",
+                || read_public_inputs(&path),
+            )?
         }
         Some(arg) => super::read_public_inputs(&project.xark_dir, arg)?,
     };

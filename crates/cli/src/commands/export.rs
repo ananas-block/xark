@@ -95,18 +95,29 @@ pub fn run(args: ExportArgs) -> Result<()> {
     let out_dir = args.out.clone().unwrap_or_else(|| project.export_dir());
 
     // Load inputs.
-    let vk = Groth16Keys::read_verifying_key(&vk_path).with_context(|| {
-        format!(
-            "reading verifying key {} (run `xark setup` first?)",
-            vk_path.display()
-        )
-    })?;
+    let vk = super::read_artifact(
+        &vk_path,
+        "verifying key",
+        "xark setup",
+        "run `xark setup` first?",
+        || Groth16Keys::read_verifying_key(&vk_path),
+    )?;
     check_key_safe_for_export(&vk_path, args.allow_insecure)?;
     super::ensure_key_matches_circuit(&vk_path, &project.circuit_xbc())?;
-    let proof = ProofBundle::read_proof(&proof_path)
-        .with_context(|| format!("reading proof {}", proof_path.display()))?;
-    let public_inputs = read_public_inputs(&public_inputs_path)
-        .with_context(|| format!("reading public inputs {}", public_inputs_path.display()))?;
+    let proof = super::read_artifact(
+        &proof_path,
+        "proof",
+        "xark prove",
+        "run `xark prove` first?",
+        || ProofBundle::read_proof(&proof_path),
+    )?;
+    let public_inputs = super::read_artifact(
+        &public_inputs_path,
+        "public inputs file",
+        "xark prove",
+        "run `xark prove` first?",
+        || read_public_inputs(&public_inputs_path),
+    )?;
 
     let num_public_inputs = public_inputs.len();
     let ic_len = vk.gamma_abc_g1.len();

@@ -147,12 +147,13 @@ pub fn run(args: ProveArgs) -> Result<()> {
             let bytes = fs::read(&xbc)
                 .with_context(|| format!("reading {} (run `xark build` first?)", xbc.display()))?;
             let src = xark_groth16::BytecodeSource::new(&bytes).map_err(|e| anyhow::anyhow!(e))?;
-            let pk = xark_groth16::SerializedPk::open(&pk_path).with_context(|| {
-                format!(
-                    "reading proving key {} (run `xark setup` first?)",
-                    pk_path.display()
-                )
-            })?;
+            let pk = super::read_artifact(
+                &pk_path,
+                "proving key",
+                "xark setup",
+                "run `xark setup` first?",
+                || xark_groth16::SerializedPk::open(&pk_path),
+            )?;
             if pk.header().a_len == src.layout().num_vars() {
                 StreamKind::Bytecode
             } else {
@@ -312,12 +313,13 @@ fn prove_streaming(
     });
     drop(assign_fp);
     let public = z[1..src.layout().num_instance()].to_vec();
-    let mut pk = xark_groth16::SerializedPk::open(pk_path).with_context(|| {
-        format!(
-            "reading proving key {} (run `xark setup` first?)",
-            pk_path.display()
-        )
-    })?;
+    let mut pk = super::read_artifact(
+        pk_path,
+        "proving key",
+        "xark setup",
+        "run `xark setup` first?",
+        || xark_groth16::SerializedPk::open(pk_path),
+    )?;
     // A decoded (uncompressed) copy of a compressed key skips the per-point
     // decompression. Used only if its header — vk, β, δ, vector lengths — is
     // exactly this key's (a different setup has a different vk).

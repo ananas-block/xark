@@ -299,6 +299,28 @@ fn looks_like_path(s: &str) -> bool {
 
 // Shared helpers for the backend commands.
 
+/// Read the artifact at `path` with `read`, saying plainly what's wrong when it
+/// fails: missing (`missing` says what makes it), empty, or not a `what` at all
+/// (`by` wrote the real one; the decoder's error follows, as the detail).
+pub fn read_artifact<T, E: std::fmt::Display>(
+    path: &std::path::Path,
+    what: &str,
+    by: &str,
+    missing: &str,
+    read: impl FnOnce() -> std::result::Result<T, E>,
+) -> Result<T> {
+    read().map_err(|e| match std::fs::metadata(path) {
+        Err(_) => anyhow::anyhow!("no {what} at {} ({missing})", path.display()),
+        Ok(m) if m.len() == 0 => {
+            anyhow::anyhow!(
+                "{} is empty: it isn't a {what} written by `{by}`",
+                path.display()
+            )
+        }
+        Ok(_) => anyhow::anyhow!("{} isn't a {what} written by `{by}` ({e})", path.display()),
+    })
+}
+
 /// `--field`: `bn254` (or `bn128`), or a prime modulus in decimal; normalized.
 pub fn parse_field(s: &str) -> std::result::Result<String, String> {
     let f = xark_ir::FieldSpec::parse(s)?;

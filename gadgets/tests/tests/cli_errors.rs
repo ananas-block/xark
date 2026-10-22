@@ -95,10 +95,22 @@ fn corrupt_public_inputs_get_no_prove_hint() {
     std::fs::write(&pi, [1, 2, 3]).unwrap();
     let (ok, _, err) = run(&["verify", out_s]);
     assert!(!ok && !err.contains("run `xark prove` first"), "{err}");
+    assert!(
+        err.contains("isn't a public inputs file written by `xark prove`"),
+        "{err}"
+    );
 
     std::fs::remove_file(&pi).unwrap();
     let (ok, _, err) = run(&["verify", out_s]);
     assert!(!ok && err.contains("run `xark prove` first"), "{err}");
+
+    // An empty proof says so, not the decoder's "failed to fill whole buffer".
+    std::fs::write(out.join("proof.bin"), []).unwrap();
+    let (ok, _, err) = run(&["verify", out_s]);
+    assert!(
+        !ok && err.contains("is empty: it isn't a proof written by `xark prove`"),
+        "{err}"
+    );
 }
 
 /// `xark clean` removes build output under the current directory only: never
