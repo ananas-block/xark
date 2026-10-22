@@ -465,7 +465,7 @@ fn try_autobuild(dir: &std::path::Path) {
     // A CLI from another release would build a circuit this prover can't read (or
     // fail on the source outright): say so instead of running it.
     if let Some(found) = cli_version(&xark)
-        && major_minor(&found) != major_minor(env!("CARGO_PKG_VERSION"))
+        && !xark_ir::same_release(&found, env!("CARGO_PKG_VERSION"))
     {
         eprintln!(
             "warning: not rebuilding {}: `{xark}` is xark {found}, but this is xark-prover {}. \
@@ -491,15 +491,6 @@ fn cli_version(xark: &str) -> Option<String> {
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.split_whitespace().nth(1).map(str::to_string)
-}
-
-/// `0.3.0` → `(0, 3)`: releases before 1.0 are compatible within a minor version.
-fn major_minor(v: &str) -> (String, String) {
-    let mut it = v.split('.');
-    (
-        it.next().unwrap_or_default().to_string(),
-        it.next().unwrap_or_default().to_string(),
-    )
 }
 
 /// A source the circuit came from changed since `circuit.xbc` in

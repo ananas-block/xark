@@ -31,6 +31,36 @@ pub use profile::{ConstraintKind, ConstraintProfile, ProfileProgram};
 pub use r1cs::{DebugInfo, FieldSpec, R1csConstraint, R1csProgram, Variable, Visibility};
 pub use sources::{Site, SourceMap};
 
+/// Whether xark versions `a` and `b` are the same release, which build and read the
+/// same circuits: the same minor version before 1.0, the same major version after.
+/// A pre-release or build suffix (`0.3.0-rc.1`) doesn't count.
+pub fn same_release(a: &str, b: &str) -> bool {
+    let parts = |v: &str| {
+        let core = v.split(['-', '+']).next().unwrap_or_default();
+        let mut it = core.split('.').map(|n| n.parse::<u64>().ok());
+        (it.next().flatten(), it.next().flatten())
+    };
+    match (parts(a), parts(b)) {
+        ((Some(am), an), (Some(bm), bn)) => am == bm && (am > 0 || (an.is_some() && an == bn)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::same_release;
+
+    #[test]
+    fn releases() {
+        assert!(same_release("0.3.0", "0.3.4"));
+        assert!(same_release("0.3.0-rc.1", "0.3.0"));
+        assert!(!same_release("0.3.0", "0.4.0"));
+        assert!(same_release("1.2.0", "1.3.1"));
+        assert!(!same_release("1.2.0", "2.0.0"));
+        assert!(!same_release("0.3.0", "nonsense"));
+    }
+}
+
 /// Developer-diagnostics env-flag probe. Only reads the environment when the
 /// `debug` feature is enabled; a normal release build compiles this to `false`
 /// so the diagnostic branches (and their `XARK_*` knobs) vanish entirely.

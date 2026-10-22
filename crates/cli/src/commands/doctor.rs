@@ -69,23 +69,19 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
     let from_env = std::env::var("XARK").ok();
     let bin = from_env.clone().unwrap_or_else(|| "xark".to_string());
     let onpath = cmd_ok(&bin, &["--version"]);
-    let mine = major_minor(env!("CARGO_PKG_VERSION"));
-    let theirs = onpath
-        .as_deref()
-        .and_then(|v| v.split_whitespace().nth(1))
-        .map(major_minor);
+    let theirs = onpath.as_deref().and_then(|v| v.split_whitespace().nth(1));
     let label = match &from_env {
         Some(p) => format!("$XARK ({p})"),
         None => "xark on PATH".to_string(),
     };
     match theirs {
-        Some(v) if v != mine => {
+        Some(v) if !xark_ir::same_release(v, env!("CARGO_PKG_VERSION")) => {
             let found = onpath.unwrap_or_default();
             info(
                 false,
                 &label,
                 &format!(
-                    "is `{found}`, not {}: `cargo test` and rust-analyzer would run the old one",
+                    "is `{found}`, another release than {}: `cargo test` and rust-analyzer would build with it",
                     env!("CARGO_PKG_VERSION")
                 ),
                 "cargo install xark-cli --force",
@@ -126,11 +122,6 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
 
 /// Run `bin args…`; return trimmed stdout on success, `None` on any failure
 /// (including the binary not being found).
-/// `"0.3.1"` → `"0.3"`: versions that build the same circuits.
-fn major_minor(v: &str) -> &str {
-    v.rsplit_once('.').map_or(v, |(mm, _)| mm)
-}
-
 fn cmd_ok(bin: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(bin).args(args).output().ok()?;
     out.status
