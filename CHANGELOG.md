@@ -277,6 +277,9 @@ verification starter, and the `xark-client` npm package is removed.
 
 ### Fixed
 
+- `xark ceremony contribute`, `verify` and `finalize` on a directory that isn't a
+  ceremony (a typo) say so and how to start one, instead of "No such file or
+  directory (os error 2)"; a damaged ceremony key names the file.
 - Builds of one crate at once (an editor's `xark check` beside `xark build` in a
   terminal) no longer fail with "reading …/<crate>.wasm: No such file or
   directory": each holds the build directory until it has read its `.wasm`.

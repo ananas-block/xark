@@ -317,7 +317,20 @@ pub fn read_artifact<T, E: std::fmt::Display>(
                 path.display()
             )
         }
-        Ok(_) => anyhow::anyhow!("{} isn't a {what} written by `{by}` ({e})", path.display()),
+        Ok(_) => {
+            // A truncated file: the decoder reports the io error's debug form.
+            let e = e.to_string();
+            let detail = if e.contains("UnexpectedEof") || e.contains("failed to fill whole buffer")
+            {
+                "it's cut short".to_string()
+            } else {
+                e
+            };
+            anyhow::anyhow!(
+                "{} isn't a {what} written by `{by}` ({detail})",
+                path.display()
+            )
+        }
     })
 }
 

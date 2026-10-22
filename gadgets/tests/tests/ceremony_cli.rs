@@ -174,3 +174,49 @@ fn ceremony_keys_prove_and_verify() {
     let log = step(&["ceremony", "verify", "--ceremony-dir", cer_s]);
     assert!(log.contains("Verified 0 contribution"), "{log}");
 }
+
+/// A `--ceremony-dir` that isn't one (a typo) says so, with how to start one; a
+/// ceremony whose key is damaged names the file.
+#[test]
+fn a_wrong_or_damaged_ceremony_dir_says_so() {
+    let tmp = tempdir();
+    let (out, target) = (tmp.path().join("cube"), tmp.path().join("target"));
+    let (ok, log) = xark_build("cube", &out, &target);
+    assert!(ok, "xark build: {log}");
+    let missing = tmp.path().join("no-such-ceremony");
+    for cmd in ["contribute", "verify", "finalize"] {
+        let (ok, log) = xark(
+            &["ceremony", cmd, "--ceremony-dir", missing.to_str().unwrap()],
+            &out,
+        );
+        assert!(
+            !ok && log.contains("isn't a ceremony directory") && log.contains("ceremony init"),
+            "ceremony {cmd}: {log}"
+        );
+    }
+
+    let ptau = tmp.path().join("test.ptau");
+    std::fs::write(&ptau, build_valid_ptau(12)).unwrap();
+    let cer = tmp.path().join("ceremony");
+    let cer_s = cer.to_str().unwrap();
+    let (ok, log) = xark(
+        &[
+            "ceremony",
+            "init",
+            "--ptau-file",
+            ptau.to_str().unwrap(),
+            "--out",
+            cer_s,
+        ],
+        &out,
+    );
+    assert!(ok, "init: {log}");
+    let pk = cer.join("proving_key.bin");
+    let bytes = std::fs::read(&pk).unwrap();
+    std::fs::write(&pk, &bytes[..bytes.len() / 2]).unwrap();
+    let (ok, log) = xark(&["ceremony", "contribute", "--ceremony-dir", cer_s], &out);
+    assert!(
+        !ok && log.contains("proving_key.bin isn't a proving key written by `xark ceremony`"),
+        "{log}"
+    );
+}

@@ -197,6 +197,7 @@ fn run_init(args: InitArgs) -> Result<()> {
 
 fn run_contribute(args: ContributeArgs) -> Result<()> {
     let dir = &args.ceremony_dir;
+    require_ceremony(dir)?;
     if dir.join("metadata.json").exists() {
         bail!(
             "{} is finalized; a contribution now would change keys its metadata.json \
@@ -241,6 +242,7 @@ fn run_contribute(args: ContributeArgs) -> Result<()> {
 
 fn run_verify(args: VerifyArgs) -> Result<()> {
     let dir = &args.ceremony_dir;
+    require_ceremony(dir)?;
     let baseline = read_baseline_delta_g1(dir)?;
     let count = read_contribution_count(dir)?;
     // no with_capacity: count is attacker-supplied
@@ -332,10 +334,26 @@ fn write_contribution_count(dir: &std::path::Path, n: usize) -> Result<()> {
     Ok(())
 }
 
+/// Refuse a `--ceremony-dir` that isn't one (a typo, or the wrong directory): every
+/// ceremony has the `baseline_delta_g1.bin` `xark ceremony init` writes.
+fn require_ceremony(dir: &std::path::Path) -> Result<()> {
+    if !dir.join("baseline_delta_g1.bin").is_file() {
+        bail!(
+            "{} isn't a ceremony directory (it has no baseline_delta_g1.bin): start one \
+             with `xark ceremony init --ptau-file <final.ptau> --out {}`",
+            dir.display(),
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 fn read_contribution_count(dir: &std::path::Path) -> Result<usize> {
-    let raw =
-        fs::read_to_string(dir.join("contribution_count")).context("reading contribution_count")?;
-    Ok(raw.trim().parse()?)
+    let path = dir.join("contribution_count");
+    let raw = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    raw.trim()
+        .parse()
+        .map_err(|_| anyhow!("{} isn't a contribution count", path.display()))
 }
 
 fn read_baseline_delta_g1(dir: &std::path::Path) -> Result<G1Affine> {
@@ -347,8 +365,14 @@ fn read_baseline_delta_g1(dir: &std::path::Path) -> Result<G1Affine> {
 
 /// Load a `Groth16Keys` bundle from separate proving/verifying key files.
 fn load_keys(pk_path: &std::path::Path, vk_path: &std::path::Path) -> Result<Groth16Keys> {
-    let pk = Groth16Keys::read_proving_key(pk_path)?;
-    let vk = Groth16Keys::read_verifying_key(vk_path)?;
+    let missing = "the ceremony is incomplete: start it again with `xark ceremony init`";
+    let by = "xark ceremony";
+    let pk = super::read_artifact(pk_path, "proving key", by, missing, || {
+        Groth16Keys::read_proving_key(pk_path)
+    })?;
+    let vk = super::read_artifact(vk_path, "verifying key", by, missing, || {
+        Groth16Keys::read_verifying_key(vk_path)
+    })?;
     Ok(Groth16Keys {
         proving_key: pk,
         verifying_key: vk,
