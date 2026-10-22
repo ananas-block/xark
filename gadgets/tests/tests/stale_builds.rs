@@ -73,6 +73,20 @@ fn check_reuses_a_current_build() {
 }
 
 #[test]
+fn a_build_clears_the_last_ones_debug_output() {
+    let tmp = tempdir();
+    let dir = cube(tmp.path());
+    let out = dir.join("target/xark/cube");
+    let (ok, err) = xark(&dir, &["build", ".", "--emit-json"]);
+    assert!(ok && out.join("circuit.json").exists(), "{err}");
+    let (ok, err) = xark(&dir, &["build", "."]);
+    assert!(ok, "{err}");
+    for f in ["circuit.json", "r1cs.json", "graph.dot"] {
+        assert!(!out.join(f).exists(), "{f} is left from the last build");
+    }
+}
+
+#[test]
 fn client_builds_a_missing_or_stale_circuit() {
     let tmp = tempdir();
     let dir = cube(tmp.path());

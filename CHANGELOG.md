@@ -207,6 +207,8 @@ verification starter, and the `xark-client` npm package is removed.
   if the circuit changed), `xark client` and `xark inspect` build a circuit that's
   missing or stale, and `xark export` warns that its keys may be for an older
   circuit.
+- **A build clears the last one's debug output** (`circuit.json`, `r1cs.json`,
+  `graph.dot` from `--emit-json`), so none is left describing an older circuit.
 
 ### Added
 
