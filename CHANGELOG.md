@@ -177,6 +177,11 @@ verification starter, and the `xark-client` npm package is removed.
   `verifier(from, { keyHash })` refuses a `vk.bin` with another sha256, which
   `xark setup` and `xark ceremony finalize` print and record in `metadata.json`
   (`verifying_key_sha256`).
+- **Loading and proving faster:** a circuit fetches `client.wasm` once, however
+  many provers and verifiers are made from its URL, and `prover.preload()` keeps
+  the proving key decoded (about 2.2× `pk.bin` in memory), so each proof skips
+  decoding it: about half the proving time of a small circuit. xark-wasm's
+  `ProvingSession` is that decoded circuit and key, one per prover.
 - **Typed errors:** a refused input throws an `InputError` with its `path` in the
   caller's names (`id.netWorth`, or a Rust function's `allowed`), and inputs that
   fail a check a `CheckFailed` with the statement's `site` (file, line, column,

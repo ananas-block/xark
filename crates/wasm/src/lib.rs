@@ -231,6 +231,31 @@ pub fn prove_preloaded(inputs: JsValue) -> Result<ProofBundle, js_sys::Error> {
     })
 }
 
+/// A circuit's `circuit.xbc` and `pk.bin`, parsed and decoded once, for many proofs:
+/// what [`preload`] caches, as an object of its own, so each prover keeps its own.
+/// The key is decoded into wasm memory (about 2.2× `pk.bin`), so a proof skips the
+/// `.xbc` parse, row-source build and point decompression [`prove`] does each time.
+/// `sources`: as for [`prove`].
+#[wasm_bindgen]
+pub struct ProvingSession(streaming::Prepared);
+
+#[wasm_bindgen]
+impl ProvingSession {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        circuit_xbc: &Bytes,
+        pk_bytes: &Bytes,
+        sources: Option<String>,
+    ) -> Result<ProvingSession, js_sys::Error> {
+        streaming::prepare_auto(circuit_xbc, pk_bytes, true, sources).map(ProvingSession)
+    }
+
+    /// Prove: the same arguments (bar the artifacts) and result as [`prove`].
+    pub fn prove(&mut self, inputs: JsValue) -> Result<ProofBundle, js_sys::Error> {
+        streaming::prove_auto(&mut self.0, inputs)
+    }
+}
+
 /// Generate a Groth16 proof.
 ///
 /// See the crate docs for the shape of each argument and the return object.

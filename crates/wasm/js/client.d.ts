@@ -111,6 +111,10 @@ export class Proof<PublicValues> {
 /** The parts of `@blueshift-gg/xark-wasm` a client uses (any of its builds). */
 export interface Wasm {
   prove(circuit: Uint8Array, provingKey: Uint8Array, inputs: Record<string, string>, sources?: string): { proof: Uint8Array; publicInputs: Uint8Array };
+  /** A circuit and its proving key, decoded once, for many proofs (`Prover.preload`). */
+  ProvingSession: new (circuit: Uint8Array, provingKey: Uint8Array, sources?: string) => {
+    prove(inputs: Record<string, string>): { proof: Uint8Array; publicInputs: Uint8Array };
+  };
   /** A circuit's `schema.json`, parsed once. */
   Schema: new (schema: string) => {
     encodeInputs(inputs: string): Record<string, string>;
@@ -197,6 +201,12 @@ export class Session<PublicInputs, PublicValues, Structs> {
 /** Proves a circuit: from `circuit.prover(…)`. */
 export class Prover<Inputs, PublicInputs, PublicValues, Structs = {}> extends Session<PublicInputs, PublicValues, Structs> {
   private constructor();
+  /**
+   * Decode the proving key now and keep it, so each proof skips decoding it (about
+   * half a small circuit's proving time). It takes about 2.2× `pk.bin` in memory:
+   * without it, a proof streams the key and needs far less. Calling it again does nothing.
+   */
+  preload(): void;
   /**
    * Prove `inputs`. Throws an `InputError` if one is malformed (its `path` naming
    * it), or a `CheckFailed` if they fail a check (its `site` the statement, when

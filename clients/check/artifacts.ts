@@ -24,15 +24,17 @@ export function artifacts(example: string) {
 
 /**
  * Serve an example's build output over HTTP on a free local port, as an app would,
- * leaving out the files in `without`.
+ * leaving out the files in `without`. `requests`: the files asked for, in order.
  */
 export async function serve(
   example: string,
   without: string[] = [],
-): Promise<{ url: string; close: () => Promise<void> }> {
+): Promise<{ url: string; requests: string[]; close: () => Promise<void> }> {
   const dir = outDir(example);
+  const requests: string[] = [];
   const server = createServer(async (req, res) => {
     const name = (req.url ?? "/").slice(1);
+    requests.push(name);
     try {
       if (name.includes("/") || name.includes("..") || without.includes(name)) throw new Error("no");
       res.end(await readFile(join(dir, name)));
@@ -45,6 +47,7 @@ export async function serve(
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}/`,
+    requests,
     close: () => new Promise((ok) => server.close(() => ok())),
   };
 }

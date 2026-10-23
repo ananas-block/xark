@@ -290,9 +290,10 @@ export class Circuit {
 
   async prover(from, options) {
     const wasm = await xarkWasm(options);
-    const parts = isLocation(from)
-      ? await fetchParts(from, ["circuit", "provingKey", "sources", ...(this.hasClient ? ["client"] : [])], options)
-      : from;
+    const [parts] = await Promise.all([
+      isLocation(from) ? fetchParts(from, ["circuit", "provingKey", "sources"], options) : from,
+      isLocation(from) && clientFrom(this, from, options),
+    ]);
     if (!parts.circuit || !parts.provingKey) {
       throw new Error(`a ${this.name} prover needs \`circuit\` (circuit.xbc) and \`provingKey\` (pk.bin)`);
     }
@@ -312,11 +313,14 @@ export class Circuit {
 
   async verifier(from, options) {
     const wasm = await xarkWasm(options);
-    const parts = isLocation(from)
-      ? await fetchParts(from, ["verifyingKey", ...(this.hasClient ? ["client"] : [])], options)
-      : from instanceof Uint8Array
-        ? { verifyingKey: from }
-        : from;
+    const [parts] = await Promise.all([
+      isLocation(from)
+        ? fetchParts(from, ["verifyingKey"], options)
+        : from instanceof Uint8Array
+          ? { verifyingKey: from }
+          : from,
+      isLocation(from) && clientFrom(this, from, options),
+    ]);
     if (!parts.verifyingKey) throw new Error(`a ${this.name} verifier needs \`verifyingKey\` (vk.bin)`);
     // Pinned (`options.keyHash`): this exact verifying key, and no other.
     if (options?.keyHash !== undefined) {
@@ -384,7 +388,19 @@ export class Circuit {
 /** Load the `client.wasm` a prover or verifier was made with; remember a URL that had none. */
 async function loadClient(circuit, client, from) {
   if (client) return circuit.ready(client);
-  if (circuit.hasClient && isLocation(from)) circuit.missingAt = String(from);
+  if (circuit.hasClient && isLocation(from) && !circuit.rust) circuit.missingAt = String(from);
+}
+
+/**
+ * Fetch and load `client.wasm` from the build output at `from`, unless the circuit
+ * has it already or is fetching it (one download for all its provers and verifiers).
+ */
+function clientFrom(circuit, from, options) {
+  if (!circuit.hasClient || circuit.rust) return;
+  circuit.loading ??= fetchParts(from, ["client"], options)
+    .then(({ client }) => client && circuit.ready(client))
+    .finally(() => (circuit.loading = undefined));
+  return circuit.loading;
 }
 
 /** The string a Rust function handed over (`ptr << 32 | len`), freed. */
@@ -428,11 +444,22 @@ export class Prover extends Session {
     this.parts = parts;
   }
 
+  /**
+   * Decode the proving key now and keep it, so each proof skips decoding it (about
+   * half a small circuit's proving time). It takes about 2.2× `pk.bin` in memory:
+   * without it, a proof streams the key and needs far less.
+   */
+  preload() {
+    const { circuit, provingKey, sources } = this.parts;
+    this.session ??= typed(() => new this.wasm.ProvingSession(circuit, provingKey, sources));
+  }
+
   prove(inputs) {
     const { circuit, provingKey, sources } = this.parts;
-    const { proof, publicInputs } = typed(() =>
-      this.wasm.prove(circuit, provingKey, this.codec.encodeInputs(toJson(inputs)), sources),
-    );
+    const { proof, publicInputs } = typed(() => {
+      const encoded = this.codec.encodeInputs(toJson(inputs));
+      return this.session ? this.session.prove(encoded) : this.wasm.prove(circuit, provingKey, encoded, sources);
+    });
     return new Proof(proof.slice(), this.decodePublicInputs(publicInputs), publicInputs.slice(), this.wasm);
   }
 }

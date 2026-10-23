@@ -199,6 +199,33 @@ test("a URL without client.wasm says so when a Rust function is called", async (
   }
 });
 
+test("a circuit fetches client.wasm once, for all its provers and verifiers", async () => {
+  const circuit = new Circuit({ name: "zkyc", schema, decodePublic: (v) => v, client: true });
+  const server = await serve("zkyc");
+  try {
+    await Promise.all([circuit.prover(server.url), circuit.verifier(server.url)]);
+    await circuit.verifier(server.url);
+    expect(server.requests.filter((r) => r === "client.wasm")).toHaveLength(1);
+    expect(circuit.call("Policy.default", [])).toBeDefined();
+  } finally {
+    await server.close();
+  }
+});
+
+test("a preloaded prover keeps its key decoded, and proves as before", async () => {
+  const fast = await Zkyc.prover(artifacts("zkyc"));
+  fast.preload();
+  fast.preload(); // once is enough; again does nothing
+  const proof = fast.prove({ id, commitment, policy });
+  expect(verifier.verify(proof.toBytes(), { commitment, policy })).toBe(true);
+  expect(proof.publicInputs).toEqual(prover.prove({ id, commitment, policy }).publicInputs);
+  // A failed check still names its statement (the preloaded key keeps `sources.json`).
+  expect(() => fast.prove({ id, commitment, policy: { ...policy, allowed: ["GB", "FR"] } })).toThrow(CheckFailed);
+  expect(() => fast.prove({ id, commitment, policy: { ...policy, allowed: ["GB", "FR"] } })).toThrow(
+    /`id\.nationality\.require_in\(policy\.allowed\);`/,
+  );
+});
+
 test("a prover pinned to the client's circuit refuses another", async () => {
   // The digest of the circuit this client was generated from (`xark build` prints it).
   expect(Zkyc.digest).toMatch(/^[0-9a-f]{32}$/);

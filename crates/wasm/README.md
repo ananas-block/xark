@@ -255,6 +255,13 @@ point decompression; for the largest circuits use `preloadStreaming`.
 Like `prove` but reuses the artifacts cached by `preload`. Throws if `preload`
 hasn't been called.
 
+### `new ProvingSession(circuitXbc, pkBytes, sources?)`
+
+What `preload` caches, as an object of its own: `session.prove(inputs)` proves as
+`prove` does, without parsing the circuit or decoding the key again. Each holds its
+own circuit, so several can be loaded at once. A typed client's `prover.preload()`
+makes one.
+
 ### `verify(vkBytes, proofBytes, publicInputsBytes)`
 
 | argument            | type                          |
@@ -304,7 +311,10 @@ inputs; `toBytes()` is the proof as an exported Solana verifier reads it,
 instantiates with its circuit's schema to make a `Prover` or a `Verifier` from a
 URL serving the build output or from its bytes. It loads this package's main
 module for the platform itself (running `init()` for the web build) the first time
-one is made; `{ wasm }` in the options passes your own.
+one is made; `{ wasm }` in the options passes your own. A circuit fetches
+`client.wasm` once, however many provers and verifiers are made from its URL, and
+`prover.preload()` keeps the proving key decoded so each proof skips decoding it
+(faster repeat proofs, for about 2.2× `pk.bin` in memory).
 
 ```js
 import { Zkyc } from "./zkyc"; // generated; imports this module
