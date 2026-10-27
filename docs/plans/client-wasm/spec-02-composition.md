@@ -1,6 +1,6 @@
 # spec-02: Prove standard rlib composition
 
-Status: draft. Depends on spec-01 selecting a composition probe.
+Status: complete; standard re-export retains all bindings. Depends on spec-01.
 
 ## Goal
 

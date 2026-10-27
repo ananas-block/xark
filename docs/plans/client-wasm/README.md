@@ -1,6 +1,6 @@
 # Application WASM builds with minimal Xark changes
 
-Status: detailed implementation plan; no source implementation started.
+Status: implemented through standard SDK composition; no new Xark API required.
 Date: 2026-10-27.
 Branch: `feat/client-wasm`.
 Worktree: `/Users/jorrit/dev/experiments/xark-client-wasm`.
@@ -19,8 +19,10 @@ None of those features is required merely to link two Rust libraries into one
 application WASM module. Moving ArrayVec into Xark is also deferred: the existing
 Input implementation already works and moving it does not reduce compilation.
 
-This is a plan, including branch/worktree setup and planning documents only.
-Implementation should follow the gates below; source code has not been changed.
+The implementation followed the gates below. Measurements and validation are
+recorded in [build-results.md](build-results.md). Consumer changes are on the local
+`feat/xark-wasm-composition` branch; Xark changes beyond the inherited fixes are
+documentation only.
 
 ## What the current code actually does
 
@@ -88,20 +90,19 @@ final linking. spec-02 must build and load a real module before accepting this r
 ## Repository and branch ownership
 
 The original Xark checkout stays on `remove-nightly-compiler` with its uncommitted
-region-index and proof-randomness patches untouched. The feature worktree starts
-at the committed base and currently contains only these planning documents.
+region-index and proof-randomness patches untouched. The feature worktree started
+at the committed base. The inherited fixes are committed separately as `8af9f5a`.
 
-Before implementation needs the patched tool/runtime, import the two existing
-fixes into this worktree as a separate baseline commit and record their source.
+The two existing fixes were imported into this worktree as a separate baseline
+commit, with the source recorded in the measurements.
 Compare with Zolana's `tools/xark/{input-region-indices,proof-randomness}.patch`.
 Do not reset, stash, or commit changes in the original checkout. Baseline bug
 fixes are accounted separately from the feature's Xark diff.
 
 Composition, build orchestration, loading, and SDK tests belong in a separate local
-Zolana worktree/branch, proposed name `feat/xark-wasm-composition`. This plan does
-not create that branch or edit consumer code. This Xark branch will hold only a
-necessary general API change and its tests if spec-03 establishes one. A valid
-outcome is no feature implementation in Xark at all.
+Zolana worktree/branch, proposed name `feat/xark-wasm-composition`. That branch/worktree was created at
+`/Users/jorrit/orca/workspaces/zolana4/zolana-wasm-composition`. The probe retained
+every required binding, so spec-03 required no public API change in Xark.
 
 No pushing, publishing, release changes, new trusted setup, or key regeneration
 is needed. Preserve the existing production proof-randomness policy.

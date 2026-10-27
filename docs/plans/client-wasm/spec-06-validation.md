@@ -1,6 +1,6 @@
 # spec-06: Validate behavior and accept the final route
 
-Status: draft. Depends on the chosen route's integration.
+Status: complete; 14/14 browser tests and native/build checks pass. See build-results.md.
 
 ## Goal
 

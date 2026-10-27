@@ -1,6 +1,6 @@
 # spec-05: Integrate the selected route in the consumer build
 
-Status: draft. Depends on spec-01; the combined route also requires specs 02-04.
+Status: complete; public build API validated. Depends on specs 01, 02, and 04.
 
 ## Goal
 

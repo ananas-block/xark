@@ -1,6 +1,6 @@
 # spec-03: Add only a demonstrated public API gap
 
-Status: conditional draft. Depends on a specific public API gap from spec-02.
+Status: not needed; spec-02 found no missing API or binding.
 Skip the production change entirely if standard composition already works.
 
 ## Goal

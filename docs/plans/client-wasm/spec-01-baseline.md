@@ -1,6 +1,6 @@
 # spec-01: Establish the actual build baseline
 
-Status: draft. Dependencies: current working Zolana and patched Xark artifacts.
+Status: complete; see build-results.md. Dependencies: existing working artifacts.
 
 ## Goal
 

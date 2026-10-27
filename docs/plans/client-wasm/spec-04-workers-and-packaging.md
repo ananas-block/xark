@@ -1,6 +1,6 @@
 # spec-04: Connect the existing workers to the chosen module
 
-Status: draft for combined route. Depends on spec-02, plus spec-03 if needed.
+Status: complete for the combined route. Depends on spec-02.
 The stock-runtime route keeps the existing worker imports and packaging layout.
 
 ## Goal
