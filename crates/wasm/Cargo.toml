@@ -17,6 +17,9 @@ crate-type = ["cdylib", "rlib"]
 # `wasm32-unknown-unknown` without threads, and the arkworks `parallel` feature
 # stays off so MSM/FFT run single-threaded too.
 
+[features]
+test-randomness = []
+
 [dependencies]
 # All xark deps with `default-features = false` so the arkworks `parallel`
 # (rayon) feature stays OFF — rayon's thread pool (and `std::time`) are

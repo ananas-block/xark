@@ -17,6 +17,7 @@ use std::io::{Read, Seek, SeekFrom};
 use ark_bn254::Bn254;
 use ark_bn254::Fr;
 use ark_ff::{UniformRand, Zero};
+#[cfg(feature = "test-randomness")]
 use rand::SeedableRng;
 use wasm_bindgen::prelude::*;
 use xark_groth16::accel::{self, Accelerator};
@@ -319,7 +320,7 @@ fn witness(
 
 /// Prover settings + randomness from `options` (`msmChunk`, `tile`, `seed`,
 /// `domainSize`).
-fn config(options: &JsValue) -> (ProverConfig, Fr, Fr) {
+fn config(options: &JsValue) -> Result<(ProverConfig, Fr, Fr), js_sys::Error> {
     let mut cfg = ProverConfig {
         msm_chunk: 1 << 18,
         ..ProverConfig::default()
@@ -341,15 +342,32 @@ fn config(options: &JsValue) -> (ProverConfig, Fr, Fr) {
     }
     let (r, s) = match opt_get(options, "seed").and_then(|v| v.as_f64()) {
         Some(seed) => {
-            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed as u64);
-            (Fr::rand(&mut rng), Fr::rand(&mut rng))
+            #[cfg(feature = "test-randomness")]
+            {
+                let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed as u64);
+                (Fr::rand(&mut rng), Fr::rand(&mut rng))
+            }
+            #[cfg(not(feature = "test-randomness"))]
+            {
+                let _ = seed;
+                return Err(randomness_error("deterministic proof randomness is available only in test builds"));
+            }
         }
         None => {
             let mut rng = rand::rngs::OsRng;
             (Fr::rand(&mut rng), Fr::rand(&mut rng))
         }
     };
-    (cfg, r, s)
+    if r.is_zero() || s.is_zero() {
+        return Err(randomness_error("proof blinding randomness must be nonzero"));
+    }
+    Ok((cfg, r, s))
+}
+
+fn randomness_error(message: &str) -> js_sys::Error {
+    let error = js_error(message);
+    error.set_name("InvalidProofRandomness");
+    error
 }
 
 fn mismatch_error(e: xark_groth16::ProveError) -> js_sys::Error {
@@ -452,7 +470,7 @@ fn prove_prepared(
     let z = witness(&p.xbc, &ids, p.src.layout())?;
     let ninst = p.src.layout().num_instance();
 
-    let (cfg, r, s) = config(options);
+    let (cfg, r, s) = config(options)?;
     let accel = &mut Host::from_options(options);
     let res = match &mut p.key {
         Key::Streamed(pk) => {
@@ -649,7 +667,7 @@ pub fn begin_streaming_proof(
     drop(vars);
     let src = row_source(&xbc, &options)?;
     let z = witness(&xbc, &ids, src.layout())?;
-    let (cfg, r, s) = config(&options);
+    let (cfg, r, s) = config(&options)?;
     let mut host = Host::from_options(&options);
     let inner =
         xark_groth16::PushProver::new(src, z, r, s, cfg, &mut host).map_err(mismatch_error)?;
