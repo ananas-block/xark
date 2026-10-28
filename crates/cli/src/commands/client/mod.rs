@@ -210,7 +210,7 @@ pub fn run(args: ClientArgs) -> Result<()> {
     // What using it takes: the runtime it imports (this release's), unless the project
     // beside it already lists it, and where to start.
     let release = xark_ir::major_minor(env!("CARGO_PKG_VERSION"));
-    let name = ts::pascal(&model.circuit);
+    let name = ts::circuit_name(&model);
     let mut steps = Vec::new();
     if !lists_runtime(&out) {
         steps.push((

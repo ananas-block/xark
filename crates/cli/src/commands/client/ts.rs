@@ -28,7 +28,7 @@ use anyhow::Result;
 use xark_schema::camel;
 
 use super::MARKER;
-use super::model::{Model, Ty};
+use super::model::{Export, Model, Ty};
 
 /// `zkyc_circuit` → `ZkycCircuit`.
 pub fn pascal(s: &str) -> String {
@@ -71,8 +71,230 @@ fn prop(name: &str) -> String {
     }
 }
 
+/// One namespace for imports, generated circuit exports, schema types and decoders.
+/// Circuit exports keep their familiar names; colliding application types use a
+/// `Struct` suffix. Reserve every free application name before assigning suffixes,
+/// so a renamed type cannot take another application's existing name.
+struct Names {
+    circuit: String,
+    inputs: String,
+    public_inputs: String,
+    public_values: String,
+    structs: String,
+    proof: String,
+    prover: String,
+    verifier: String,
+    application: BTreeMap<String, String>,
+    values: BTreeMap<String, String>,
+    decoders: BTreeMap<String, String>,
+    used: BTreeSet<String>,
+}
+
+fn allocate(used: &mut BTreeSet<String>, preferred: &str, suffix: &str) -> String {
+    if used.insert(preferred.to_string()) {
+        return preferred.to_string();
+    }
+    let base = format!("{preferred}{suffix}");
+    if used.insert(base.clone()) {
+        return base;
+    }
+    for number in 2.. {
+        let name = format!("{base}{number}");
+        if used.insert(name.clone()) {
+            return name;
+        }
+    }
+    unreachable!("the identifier namespace is unbounded")
+}
+
+impl Names {
+    fn new(m: &Model) -> Self {
+        let mut used: BTreeSet<String> = [
+            "CheckFailed",
+            "Circuit",
+            "Field",
+            "InputError",
+            "fromHex",
+            "toHex",
+            "Day",
+            "FieldInput",
+            "Json",
+            "Proof",
+            "Prover",
+            "Text",
+            "U128",
+            "U16",
+            "U32",
+            "U64",
+            "U8",
+            "Verifier",
+            "schema",
+            "decodePublic",
+            "Date",
+            "BigInt",
+            "Uint8Array",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        let circuit = allocate(&mut used, &pascal(&m.circuit), "Circuit");
+        let inputs = allocate(&mut used, &format!("{circuit}Inputs"), "Circuit");
+        let public_inputs = allocate(&mut used, &format!("{circuit}PublicInputs"), "Circuit");
+        let public_values = allocate(&mut used, &format!("{circuit}PublicValues"), "Circuit");
+        let structs = allocate(&mut used, &format!("{circuit}Structs"), "Circuit");
+        let proof = allocate(&mut used, &format!("{circuit}Proof"), "Circuit");
+        let prover = allocate(&mut used, &format!("{circuit}Prover"), "Circuit");
+        let verifier = allocate(&mut used, &format!("{circuit}Verifier"), "Circuit");
+        let originals: BTreeSet<_> = m
+            .structs
+            .keys()
+            .chain(m.enums.keys())
+            .chain(m.exports.iter().map(|export| &export.ty))
+            .cloned()
+            .collect();
+        let mut application = BTreeMap::new();
+        for original in &originals {
+            if used.insert(original.clone()) {
+                application.insert(original.clone(), original.clone());
+            }
+        }
+        for original in originals {
+            application
+                .entry(original.clone())
+                .or_insert_with(|| allocate(&mut used, &original, "Struct"));
+        }
+        let mut values = BTreeMap::new();
+        let mut decoders = BTreeMap::new();
+        for original in m.structs.keys() {
+            let name = application.get(original).expect("allocated schema struct");
+            values.insert(
+                original.clone(),
+                allocate(&mut used, &format!("{name}Value"), "Decoded"),
+            );
+        }
+        for original in m.structs.keys() {
+            let name = application.get(original).expect("allocated schema struct");
+            decoders.insert(
+                original.clone(),
+                allocate(&mut used, &format!("decode{name}"), "Value"),
+            );
+        }
+        Self {
+            circuit,
+            inputs,
+            public_inputs,
+            public_values,
+            structs,
+            proof,
+            prover,
+            verifier,
+            application,
+            values,
+            decoders,
+            used,
+        }
+    }
+
+    fn application(&self, original: &str) -> &str {
+        self.application
+            .get(original)
+            .expect("allocated schema type")
+    }
+
+    fn value(&self, original: &str) -> &str {
+        self.values.get(original).expect("allocated decoded struct")
+    }
+
+    fn decoder(&self, original: &str) -> &str {
+        self.decoders
+            .get(original)
+            .expect("allocated struct decoder")
+    }
+
+    /// Preserve user parameter names where possible, then name the receiver in
+    /// the same scope. Neither may shadow a binding used by the generated body.
+    fn parameters(&self, export: &Export) -> (Vec<String>, Option<String>) {
+        let mut used = self.used.clone();
+        used.extend(
+            [
+                "arguments",
+                "await",
+                "break",
+                "case",
+                "catch",
+                "class",
+                "const",
+                "continue",
+                "debugger",
+                "default",
+                "delete",
+                "do",
+                "else",
+                "enum",
+                "eval",
+                "export",
+                "extends",
+                "false",
+                "finally",
+                "for",
+                "function",
+                "if",
+                "implements",
+                "import",
+                "in",
+                "instanceof",
+                "interface",
+                "let",
+                "new",
+                "null",
+                "package",
+                "private",
+                "protected",
+                "public",
+                "return",
+                "static",
+                "super",
+                "switch",
+                "this",
+                "throw",
+                "true",
+                "try",
+                "typeof",
+                "var",
+                "void",
+                "while",
+                "with",
+                "yield",
+            ]
+            .into_iter()
+            .map(str::to_string),
+        );
+        let mut claimed = used.clone();
+        let preferred: Vec<String> = export.params.iter().map(|p| camel(&p.name)).collect();
+        used.extend(preferred.iter().cloned());
+        let params = preferred
+            .into_iter()
+            .map(|name| {
+                if claimed.insert(name.clone()) {
+                    name
+                } else {
+                    allocate(&mut used, &name, "Param")
+                }
+            })
+            .collect();
+        let receiver = export.receiver.map(|_| {
+            allocate(
+                &mut used,
+                &camel(&self.application(&export.ty).to_lowercase()),
+                "Self",
+            )
+        });
+        (params, receiver)
+    }
+}
+
 /// The TS type a caller passes for `ty`.
-fn input(ty: &Ty) -> String {
+fn input(ty: &Ty, names: &Names) -> String {
     match ty {
         Ty::Field => "FieldInput".into(),
         Ty::Uint(w @ (8 | 16 | 32 | 64 | 128)) => format!("U{w}"),
@@ -84,22 +306,28 @@ fn input(ty: &Ty) -> String {
         Ty::Date => "Day".into(),
         Ty::Text { max: TEXT } => "Text".into(),
         Ty::Text { .. } => "string".into(),
-        Ty::Choice(e) => e.clone(),
-        Ty::Set(e) => format!("{e} | readonly {e}[]"),
-        Ty::Array(t, n) if *n as usize <= TUPLE => {
-            format!("readonly [{}]", vec![input(t); *n as usize].join(", "))
+        Ty::Choice(e) => names.application(e).to_string(),
+        Ty::Set(e) => {
+            let e = names.application(e);
+            format!("{e} | readonly {e}[]")
         }
-        Ty::Array(t, _) => format!("readonly {}[]", paren(&input(t))),
+        Ty::Array(t, n) if *n as usize <= TUPLE => {
+            format!(
+                "readonly [{}]",
+                vec![input(t, names); *n as usize].join(", ")
+            )
+        }
+        Ty::Array(t, _) => format!("readonly {}[]", paren(&input(t, names))),
         Ty::Tuple(ts) => {
-            let parts: Vec<String> = ts.iter().map(input).collect();
+            let parts: Vec<String> = ts.iter().map(|t| input(t, names)).collect();
             format!("readonly [{}]", parts.join(", "))
         }
-        Ty::Struct(r) => r.clone(),
+        Ty::Struct(r) => names.application(r).to_string(),
     }
 }
 
 /// The TS type of `ty` decoded from a proof; notes the structs it needs decoders for.
-fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
+fn value(ty: &Ty, structs: &mut BTreeSet<String>, names: &Names) -> String {
     match ty {
         Ty::Field => "Field".into(),
         Ty::Number { .. } => "bigint".into(),
@@ -110,25 +338,28 @@ fn value(ty: &Ty, structs: &mut BTreeSet<String>) -> String {
         Ty::Date => "Day".into(),
         Ty::Text { max: TEXT } => "Text".into(),
         Ty::Text { .. } => "string".into(),
-        Ty::Choice(e) => e.clone(),
-        Ty::Set(e) => format!("{e}[]"),
+        Ty::Choice(e) => names.application(e).to_string(),
+        Ty::Set(e) => format!("{}[]", names.application(e)),
         Ty::Array(t, n) if *n as usize <= TUPLE => {
-            format!("[{}]", vec![value(t, structs); *n as usize].join(", "))
+            format!(
+                "[{}]",
+                vec![value(t, structs, names); *n as usize].join(", ")
+            )
         }
-        Ty::Array(t, _) => format!("{}[]", paren(&value(t, structs))),
+        Ty::Array(t, _) => format!("{}[]", paren(&value(t, structs, names))),
         Ty::Tuple(ts) => {
-            let parts: Vec<String> = ts.iter().map(|t| value(t, structs)).collect();
+            let parts: Vec<String> = ts.iter().map(|t| value(t, structs, names)).collect();
             format!("[{}]", parts.join(", "))
         }
         Ty::Struct(r) => {
             structs.insert(r.clone());
-            format!("{r}Value")
+            names.value(r).to_string()
         }
     }
 }
 
 /// An expression converting `e` (the decoded JSON for `ty`) to its TS value.
-fn revive(ty: &Ty, e: &str) -> String {
+fn revive(ty: &Ty, e: &str, names: &Names) -> String {
     match ty {
         Ty::Field => format!("new Field({e})"),
         Ty::Number { .. } => format!("BigInt({e})"),
@@ -138,19 +369,21 @@ fn revive(ty: &Ty, e: &str) -> String {
         Ty::Date => format!("new Date({e})"),
         // Element by element, so a fixed length stays a tuple.
         Ty::Array(t, n) if *n as usize <= TUPLE => {
-            let parts: Vec<String> = (0..*n).map(|i| revive(t, &format!("{e}[{i}]"))).collect();
+            let parts: Vec<String> = (0..*n)
+                .map(|i| revive(t, &format!("{e}[{i}]"), names))
+                .collect();
             format!("[{}]", parts.join(", "))
         }
-        Ty::Array(t, _) => format!("{e}.map((x) => {})", revive(t, "x")),
+        Ty::Array(t, _) => format!("{e}.map((x) => {})", revive(t, "x", names)),
         Ty::Tuple(ts) => {
             let parts: Vec<String> = ts
                 .iter()
                 .enumerate()
-                .map(|(i, t)| revive(t, &format!("{e}[{i}]")))
+                .map(|(i, t)| revive(t, &format!("{e}[{i}]"), names))
                 .collect();
             format!("[{}]", parts.join(", "))
         }
-        Ty::Struct(r) => format!("decode{r}({e})"),
+        Ty::Struct(r) => format!("{}({e})", names.decoder(r)),
     }
 }
 
@@ -190,10 +423,11 @@ fn note(ty: &Ty) -> Option<String> {
 fn exports_ts(
     m: &Model,
     value_structs: &mut BTreeSet<String>,
+    allocated: &Names,
 ) -> (String, BTreeMap<String, String>) {
     let mut out = String::new();
     let mut methods: BTreeMap<String, String> = BTreeMap::new();
-    let circuit = pascal(&m.circuit);
+    let circuit = &allocated.circuit;
     let mut types: Vec<&str> = Vec::new();
     for e in &m.exports {
         if !types.contains(&e.ty.as_str()) {
@@ -211,26 +445,27 @@ fn exports_ts(
         let _ = writeln!(d, "{indent} */");
         d
     };
-    for t in types {
-        let this = camel(&t.to_lowercase());
+    for original in types {
+        let t = allocated.application(original);
         let _ = writeln!(
             out,
-            "/** `{t}`'s Rust functions (`#[input] impl {t}`), run from `client.wasm`. */\nexport const {t} = {{"
+            "/** `{original}`'s Rust functions (`#[input] impl {original}`), run from `client.wasm`. */\nexport const {t} = {{"
         );
-        for e in m.exports.iter().filter(|e| e.ty == t) {
+        for e in m.exports.iter().filter(|e| e.ty == original) {
+            let (names, receiver) = allocated.parameters(e);
             let params: Vec<String> = e
                 .params
                 .iter()
-                .map(|p| format!("{}: {}", ts_key(&p.name), input(&p.ty)))
+                .zip(&names)
+                .map(|(p, name)| format!("{name}: {}", input(&p.ty, allocated)))
                 .collect();
-            let names: Vec<String> = e.params.iter().map(|p| ts_key(&p.name)).collect();
             let mut all_params = params.clone();
             let mut all_names = names.clone();
-            if e.receiver.is_some() {
+            if let Some(this) = receiver {
                 all_params.insert(0, format!("{this}: {t}"));
-                all_names.insert(0, this.clone());
+                all_names.insert(0, this);
             }
-            let ret = value(&e.returns, value_structs);
+            let ret = value(&e.returns, value_structs, allocated);
             let call = format!(
                 "{circuit}.call<Json<{ret}>>({:?}, [{}])",
                 e.export,
@@ -242,13 +477,20 @@ fn exports_ts(
                 "  {}({}): {ret} {{\n    return {};\n  }},",
                 camel(&e.name),
                 all_params.join(", "),
-                revive(&e.returns, &call)
+                revive(&e.returns, &call, allocated)
             );
-            // A method named like one of the type's fields can't sit on a value beside
-            // it (in Rust they don't clash): it stays `Type.method(value, …)` only,
-            // and `xark client` says so.
-            if e.receiver.is_some() && !m.shares_field_name(e) {
-                let body = methods.entry(t.to_string()).or_default();
+            // Field names and class/JSON hooks keep their value semantics. A
+            // conflicting Rust method stays available as `Type.method(value, …)`.
+            let method_name = camel(&e.name);
+            let shares_field = m
+                .structs
+                .get(original)
+                .is_some_and(|fields| fields.iter().any(|field| camel(&field.name) == method_name));
+            if e.receiver.is_some()
+                && !shares_field
+                && !matches!(method_name.as_str(), "constructor" | "toJSON")
+            {
+                let body = methods.entry(original.to_string()).or_default();
                 body.push_str(&jsdoc(&e.doc, "  "));
                 let _ = writeln!(
                     body,
@@ -285,10 +527,22 @@ pub fn schema_module(circuit: &str, schema: &serde_json::Value) -> Result<String
     ))
 }
 
+/// The allocated circuit export, for the CLI's generated usage instructions.
+pub(super) fn circuit_name(m: &Model) -> String {
+    Names::new(m).circuit
+}
+
 /// The client, importing its schema from `schema_import` (`./zkyc.schema`, the `.ts`).
 pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let circuit = m.circuit.as_str();
-    let name = pascal(circuit);
+    let names = Names::new(m);
+    let name = &names.circuit;
+    let inputs = &names.inputs;
+    let public_inputs = &names.public_inputs;
+    let public_values = &names.public_values;
+    let proof = &names.proof;
+    let prover = &names.prover;
+    let verifier = &names.verifier;
     let mut out = String::new();
 
     // Where this came from.
@@ -321,10 +575,11 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
 
     // Enums: the variants as constants (`Country.US`) and their type (`"AD" | …`), so
     // a value is checked, and either form passes.
-    for (e, variants) in &m.enums {
+    for (original, variants) in &m.enums {
+        let e = names.application(original);
         let _ = writeln!(
             out,
-            "/** A `{e}` (an enum in the circuit): `{e}.{v}`, or its name, `{v:?}`. */\n\
+            "/** A `{original}` (an enum in the circuit): `{e}.{v}`, or its name, `{v:?}`. */\n\
              export const {e} = {{",
             v = variants.first().map_or("", String::as_str),
         );
@@ -343,16 +598,17 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
 
     // Input structs.
     for (r, fields) in &m.structs {
+        let emitted = names.application(r);
         let _ = writeln!(
             out,
-            "/** {} `{r}` (an input struct). */\nexport interface {r} {{",
+            "/** {} `{r}` (an input struct). */\nexport interface {emitted} {{",
             article(r)
         );
         for f in fields {
             if let Some(n) = note(&f.ty) {
                 let _ = writeln!(out, "  /** {n} */");
             }
-            let _ = writeln!(out, "  {}: {};", ts_key(&f.name), input(&f.ty));
+            let _ = writeln!(out, "  {}: {};", ts_key(&f.name), input(&f.ty, &names));
         }
         out.push_str("}\n\n");
     }
@@ -366,19 +622,19 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
             if let Some(n) = note(&f.ty) {
                 let _ = writeln!(out, "  /** {n} */");
             }
-            let _ = writeln!(out, "  {}: {};", ts_key(&f.name), input(&f.ty));
+            let _ = writeln!(out, "  {}: {};", ts_key(&f.name), input(&f.ty, &names));
         }
     };
     let _ = writeln!(
         out,
-        "/** Every input of `{circuit}`. */\nexport interface {name}Inputs {{"
+        "/** Every input of `{circuit}`. */\nexport interface {inputs} {{"
     );
     fields(&mut out, false);
     out.push_str("}\n\n");
     let _ = writeln!(
         out,
         "/** The public inputs: what a verifier supplies, and what a proof reveals. */\n\
-         export interface {name}PublicInputs {{"
+         export interface {public_inputs} {{"
     );
     fields(&mut out, true);
     out.push_str("}\n\n");
@@ -388,22 +644,26 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let mut body = String::new();
     let _ = writeln!(
         body,
-        "/** The public inputs, decoded from a proof. */\nexport interface {name}PublicValues {{"
+        "/** The public inputs, decoded from a proof. */\nexport interface {public_values} {{"
     );
     let mut decode = String::new();
     let _ = writeln!(
         decode,
-        "function decodePublic(v: Json<{name}PublicValues>): {name}PublicValues {{\n  return {{"
+        "function decodePublic(v: Json<{public_values}>): {public_values} {{\n  return {{"
     );
     for f in m.public() {
         let k = ts_key(&f.name);
-        let _ = writeln!(body, "  {k}: {};", value(&f.ty, &mut value_structs));
-        let _ = writeln!(decode, "    {k}: {},", revive(&f.ty, &member("v", &k)));
+        let _ = writeln!(body, "  {k}: {};", value(&f.ty, &mut value_structs, &names));
+        let _ = writeln!(
+            decode,
+            "    {k}: {},",
+            revive(&f.ty, &member("v", &k), &names)
+        );
     }
     body.push_str("}\n\n");
     decode.push_str("  };\n}\n\n");
     // The client functions (their decoders join the ones below).
-    let (exports, methods) = exports_ts(m, &mut value_structs);
+    let (exports, methods) = exports_ts(m, &mut value_structs, &names);
 
     // Decoded structs (closed over what the public inputs and exports reach): a
     // class when the type has Rust methods, so they chain on its values.
@@ -411,24 +671,34 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let mut structs = String::new();
     while let Some(r) = value_structs.iter().find(|r| !done.contains(*r)).cloned() {
         done.insert(r.clone());
+        let decoded = names.value(&r);
+        let decoder = names.decoder(&r);
         let mut fields = String::new();
         let mut revived = String::new();
         for f in &m.structs[&r] {
             let k = ts_key(&f.name);
-            let _ = writeln!(fields, "  {k}: {};", value(&f.ty, &mut value_structs));
-            let _ = writeln!(revived, "    {k}: {},", revive(&f.ty, &member("v", &k)));
+            let _ = writeln!(
+                fields,
+                "  {k}: {};",
+                value(&f.ty, &mut value_structs, &names)
+            );
+            let _ = writeln!(
+                revived,
+                "    {k}: {},",
+                revive(&f.ty, &member("v", &k), &names)
+            );
         }
         let (doc, open, close) = match methods.get(&r) {
             Some(_) => (
                 format!("A `{r}`, decoded, with its Rust methods"),
-                format!("new {r}Value({{"),
+                format!("new {decoded}({{"),
                 "})",
             ),
             None => (format!("A `{r}`, decoded"), "{".to_string(), "}"),
         };
         let _ = writeln!(
             decode,
-            "function decode{r}(v: Json<{r}Value>): {r}Value {{\n  return {open}\n{revived}  }}{};\n}}\n",
+            "function {decoder}(v: Json<{decoded}>): {decoded} {{\n  return {open}\n{revived}  }}{};\n}}\n",
             &close[1..],
         );
         match methods.get(&r) {
@@ -452,7 +722,7 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
                     .collect();
                 let _ = writeln!(
                     structs,
-                    "/** {doc}. */\nexport class {r}Value {{\n{fields}\n  \
+                    "/** {doc}. */\nexport class {decoded} {{\n{fields}\n  \
                      constructor(v: {{\n{inner}  }}) {{\n{assign}  }}\n\n{body}}}\n",
                     inner = fields
                         .lines()
@@ -464,7 +734,7 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
             None => {
                 let _ = writeln!(
                     structs,
-                    "/** {doc}. */\nexport interface {r}Value {{\n{fields}}}\n"
+                    "/** {doc}. */\nexport interface {decoded} {{\n{fields}}}\n"
                 );
             }
         }
@@ -478,13 +748,14 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     } else {
         let _ = writeln!(
             out,
-            "/** The input structs, by name: what `fields` takes. */\nexport interface {name}Structs {{"
+            "/** The input structs, by name: what `fields` takes. */\nexport interface {} {{",
+            names.structs
         );
         for r in m.structs.keys() {
-            let _ = writeln!(out, "  {}: {r};", prop(r));
+            let _ = writeln!(out, "  {}: {};", prop(r), names.application(r));
         }
         out.push_str("}\n\n");
-        format!("{name}Structs")
+        names.structs.clone()
     };
 
     // The circuit.
@@ -502,15 +773,15 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
          * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require\n \
          * ```\n \
          */\n\
-         export const {name} = new Circuit<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>({{\n  \
+         export const {name} = new Circuit<{inputs}, {public_inputs}, {public_values}, {structs}>({{\n  \
          name: {circuit:?},\n  \
          schema,\n  \
          decodePublic,\n  \
          client: {},\n{}\
          }});\n\n\
-         export type {name}Prover = Prover<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>;\n\
-         export type {name}Verifier = Verifier<{name}PublicInputs, {name}PublicValues, {structs}>;\n\
-         export type {name}Proof = Proof<{name}PublicValues>;\n",
+         export type {prover} = Prover<{inputs}, {public_inputs}, {public_values}, {structs}>;\n\
+         export type {verifier} = Verifier<{public_inputs}, {public_values}, {structs}>;\n\
+         export type {proof} = Proof<{public_values}>;\n",
         !m.exports.is_empty(),
         m.digest
             .as_ref()
@@ -592,76 +863,5 @@ const TUPLE: usize = 16;
 const RUNTIME: &str = "@blueshift-gg/xark-wasm/client";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SCHEMA: &str = r#"{
-      "version": 2,
-      "circuit": "kyc_check",
-      "inputs": [
-        {"name": "id", "visibility": "private", "type": {"ref": "Identity"}},
-        {"name": "born_before", "visibility": "public", "type": {"ref": "Date"}},
-        {"name": "allowed", "visibility": "public", "type": {"ref": "Bitfield<Country>"}},
-        {"name": "doc", "visibility": "private", "type": {"array": {"of": {"uint": 8}, "len": 4}}},
-        {"name": "commitment", "visibility": "public", "type": "field"}
-      ],
-      "types": {
-        "Identity": {"struct": [
-          {"name": "net_worth", "type": {"uint": 64}},
-          {"name": "salt", "type": "field"},
-          {"name": "active", "type": "bool"},
-          {"name": "home", "type": {"ref": "Choice<Country>"}},
-          {"name": "tier", "type": {"ref": "Choice<Tier>"}},
-          {"name": "pair", "type": {"tuple": ["field", {"uint": 16}]}}]},
-        "Date": {"newtype": "field", "encoding": {"date": "yyyymmdd"}},
-        "Bitfield<Country>": {"newtype": "field", "encoding": {"set": "Country"}},
-        "Choice<Country>": {"newtype": "field", "encoding": {"choice": "Country"}},
-        "Choice<Tier>": {"newtype": "field", "encoding": {"choice": "Tier"}},
-        "Country": {"enum": ["AD", "US"]},
-        "Tier": {"enum": ["Retail", "Not_Set"]}
-      },
-      "public_inputs": ["born_before", "allowed", "commitment"]
-    }"#;
-
-    #[test]
-    fn names() {
-        assert_eq!(pascal("zkyc_circuit"), "ZkycCircuit");
-        assert_eq!(ts_key("net_worth"), "netWorth");
-        assert_eq!(ts_key("0"), "\"0\"");
-    }
-
-    #[test]
-    fn generates_natural_types() {
-        let m = Model::new(&serde_json::from_str(SCHEMA).unwrap()).unwrap();
-        let ts = generate(&m, "kyc_check.schema").unwrap();
-        for want in [
-            "fn kyc_check(id: Private<Identity>, born_before: Public<Date>, allowed: Public<Bitfield<Country>>, doc: Private<[u8; 4]>, commitment: Public<Field>)",
-            "export const Country = {\n  AD: \"AD\", US: \"US\",\n} as const;\nexport type Country = (typeof Country)[keyof typeof Country];",
-            "/** An `Identity` (an input struct). */\nexport interface Identity {\n  netWorth: U64;",
-            "  home: Country;",
-            "  Retail: \"Retail\", Not_Set: \"Not_Set\",",
-            "  pair: readonly [FieldInput, U16];",
-            "  active: boolean;",
-            "  bornBefore: Day;",
-            "  allowed: Country | readonly Country[];",
-            "  doc: Uint8Array;",
-            "export interface KycCheckPublicValues {\n  bornBefore: Day;\n  allowed: Country[];\n  commitment: Field;\n}",
-            "    bornBefore: new Date(v.bornBefore),",
-            "    commitment: new Field(v.commitment),",
-            "import { CheckFailed, Circuit, Field, InputError, fromHex, toHex, type Day, type FieldInput, type Json, type Proof, type Prover, type U16, type U64, type Verifier } from \"@blueshift-gg/xark-wasm/client\";\nimport schema from \"./kyc_check.schema\";\nexport { CheckFailed, Field, InputError, fromHex, toHex };",
-            "  name: \"kyc_check\",\n  schema,\n",
-            "export interface KycCheckStructs {\n  Identity: Identity;\n}",
-            "export const KycCheck = new Circuit<KycCheckInputs, KycCheckPublicInputs, KycCheckPublicValues, KycCheckStructs>({\n  name: \"kyc_check\",",
-            "  client: false,\n});",
-            "export type KycCheckProof = Proof<KycCheckPublicValues>;",
-        ] {
-            assert!(ts.contains(want), "missing {want:?} in:\n{ts}");
-        }
-        assert!(ts.starts_with("// Generated by `xark client`"));
-        assert!(!ts.contains("__NAME__") && !ts.contains("__SCHEMA__"));
-        // No `any`: every value the runtime hands back is typed as `Json<…>`.
-        for any in [": any", "<any>", "as any"] {
-            assert!(!ts.contains(any), "{any:?} in:\n{ts}");
-        }
-    }
-}
+#[path = "../../../tests/unit/client_names.rs"]
+mod tests;

@@ -3,7 +3,8 @@
   "private": true,
   "description": "The generated TypeScript clients of the representative examples: checked current, typechecked, and run (npm test).",
   "scripts": {
-    "test": "tsc --noEmit && vitest run",
+    "test": "tsc --noEmit && npm run test:names && vitest run",
+    "test:names": "node names.mjs",
     "update": "vitest run -u"
   },
   "devDependencies": {
