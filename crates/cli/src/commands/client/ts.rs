@@ -77,13 +77,6 @@ fn prop(name: &str) -> String {
 /// so a renamed type cannot take another application's existing name.
 struct Names {
     circuit: String,
-    inputs: String,
-    public_inputs: String,
-    public_values: String,
-    structs: String,
-    proof: String,
-    prover: String,
-    verifier: String,
     application: BTreeMap<String, String>,
     values: BTreeMap<String, String>,
     decoders: BTreeMap<String, String>,
@@ -138,13 +131,19 @@ impl Names {
         .map(str::to_string)
         .collect();
         let circuit = allocate(&mut used, &pascal(&m.circuit), "Circuit");
-        let inputs = allocate(&mut used, &format!("{circuit}Inputs"), "Circuit");
-        let public_inputs = allocate(&mut used, &format!("{circuit}PublicInputs"), "Circuit");
-        let public_values = allocate(&mut used, &format!("{circuit}PublicValues"), "Circuit");
-        let structs = allocate(&mut used, &format!("{circuit}Structs"), "Circuit");
-        let proof = allocate(&mut used, &format!("{circuit}Proof"), "Circuit");
-        let prover = allocate(&mut used, &format!("{circuit}Prover"), "Circuit");
-        let verifier = allocate(&mut used, &format!("{circuit}Verifier"), "Circuit");
+        // These prefixed names are distinct and cannot match the runtime imports.
+        used.extend(
+            [
+                "Inputs",
+                "PublicInputs",
+                "PublicValues",
+                "Structs",
+                "Proof",
+                "Prover",
+                "Verifier",
+            ]
+            .map(|suffix| format!("{circuit}{suffix}")),
+        );
         let originals: BTreeSet<_> = m
             .structs
             .keys()
@@ -181,13 +180,6 @@ impl Names {
         }
         Self {
             circuit,
-            inputs,
-            public_inputs,
-            public_values,
-            structs,
-            proof,
-            prover,
-            verifier,
             application,
             values,
             decoders,
@@ -537,12 +529,6 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let circuit = m.circuit.as_str();
     let names = Names::new(m);
     let name = &names.circuit;
-    let inputs = &names.inputs;
-    let public_inputs = &names.public_inputs;
-    let public_values = &names.public_values;
-    let proof = &names.proof;
-    let prover = &names.prover;
-    let verifier = &names.verifier;
     let mut out = String::new();
 
     // Where this came from.
@@ -627,14 +613,14 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     };
     let _ = writeln!(
         out,
-        "/** Every input of `{circuit}`. */\nexport interface {inputs} {{"
+        "/** Every input of `{circuit}`. */\nexport interface {name}Inputs {{"
     );
     fields(&mut out, false);
     out.push_str("}\n\n");
     let _ = writeln!(
         out,
         "/** The public inputs: what a verifier supplies, and what a proof reveals. */\n\
-         export interface {public_inputs} {{"
+         export interface {name}PublicInputs {{"
     );
     fields(&mut out, true);
     out.push_str("}\n\n");
@@ -644,12 +630,12 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     let mut body = String::new();
     let _ = writeln!(
         body,
-        "/** The public inputs, decoded from a proof. */\nexport interface {public_values} {{"
+        "/** The public inputs, decoded from a proof. */\nexport interface {name}PublicValues {{"
     );
     let mut decode = String::new();
     let _ = writeln!(
         decode,
-        "function decodePublic(v: Json<{public_values}>): {public_values} {{\n  return {{"
+        "function decodePublic(v: Json<{name}PublicValues>): {name}PublicValues {{\n  return {{"
     );
     for f in m.public() {
         let k = ts_key(&f.name);
@@ -748,14 +734,13 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
     } else {
         let _ = writeln!(
             out,
-            "/** The input structs, by name: what `fields` takes. */\nexport interface {} {{",
-            names.structs
+            "/** The input structs, by name: what `fields` takes. */\nexport interface {name}Structs {{"
         );
         for r in m.structs.keys() {
             let _ = writeln!(out, "  {}: {};", prop(r), names.application(r));
         }
         out.push_str("}\n\n");
-        names.structs.clone()
+        format!("{name}Structs")
     };
 
     // The circuit.
@@ -773,15 +758,15 @@ pub fn generate(m: &Model, schema_import: &str) -> Result<String> {
          * verifier.verify(bytes, publicInputs); // true: it proves the public inputs you require\n \
          * ```\n \
          */\n\
-         export const {name} = new Circuit<{inputs}, {public_inputs}, {public_values}, {structs}>({{\n  \
+         export const {name} = new Circuit<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>({{\n  \
          name: {circuit:?},\n  \
          schema,\n  \
          decodePublic,\n  \
          client: {},\n{}\
          }});\n\n\
-         export type {prover} = Prover<{inputs}, {public_inputs}, {public_values}, {structs}>;\n\
-         export type {verifier} = Verifier<{public_inputs}, {public_values}, {structs}>;\n\
-         export type {proof} = Proof<{public_values}>;\n",
+         export type {name}Prover = Prover<{name}Inputs, {name}PublicInputs, {name}PublicValues, {structs}>;\n\
+         export type {name}Verifier = Verifier<{name}PublicInputs, {name}PublicValues, {structs}>;\n\
+         export type {name}Proof = Proof<{name}PublicValues>;\n",
         !m.exports.is_empty(),
         m.digest
             .as_ref()

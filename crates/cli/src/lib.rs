@@ -51,10 +51,7 @@ pub fn keys_match(pk: &Path, vk: &Path) -> anyhow::Result<bool> {
         return Ok(false);
     }
     let mut file = std::fs::File::open(pk)?;
-    let matches = {
-        let proving_key = xark_groth16::SerializedPk::new(&mut file)?;
-        proving_key.header().vk == verifying_key
-    };
+    let matches = xark_groth16::SerializedPk::new(&mut file)?.header().vk == verifying_key;
     Ok(matches && file.stream_position()? == file.metadata()?.len())
 }
 

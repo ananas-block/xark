@@ -5,9 +5,9 @@
 //! (driven from the clap layer in `commands`).
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
-use std::process::Command;
 
 /// `xark build <crate-dir> [--out DIR] [--field F]`
 ///
@@ -114,6 +114,7 @@ pub(crate) fn build(
         crate_dir.to_path_buf()
     };
     let cwd = std::env::current_dir().context("resolving current directory")?;
+    // Normalized: `.` leaves no `/./` in the paths printed below.
     let crate_abs: PathBuf = cwd.join(&crate_dir).components().collect();
     if !crate_abs.join("Cargo.toml").is_file() {
         let what = if crate_abs.is_dir() {
@@ -126,15 +127,24 @@ pub(crate) fn build(
             crate_dir.display()
         );
     }
+    // Named after the directory (`.` resolved) when `Cargo.toml` has no package.
     let name = crate_abs
         .canonicalize()
         .ok()
         .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_string))
         .unwrap_or_else(|| "circuit".to_string());
-    let pkg_name = crate::xark_project::read_pkg_name(&crate_abs).unwrap_or(name);
+    // xark's artifacts live under the crate's `target/xark/`, and the wasm32 /
+    // `--cfg xark` build cache under `target/xark-wasm/` — both apart from the
+    // crate's normal `target/` so they don't thrash the one `cargo` and
+    // rust-analyzer use. Each circuit's artifacts land in a name-scoped
+    // `target/xark/<pkg-name>/`, the package name from `Cargo.toml`
+    // (`[package] name`) falling back to the directory name.
+    let xark_dir = crate_abs.join("target/xark");
+    let pkg_name = crate::xark_project::read_pkg_name(&crate_abs).unwrap_or_else(|| name.clone());
     let out_abs = out
         .map(|o| cwd.join(o))
-        .unwrap_or_else(|| crate_abs.join("target/xark").join(&pkg_name));
+        .unwrap_or_else(|| xark_dir.join(&pkg_name));
+
     build_stable(&crate_abs, &out_abs, &pkg_name, field, profile, emit_json)
 }
 
@@ -315,11 +325,23 @@ fn build_stable(
         crate_abs.join("target/xark-wasm"),
         xark_frontend::BuildOptions::default(),
     );
-    let wasm = xark_frontend::build_crate_with(crate_abs, &target_dir, &opts)
-        .map_err(anyhow::Error::msg)?;
-    let mut lowered =
-        xark_frontend::lower_module(&wasm, xark_ir::FieldSpec::named(field), profile, emit_json)
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let wasm = match xark_frontend::build_crate_with(crate_abs, &target_dir, &opts) {
+        Ok(w) => w,
+        Err(e) => {
+            return Err(anyhow::Error::msg(e));
+        }
+    };
+    let mut lowered = match xark_frontend::lower_module(
+        &wasm,
+        xark_ir::FieldSpec::named(field),
+        profile,
+        emit_json,
+    ) {
+        Ok(l) => l,
+        Err(e) => {
+            return Err(anyhow::anyhow!("{e}"));
+        }
+    };
     // The R1CS digest: what the proving/verifying keys depend on, and the same
     // under every supported rustc (docs/toolchain.md).
     let digest = format!(
@@ -329,10 +351,15 @@ fn build_stable(
     if profile {
         xark_frontend::relativize_profile(&mut lowered.output, crate_abs);
     }
-    xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
-        .with_context(|| format!("writing {}", out_abs.display()))?;
-    xark_frontend::write_sources(out_abs, &mut lowered.sources, crate_abs)
-        .with_context(|| format!("writing {}", out_abs.join("sources.json").display()))?;
+    if let Err(e) =
+        xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
+    {
+        return Err(e).with_context(|| format!("writing {}", out_abs.display()));
+    }
+    if let Err(e) = xark_frontend::write_sources(out_abs, &mut lowered.sources, crate_abs) {
+        return Err(e)
+            .with_context(|| format!("writing {}", out_abs.join("sources.json").display()));
+    }
     std::fs::write(out_abs.join("digest"), format!("{digest}\n"))
         .context("writing circuit digest")?;
     std::fs::write(
