@@ -16,7 +16,7 @@ pub struct DoctorArgs {}
 /// Oldest `rustc` that builds a circuit (the `xark` crate's `rust-version`).
 const MIN_RUSTC: (u32, u32) = (1, 89);
 
-pub fn run(_args: DoctorArgs) -> Result<()> {
+pub fn run(_args: DoctorArgs) -> Result<i32> {
     println!(
         "{}",
         crate::style::brand("xark doctor — checking your setup\n")
@@ -115,9 +115,9 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
                 "❌ {problems} issue(s) above — fix the ❌ lines, then re-run `xark doctor`."
             ))
         );
-        std::process::exit(1);
+        return Ok(1);
     }
-    Ok(())
+    Ok(0)
 }
 
 /// Run `bin args…`; return trimmed stdout on success, `None` on any failure
