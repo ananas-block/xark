@@ -4,7 +4,9 @@
 //! [`crate::commands`] module; these keep their hand-rolled argument parsing
 //! (driven from the clap layer in `commands`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 /// `xark build <crate-dir> [--out DIR] [--field F]`
@@ -83,9 +85,35 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         eprintln!("error: `xark build <crate-dir>` requires a crate directory");
         return 2;
     };
-    let crate_dir = PathBuf::from(crate_root(&crate_dir));
-    let cwd = std::env::current_dir().expect("cwd");
-    // Normalized: `.` leaves no `/./` in the paths printed below.
+    match build(
+        Path::new(&crate_dir),
+        out.as_deref().map(Path::new),
+        &field,
+        profile,
+        emit_json,
+    ) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            1
+        }
+    }
+}
+
+/// Shared typed build implementation for the CLI and library facade.
+pub(crate) fn build(
+    crate_dir: &Path,
+    out: Option<&Path>,
+    field: &str,
+    profile: bool,
+    emit_json: bool,
+) -> Result<()> {
+    let crate_dir = if crate_dir == Path::new(".") {
+        PathBuf::from(crate_root("."))
+    } else {
+        crate_dir.to_path_buf()
+    };
+    let cwd = std::env::current_dir().context("resolving current directory")?;
     let crate_abs: PathBuf = cwd.join(&crate_dir).components().collect();
     if !crate_abs.join("Cargo.toml").is_file() {
         let what = if crate_abs.is_dir() {
@@ -93,31 +121,21 @@ fn cmd_build_impl(args: &[String], profile: bool) -> i32 {
         } else {
             "no such directory:"
         };
-        eprintln!(
+        bail!(
             "xark: {what} {} (expected a circuit crate)",
             crate_dir.display()
         );
-        return 1;
     }
-    // Named after the directory (`.` resolved) when `Cargo.toml` has no package.
     let name = crate_abs
         .canonicalize()
         .ok()
         .and_then(|p| p.file_name().and_then(|s| s.to_str()).map(str::to_string))
         .unwrap_or_else(|| "circuit".to_string());
-    // xark's artifacts live under the crate's `target/xark/`, and the wasm32 /
-    // `--cfg xark` build cache under `target/xark-wasm/` — both apart from the
-    // crate's normal `target/` so they don't thrash the one `cargo` and
-    // rust-analyzer use. Each circuit's artifacts land in a name-scoped
-    // `target/xark/<pkg-name>/`, the package name from `Cargo.toml`
-    // (`[package] name`) falling back to the directory name.
-    let xark_dir = crate_abs.join("target/xark");
-    let pkg_name = crate::xark_project::read_pkg_name(&crate_abs).unwrap_or_else(|| name.clone());
+    let pkg_name = crate::xark_project::read_pkg_name(&crate_abs).unwrap_or(name);
     let out_abs = out
         .map(|o| cwd.join(o))
-        .unwrap_or_else(|| xark_dir.join(&pkg_name));
-
-    build_stable(&crate_abs, &out_abs, &pkg_name, &field, profile, emit_json)
+        .unwrap_or_else(|| crate_abs.join("target/xark").join(&pkg_name));
+    build_stable(&crate_abs, &out_abs, &pkg_name, field, profile, emit_json)
 }
 
 /// Why the build in `dir` isn't current, judged by `artifact` (`circuit.xbc`, or
@@ -251,10 +269,8 @@ fn build_unless_current_in(
         crate::style::tag(),
         shown(krate).display()
     );
-    if cmd_build(&[krate.display().to_string()]) != 0 {
-        anyhow::bail!("the build failed; fix the circuit, then run this again");
-    }
-    Ok(())
+    build(krate, None, "bn254", false, false)
+        .context("the build failed; fix the circuit, then run this again")
 }
 
 /// Everything `xark build` writes (beside the keys and proofs of later commands).
@@ -279,7 +295,7 @@ fn build_stable(
     field: &str,
     profile: bool,
     emit_json: bool,
-) -> i32 {
+) -> Result<()> {
     eprintln!("{} building circuit `{name}`", crate::style::tag());
     // Clear the previous build's outputs first: if this build fails, `prove`,
     // `setup` and `export` must not go on with the old circuit, and a build
@@ -290,8 +306,7 @@ fn build_stable(
         if let Err(e) = std::fs::remove_file(&path)
             && e.kind() != std::io::ErrorKind::NotFound
         {
-            eprintln!("xark: removing {}: {e}", path.display());
-            return 1;
+            return Err(e).with_context(|| format!("removing {}", path.display()));
         }
     }
     // Every build carries DWARF line tables (free; see `BuildOptions`), so errors
@@ -300,25 +315,11 @@ fn build_stable(
         crate_abs.join("target/xark-wasm"),
         xark_frontend::BuildOptions::default(),
     );
-    let wasm = match xark_frontend::build_crate_with(crate_abs, &target_dir, &opts) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("xark: {e}");
-            return 1;
-        }
-    };
-    let mut lowered = match xark_frontend::lower_module(
-        &wasm,
-        xark_ir::FieldSpec::named(field),
-        profile,
-        emit_json,
-    ) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("{} {e}", crate::style::err("error:"));
-            return 1;
-        }
-    };
+    let wasm = xark_frontend::build_crate_with(crate_abs, &target_dir, &opts)
+        .map_err(anyhow::Error::msg)?;
+    let mut lowered =
+        xark_frontend::lower_module(&wasm, xark_ir::FieldSpec::named(field), profile, emit_json)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
     // The R1CS digest: what the proving/verifying keys depend on, and the same
     // under every supported rustc (docs/toolchain.md).
     let digest = format!(
@@ -328,24 +329,17 @@ fn build_stable(
     if profile {
         xark_frontend::relativize_profile(&mut lowered.output, crate_abs);
     }
-    if let Err(e) =
-        xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
-    {
-        eprintln!("xark: writing {}: {e}", out_abs.display());
-        return 1;
-    }
-    if let Err(e) = xark_frontend::write_sources(out_abs, &mut lowered.sources, crate_abs) {
-        eprintln!(
-            "xark: writing {}: {e}",
-            out_abs.join("sources.json").display()
-        );
-        return 1;
-    }
-    let _ = std::fs::write(out_abs.join("digest"), format!("{digest}\n"));
-    let _ = std::fs::write(
+    xark_frontend::write_outputs_in(out_abs, &lowered.output, emit_json, profile, crate_abs)
+        .with_context(|| format!("writing {}", out_abs.display()))?;
+    xark_frontend::write_sources(out_abs, &mut lowered.sources, crate_abs)
+        .with_context(|| format!("writing {}", out_abs.join("sources.json").display()))?;
+    std::fs::write(out_abs.join("digest"), format!("{digest}\n"))
+        .context("writing circuit digest")?;
+    std::fs::write(
         out_abs.join("schema.json"),
-        serde_json::to_string_pretty(&lowered.schema).unwrap_or_default() + "\n",
-    );
+        serde_json::to_string_pretty(&lowered.schema)? + "\n",
+    )
+    .context("writing circuit schema")?;
     // The source files the circuit came from, gadgets included: how a plain `cargo
     // test` notices the circuit is out of date (`xark_prover::circuit`). Written
     // last: a build is only complete with it (`stale_build`), so one stopped
@@ -371,7 +365,7 @@ fn build_stable(
         crate::style::tag(),
         crate::style::brand(&out_abs.display().to_string())
     );
-    0
+    Ok(())
 }
 
 /// The three source lines that cost the most constraints, so every build shows

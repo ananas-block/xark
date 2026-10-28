@@ -101,24 +101,32 @@ pub enum Command {
     Completions(completions::CompletionsArgs),
 }
 
-/// Entry point invoked from `crate::main` once a CLI subcommand is detected.
-pub fn main() {
+/// Standalone CLI adapter. Parsing and command failures return to the binary.
+pub fn main() -> Result<i32> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .with_writer(std::io::stderr)
-        .init();
+        .try_init();
 
-    let cli = Cli::parse();
-    let code = match run(cli) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{} {e:#}", crate::style::err("error:"));
-            1
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            error.print()?;
+            return Ok(error.exit_code());
         }
     };
-    std::process::exit(code);
+    match run(cli) {
+        Ok(()) => Ok(0),
+        Err(error) => match error.downcast_ref::<CommandExit>() {
+            Some(exit) => Ok(exit.0),
+            None => {
+                eprintln!("{} {error:#}", crate::style::err("error:"));
+                Ok(1)
+            }
+        },
+    }
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -150,13 +158,23 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-/// Bridge a frontend command's process exit code into the `anyhow` flow: exit
-/// straight away on failure (the frontend already printed a diagnostic).
+/// A command already printed its diagnostic; preserve its standalone exit code.
+#[derive(Debug)]
+struct CommandExit(i32);
+
+impl std::fmt::Display for CommandExit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "command failed with exit code {}", self.0)
+    }
+}
+
+impl std::error::Error for CommandExit {}
+
 fn exit_code(_name: &str, code: i32) -> Result<()> {
     if code == 0 {
         Ok(())
     } else {
-        std::process::exit(code);
+        Err(CommandExit(code).into())
     }
 }
 

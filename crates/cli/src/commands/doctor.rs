@@ -115,7 +115,7 @@ pub fn run(_args: DoctorArgs) -> Result<()> {
                 "❌ {problems} issue(s) above — fix the ❌ lines, then re-run `xark doctor`."
             ))
         );
-        std::process::exit(1);
+        return super::exit_code("doctor", 1);
     }
     Ok(())
 }

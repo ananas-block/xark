@@ -108,7 +108,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
                 vk_path.display()
             );
         }
-        std::process::exit(2);
+        return super::exit_code("verify", 2);
     }
     let p = super::path_arg(&args.path);
     println!(

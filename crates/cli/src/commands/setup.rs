@@ -22,7 +22,7 @@ use xark_prover::XarkCircuit;
 use super::{circuit_hash, load_backend_r1cs, num_public_inputs};
 use crate::xark_project::XarkProject;
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, PartialEq, Eq)]
 pub struct SetupArgs {
     /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
     /// the current directory; paths are inferred from `target/xark/<name>/`.
@@ -94,6 +94,23 @@ pub struct SetupArgs {
     /// * `auto` (default) — `smooth`, except `radix2` for a Powers-of-Tau setup.
     #[arg(long, value_enum, default_value_t = QapDomain::Auto)]
     pub domain: QapDomain,
+}
+
+impl Default for SetupArgs {
+    fn default() -> Self {
+        Self {
+            path: None,
+            out: None,
+            insecure_dev_mode: false,
+            deterministic_rng: None,
+            ptau_file: None,
+            phase2_seed: None,
+            uncompressed: false,
+            r1cs_form: R1csForm::Auto,
+            streamable: false,
+            domain: QapDomain::Auto,
+        }
+    }
 }
 
 /// See [`SetupArgs::domain`].
@@ -637,3 +654,7 @@ fn print_next_steps(project: &XarkProject, path: &Option<PathBuf>, key: Option<&
         )])
     );
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/setup_options.rs"]
+mod tests;
