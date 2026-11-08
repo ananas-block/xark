@@ -75,6 +75,30 @@ pub use streaming::{
 const BYTES_TS: &str = r#"
 /** A binary payload: a `Uint8Array`, or a raw `ArrayBuffer` */
 export type Bytes = Uint8Array | ArrayBuffer;
+/** Witness inputs: numbers must be safe integers; larger values use bigint or string. */
+export type ProofInputValue = string | number | bigint | boolean | Uint8Array | ProofInputValue[] | { [name: string]: ProofInputValue };
+export type ProofInputs = Record<string, ProofInputValue>;
+/** Synchronous accelerator methods provided by the Xark worker pool. */
+export interface ProverWorkerPool {
+    toCoset(n1: number, n2: number, bytes: Uint8Array): boolean;
+    fromCosetToT(n1: number, n2: number, bytes: Uint8Array): boolean;
+    decompress(g2: boolean, points: Uint8Array): Uint8Array | undefined;
+    msm(g2: boolean, points: Uint8Array, compressed: boolean, scalars: Uint8Array): Uint8Array | undefined;
+}
+export interface ProverOptions {
+    r1cs?: Bytes;
+    pool?: ProverWorkerPool;
+    spill?: boolean;
+    expandRows?: boolean;
+    domainSize?: number;
+    msmChunk?: number;
+    tile?: number;
+    /** Available only when the runtime is built with test-randomness. */
+    seed?: number;
+    residentKey?: boolean;
+    sources?: string;
+}
+export interface KeyTranscodeOptions { pool?: ProverWorkerPool; }
 "#;
 
 #[wasm_bindgen]
@@ -221,7 +245,9 @@ pub fn preload(
 ///
 /// Returns the same shape as [`prove`]. Throws if [`preload`] hasn't been called.
 #[wasm_bindgen]
-pub fn prove_preloaded(inputs: JsValue) -> Result<ProofBundle, js_sys::Error> {
+pub fn prove_preloaded(
+    #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
+) -> Result<ProofBundle, js_sys::Error> {
     ARTIFACTS.with(|cell| -> Result<ProofBundle, js_sys::Error> {
         let mut state = cell.borrow_mut();
         let p = state
@@ -255,8 +281,8 @@ impl ProvingSession {
     /// `proveStreaming`.
     pub fn prove(
         &mut self,
-        inputs: JsValue,
-        options: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
+        #[wasm_bindgen(unchecked_optional_param_type = "ProverOptions")] options: JsValue,
     ) -> Result<ProofBundle, js_sys::Error> {
         streaming::prove_auto(&mut self.0, inputs, &options)
     }
@@ -281,7 +307,7 @@ impl ProvingSession {
 pub fn prove(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
-    inputs: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
     sources: Option<String>,
 ) -> Result<ProofBundle, js_sys::Error> {
     let mut p = streaming::prepare_auto(circuit_xbc, pk_bytes, false, sources)?;
@@ -396,7 +422,7 @@ impl JsSchema {
     }
 
     /// As [`encode_inputs`].
-    #[wasm_bindgen(js_name = encodeInputs)]
+    #[wasm_bindgen(js_name = encodeInputs, unchecked_return_type = "Record<string, string>")]
     pub fn encode_inputs(&self, inputs_json: &str) -> Result<JsValue, js_sys::Error> {
         encode_inputs_with(&self.0, inputs_json)
     }
@@ -455,7 +481,7 @@ impl JsVerifyingKey {
 /// form, `camelCase` or `snake_case` keys) as the `leaf → decimal` object [`prove`]
 /// takes, encoded and checked against `schema` (the circuit's `schema.json` text).
 /// A generated client holds a [`Schema`](JsSchema) instead.
-#[wasm_bindgen(js_name = encodeInputs)]
+#[wasm_bindgen(js_name = encodeInputs, unchecked_return_type = "Record<string, string>")]
 pub fn encode_inputs(schema_json: &str, inputs_json: &str) -> Result<JsValue, js_sys::Error> {
     encode_inputs_with(&schema(schema_json)?, inputs_json)
 }

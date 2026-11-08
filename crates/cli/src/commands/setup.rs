@@ -22,7 +22,7 @@ use xark_prover::XarkCircuit;
 use super::{load_backend_r1cs, num_public_inputs};
 use crate::xark_project::XarkProject;
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default, PartialEq, Eq)]
 pub struct SetupArgs {
     /// Circuit crate directory (or its `target/xark/<name>/` output dir). Defaults to
     /// the current directory; paths are inferred from `target/xark/<name>/`.
@@ -102,8 +102,9 @@ pub struct SetupArgs {
 }
 
 /// See [`SetupArgs::domain`].
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum QapDomain {
+    #[default]
     Auto,
     Radix2,
     Smooth,
@@ -121,8 +122,9 @@ impl QapDomain {
 }
 
 /// See [`SetupArgs::r1cs_form`].
-#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum R1csForm {
+    #[default]
     Auto,
     Reduced,
     Minimized,
