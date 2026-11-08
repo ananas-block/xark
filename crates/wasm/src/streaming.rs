@@ -17,6 +17,7 @@ use std::io::{Read, Seek, SeekFrom};
 use ark_bn254::Bn254;
 use ark_bn254::Fr;
 use ark_ff::{UniformRand, Zero};
+#[cfg(feature = "test-randomness")]
 use rand::SeedableRng;
 use wasm_bindgen::prelude::*;
 use xark_groth16::accel::{self, Accelerator};
@@ -337,7 +338,7 @@ fn witness(
 
 /// Prover settings + randomness from `options` (`msmChunk`, `tile`, `seed`,
 /// `domainSize`).
-fn config(options: &JsValue) -> (ProverConfig, Fr, Fr) {
+fn config(options: &JsValue) -> Result<(ProverConfig, Fr, Fr), js_sys::Error> {
     let mut cfg = ProverConfig {
         msm_chunk: 1 << 18,
         ..ProverConfig::default()
@@ -359,15 +360,36 @@ fn config(options: &JsValue) -> (ProverConfig, Fr, Fr) {
     }
     let (r, s) = match opt_get(options, "seed").and_then(|v| v.as_f64()) {
         Some(seed) => {
-            let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed as u64);
-            (Fr::rand(&mut rng), Fr::rand(&mut rng))
+            #[cfg(feature = "test-randomness")]
+            {
+                let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed as u64);
+                (Fr::rand(&mut rng), Fr::rand(&mut rng))
+            }
+            #[cfg(not(feature = "test-randomness"))]
+            {
+                let _ = seed;
+                return Err(randomness_error(
+                    "deterministic proof randomness is available only in test builds",
+                ));
+            }
         }
         None => {
             let mut rng = rand::rngs::OsRng;
             (Fr::rand(&mut rng), Fr::rand(&mut rng))
         }
     };
-    (cfg, r, s)
+    if r.is_zero() || s.is_zero() {
+        return Err(randomness_error(
+            "proof blinding randomness must be nonzero",
+        ));
+    }
+    Ok((cfg, r, s))
+}
+
+fn randomness_error(message: &str) -> js_sys::Error {
+    let error = js_error(message);
+    error.set_name("InvalidProofRandomness");
+    error
 }
 
 fn mismatch_error(e: xark_groth16::ProveError) -> js_sys::Error {
@@ -481,7 +503,7 @@ fn prove_prepared(
     let z = witness(&p.xbc, &ids, p.src.layout())?;
     let ninst = p.src.layout().num_instance();
 
-    let (cfg, r, s) = config(options);
+    let (cfg, r, s) = config(options)?;
     let accel = &mut Host::from_options(options);
     let res = match &mut p.key {
         Key::Streamed(pk) => {
@@ -534,8 +556,8 @@ fn prove_prepared(
 pub fn prove_streaming(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
-    inputs: JsValue,
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
+    #[wasm_bindgen(unchecked_optional_param_type = "ProverOptions")] options: JsValue,
 ) -> Result<ProofBundle, js_sys::Error> {
     let mut p = prepare(circuit_xbc, pk_bytes, &options)?;
     prove_prepared(&mut p, inputs, &options)
@@ -560,7 +582,7 @@ thread_local! {
 pub fn preload_streaming(
     circuit_xbc: &Bytes,
     pk_bytes: &Bytes,
-    options: JsValue,
+    #[wasm_bindgen(unchecked_optional_param_type = "ProverOptions")] options: JsValue,
 ) -> Result<(), js_sys::Error> {
     let p = prepare(circuit_xbc, pk_bytes, &options)?;
     PRELOADED.with(|c| *c.borrow_mut() = Some(p));
@@ -571,8 +593,8 @@ pub fn preload_streaming(
 /// [`prove_streaming`] (`pool`, `msmChunk`, `seed`).
 #[wasm_bindgen(js_name = proveStreamingPreloaded)]
 pub fn prove_streaming_preloaded(
-    inputs: JsValue,
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
+    #[wasm_bindgen(unchecked_optional_param_type = "ProverOptions")] options: JsValue,
 ) -> Result<ProofBundle, js_sys::Error> {
     PRELOADED.with(|c| {
         let mut c = c.borrow_mut();
@@ -676,8 +698,8 @@ pub struct StreamingProof {
 #[wasm_bindgen(js_name = beginStreamingProof)]
 pub fn begin_streaming_proof(
     circuit_xbc: &Bytes,
-    inputs: JsValue,
-    options: JsValue,
+    #[wasm_bindgen(unchecked_param_type = "ProofInputs")] inputs: JsValue,
+    #[wasm_bindgen(unchecked_optional_param_type = "ProverOptions")] options: JsValue,
 ) -> Result<StreamingProof, js_sys::Error> {
     let xbc = to_bytes(circuit_xbc, "circuit.xbc")?;
     let vars = xark_ir::function_decode::decode_input_vars(&xbc).map_err(|e| js_error(&e))?;
@@ -685,7 +707,7 @@ pub fn begin_streaming_proof(
     drop(vars);
     let src = row_source(&xbc, None, &options)?;
     let z = witness(&xbc, &ids, src.layout())?;
-    let (cfg, r, s) = config(&options);
+    let (cfg, r, s) = config(&options)?;
     let mut host = Host::from_options(&options);
     let inner =
         xark_groth16::PushProver::new(src, z, r, s, cfg, &mut host).map_err(mismatch_error)?;
@@ -745,7 +767,9 @@ pub struct KeyTranscoder {
 
 /// Start transcoding. `options.pool` decompresses on the worker pool.
 #[wasm_bindgen(js_name = beginKeyTranscode)]
-pub fn begin_key_transcode(options: JsValue) -> KeyTranscoder {
+pub fn begin_key_transcode(
+    #[wasm_bindgen(unchecked_optional_param_type = "KeyTranscodeOptions")] options: JsValue,
+) -> KeyTranscoder {
     KeyTranscoder {
         inner: xark_groth16::transcode::KeyTranscoder::new(1 << 16),
         host: Host::from_options(&options),

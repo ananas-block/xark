@@ -10,6 +10,11 @@ export interface WorkerPool {
   readonly threads: number;
   readonly stats: { fftCalls: number; msmCalls: number; fftMs: number; msmMs: number };
   terminate(): Promise<void>;
+  /** Synchronous accelerator entry points called by the proving runtime. */
+  toCoset(n1: number, n2: number, bytes: Uint8Array): boolean;
+  fromCosetToT(n1: number, n2: number, bytes: Uint8Array): boolean;
+  decompress(g2: boolean, points: Uint8Array): Uint8Array | undefined;
+  msm(g2: boolean, points: Uint8Array, compressed: boolean, scalars: Uint8Array): Uint8Array | undefined;
 }
 /** SharedArrayBuffer + Atomics available (browsers: cross-origin isolated). */
 export function parallelSupported(): boolean;

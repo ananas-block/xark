@@ -44,7 +44,7 @@ pub struct VerifyArgs {
     pub public_inputs: Option<PathBuf>,
 }
 
-pub fn run(args: VerifyArgs) -> Result<()> {
+pub fn run(args: VerifyArgs) -> Result<i32> {
     let project = XarkProject::resolve(args.path.clone())?;
     let vk_path = args
         .verifying_key
@@ -108,7 +108,7 @@ pub fn run(args: VerifyArgs) -> Result<()> {
                 vk_path.display()
             );
         }
-        std::process::exit(2);
+        return Ok(2);
     }
     let p = super::path_arg(&args.path);
     println!(
@@ -124,5 +124,5 @@ pub fn run(args: VerifyArgs) -> Result<()> {
             ),
         ])
     );
-    Ok(())
+    Ok(0)
 }

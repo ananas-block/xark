@@ -1,10 +1,10 @@
-import type { ProofBundle } from "../dist/web/xark_wasm.js";
+import type { Bytes, ProofBundle, ProofInputs, ProverOptions, KeyTranscodeOptions } from "../dist/web/xark_wasm.js";
 
 export interface StreamProveOptions {
   /** `r1cs.stream` bytes, for a key `xark setup` generated in the `minimized` form. */
   r1cs?: Uint8Array | ArrayBuffer;
   /** Worker pool from `@blueshift-gg/xark/pool` (needs SharedArrayBuffer). */
-  pool?: unknown;
+  pool?: ProverOptions["pool"];
   /** Proving-key points folded per MSM chunk (default 2^18). */
   msmChunk?: number;
   /**
@@ -22,7 +22,7 @@ export interface StreamProveOptions {
 /** Prove while `pk.bin` downloads, never holding the key in memory. */
 export function proveFromStream(
   xark: {
-    beginStreamingProof(xbc: Uint8Array | ArrayBuffer, inputs: object, options?: object): {
+    beginStreamingProof(xbc: Bytes, inputs: ProofInputs, options?: ProverOptions): {
       push(chunk: Uint8Array): void;
       readonly received: number;
       finish(): ProofBundle;
@@ -31,13 +31,13 @@ export function proveFromStream(
   },
   circuitXbc: Uint8Array | ArrayBuffer,
   key: ReadableStream<Uint8Array> | Response | Promise<Response>,
-  inputs: object,
+  inputs: ProofInputs,
   options?: StreamProveOptions,
 ): Promise<ProofBundle>;
 
 /** Re-encode `pk.bin` with uncompressed points as a stream (store it, prove from it later). */
 export function transcodeKey(
-  xark: { beginKeyTranscode(options?: object): { push(chunk: Uint8Array): Uint8Array; readonly complete: boolean; free(): void } },
+  xark: { beginKeyTranscode(options?: KeyTranscodeOptions): { push(chunk: Uint8Array): Uint8Array; readonly complete: boolean; free(): void } },
   key: ReadableStream<Uint8Array> | Response | Promise<Response>,
-  options?: { pool?: unknown },
+  options?: KeyTranscodeOptions,
 ): ReadableStream<Uint8Array>;

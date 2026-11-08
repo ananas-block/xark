@@ -101,63 +101,60 @@ pub enum Command {
     Completions(completions::CompletionsArgs),
 }
 
-/// Entry point invoked from `crate::main` once a CLI subcommand is detected.
-pub fn main() {
+/// Standalone CLI adapter. Parsing and command failures return to the binary.
+pub fn main() -> Result<i32> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .with_writer(std::io::stderr)
-        .init();
+        .try_init();
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            error.print()?;
+            return Ok(error.exit_code());
+        }
+    };
     let code = match run(cli) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{} {e:#}", crate::style::err("error:"));
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("{} {error:#}", crate::style::err("error:"));
             1
         }
     };
-    std::process::exit(code);
+    Ok(code)
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<i32> {
     match cli.command {
-        Command::Doctor(a) => doctor::run(a),
+        Command::Doctor(a) => return doctor::run(a),
         // Frontend commands delegate to the hand-rolled `cargo`-driving
         // implementations, which return a process exit code.
-        Command::Init(a) => exit_code("init", crate::cli::cmd_init(&a.to_argv())),
-        Command::Build(a) => exit_code("build", crate::cli::cmd_build_command(&a.to_argv())),
+        Command::Init(a) => return Ok(crate::cli::cmd_init(&a.to_argv())),
+        Command::Build(a) => return Ok(crate::cli::cmd_build_command(&a.to_argv())),
         // Bare `xark check` stays the fast, artifact-free `cargo check` validator.
         // `xark check --inputs …` opts into the witness-based soundness analyzer
         // (build + solve + `analyze_underconstrained`), which is `anyhow`-based.
         Command::Check(a) if a.inputs.is_none() => {
-            exit_code("check", crate::cli::cmd_check(&a.to_argv()))
+            return Ok(crate::cli::cmd_check(&a.to_argv()));
         }
         Command::Check(a) => check::run(a),
-        Command::Test(a) => exit_code("test", crate::cli::cmd_test(&a.to_argv())),
-        Command::Clean(a) => exit_code("clean", crate::cli::cmd_clean(&a.to_argv())),
+        Command::Test(a) => return Ok(crate::cli::cmd_test(&a.to_argv())),
+        Command::Clean(a) => return Ok(crate::cli::cmd_clean(&a.to_argv())),
         // Backend commands are `anyhow`-based.
         Command::Setup(a) => setup::run(a),
         Command::Prove(a) => prove::run(a),
-        Command::Verify(a) => verify::run(a),
+        Command::Verify(a) => return verify::run(a),
         Command::Export(a) => export::run(a),
         Command::Client(a) => client::run(a),
         Command::Ceremony(a) => ceremony::run(a),
         Command::Inspect(a) => inspect::run(a),
         Command::Profile(a) => profile::run(a),
         Command::Completions(a) => completions::run(a),
-    }
-}
-
-/// Bridge a frontend command's process exit code into the `anyhow` flow: exit
-/// straight away on failure (the frontend already printed a diagnostic).
-fn exit_code(_name: &str, code: i32) -> Result<()> {
-    if code == 0 {
-        Ok(())
-    } else {
-        std::process::exit(code);
-    }
+    }?;
+    Ok(0)
 }
 
 // Frontend argument structs (delegate to `crate::cli`).

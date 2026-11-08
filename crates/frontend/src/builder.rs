@@ -81,6 +81,7 @@ pub(crate) fn dev_knob(name: &str) -> Option<usize> {
 }
 
 pub(crate) type CanonicalLcKey = (String, Vec<(String, VarId)>);
+type UnsignedSubKey = (usize, CanonicalLcKey, CanonicalLcKey);
 
 /// Build the [`CanonicalLcKey`] for `lc` (simplified → merged + sorted terms).
 pub(crate) fn canonical_lc_key(lc: &LinearCombination) -> CanonicalLcKey {
@@ -189,6 +190,9 @@ pub struct Builder {
     /// by its top hinted bit, the last variable of its bit 0 and of its low parts:
     /// so that bit 0 counts as boolean and a low part's bits are found.
     computed_bits: IdMap<VarId, Vec<LinearCombination>>,
+    /// Unconditionally constrained unsigned subtraction: wrapped remainder and
+    /// borrow. Comparisons and wrapping subtraction prove the same relation.
+    unsigned_subs: BTreeMap<UnsignedSubKey, (LinearCombination, LinearCombination)>,
     /// Template defs found by [`crate::templates::detect`], in creation order.
     pub(crate) function_templates: Vec<FunctionTemplate>,
     /// Every template call, top-level or nested inside a def body.
@@ -248,6 +252,7 @@ impl Builder {
             witness_gen: Vec::new(),
             bit_cache: BTreeMap::new(),
             computed_bits: IdMap::default(),
+            unsigned_subs: BTreeMap::new(),
             function_templates: Vec::new(),
             function_calls: Vec::new(),
             witness_only: false,
@@ -1025,6 +1030,13 @@ impl Builder {
             )
             .with_help("use a narrower fixed width; `2^(N+1)` must stay below the field order"));
         }
+        let key = (n, canonical_lc_key(&a), canonical_lc_key(&b));
+        if gate.is_none()
+            && !self.witness_only
+            && let Some((_, borrow)) = self.unsigned_subs.get(&key)
+        {
+            return Ok(borrow.clone());
+        }
         let two_pow_n = pow2_lc(n);
         let diff_plus = a.clone() - b.clone() + two_pow_n.clone();
         let diff_plus = self.gate_input(gate.as_ref(), diff_plus);
@@ -1061,8 +1073,11 @@ impl Builder {
         self.kind_stack.pop();
         let r = (a.clone() - b.clone()) + lt_pow;
         self.kind_stack.push(ConstraintKind::RangeCheck);
-        let _ = self.decompose_bits_gated(r, n, gate);
+        let _ = self.decompose_bits_gated(r.clone(), n, gate.clone());
         self.kind_stack.pop();
+        if gate.is_none() && !self.witness_only {
+            self.unsigned_subs.insert(key, (r, lt.clone()));
+        }
         Ok(lt)
     }
 
@@ -1090,6 +1105,12 @@ impl Builder {
         a: LinearCombination,
         b: LinearCombination,
     ) -> LinearCombination {
+        let key = (n, canonical_lc_key(&a), canonical_lc_key(&b));
+        if !self.witness_only
+            && let Some((remainder, _)) = self.unsigned_subs.get(&key)
+        {
+            return remainder.clone();
+        }
         let shifted = a.clone() - b.clone() + pow2_lc(n);
         let ge = self.alloc_advice();
         self.witness_gen.push(Some(WitnessGen::Bit {
@@ -1099,10 +1120,13 @@ impl Builder {
         }));
         self.emit_booleanity(ge, "wrap-sub !borrow ∈ {0,1}");
         let borrow = LinearCombination::one() - LinearCombination::var(ge);
-        let result = a - b + borrow.scale(&pow2_fc(n));
+        let result = a - b + borrow.clone().scale(&pow2_fc(n));
         self.kind_stack.push(ConstraintKind::RangeCheck);
         self.emit_range_proof_lc(result.clone(), n);
         self.kind_stack.pop();
+        if !self.witness_only {
+            self.unsigned_subs.insert(key, (result.clone(), borrow));
+        }
         result
     }
 
