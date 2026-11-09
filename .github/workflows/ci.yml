@@ -291,7 +291,7 @@ jobs:
         run: cargo install wasm-pack --locked
 
       - name: Build xark-wasm node package
-        run: cd crates/wasm && wasm-pack build --target nodejs --release --out-dir dist/node
+        run: cd crates/wasm && wasm-pack build --target nodejs --release --out-dir dist/node -- --features test-randomness
 
       - name: Run xark-wasm tests
         run: cd crates/wasm && npm test

@@ -11,7 +11,7 @@
 //   xark setup examples/sha256 --deterministic-rng 8 \
 //        --r1cs-form minimized --out examples/sha256/target/xark/sha256-smooth
 //        # the default smooth domain, with r1cs.stream; another seed, so another key
-//   wasm-pack build crates/wasm --target nodejs --release --out-dir dist/node
+//   wasm-pack build crates/wasm --target nodejs --release --out-dir dist/node -- --features test-randomness
 //   node --test crates/wasm/tests/streaming.test.cjs
 //
 // STREAM_CIRCUIT_DIR / STREAM_KEY_DIR override the artifact locations.
