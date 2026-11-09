@@ -20,8 +20,6 @@
 //!     --test regen_fixtures -- --ignored --nocapture
 //! ```
 
-mod common;
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,7 +31,7 @@ use ark_snark::SNARK;
 
 // Fixtures are keyed with arkworks' own setup (fixed seeds), so regenerating them
 // reproduces the committed bytes.
-#[path = "../../../crates/groth16/tests/support/ark.rs"]
+#[path = "../../../../crates/groth16/tests/support/ark.rs"]
 mod ark;
 use ark::{ArkCircuit, convert};
 
@@ -543,7 +541,7 @@ fn regen_one(spec: &Spec, work: &Path) {
     eprintln!("  [timing] solve: {:.1}s", t.elapsed().as_secs_f64());
     // `Fp::Bn254` already wraps the arkworks `Fr` — take it directly instead of a
     // per-var `num_bigint` decimal round-trip (`to_decimal` → parse), which was
-    // single-threaded over ~1.6M vars.
+    // single-threaded over ~480k vars (P-256 ECDSA).
     let mut assign: BTreeMap<VarId, Fr> = assign_fp
         .iter()
         .map(|(k, v)| (*k, v.as_bn254_fr().expect("bn254 field element")))

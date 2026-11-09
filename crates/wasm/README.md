@@ -36,8 +36,10 @@ xark setup    # → target/xark/<name>/{pk.bin, vk.bin}
 ```
 
 `circuit.xbc` is the single self-contained build artifact: it encodes both the
-solver view (witness generation) and the backend view (the minimized R1CS the
-proving key is keyed to)
+solver view (witness generation) and the backend view (the R1CS the proving key
+is keyed to: its template-reduced rows, read straight from the bytecode, or the
+boundary-minimized circuit rebuilt from them for a `minimized` key; `xark setup`
+picks `reduced` for large circuits, see `--r1cs-form`)
 
 ## Usage
 
@@ -79,7 +81,7 @@ console.log(verify(vk, proof, publicInputs)); // true
 
 ### Performance optimization (preloading)
 
-`prove` re-expands the `.xbc` and re-minimizes the R1CS on every call. For
+`prove` re-expands the `.xbc` (and re-minimizes it for a `minimized` key) on every call. For
 repeated proofs against the same circuit + key, parse them once with `preload`
 and call `prove_preloaded`:
 
@@ -173,7 +175,7 @@ require-corp`), and the proving call must run in a Web Worker (it blocks with
 `Atomics.wait`). Without isolation `parallelSupported()` is false and the same
 prover runs single-threaded with the same memory profile.
 
-**Smooth-domain keys** (`xark setup`'s default for dev keys: a QAP domain up to
+**Smooth-domain keys** (`xark setup`'s default for a key made without a `.ptau`: a QAP domain up to
 44% smaller) prove through every API. The key's header states its domain, so `proveFromStream` computes
 `h` as soon as the first bytes arrive, overlapping the rest of the download.
 
@@ -246,7 +248,7 @@ read the public inputs, see `decode_public_inputs` below.
 > `prove` checks the proof against the key's verifying key before returning it;
 > an unsatisfiable witness is reported as an error, never returned as a proof.
 
-### `preload(circuitXbc, pkBytes)`
+### `preload(circuitXbc, pkBytes, sources?)`
 
 Parse + cache the `.xbc` and proving key once (replaces prior cached state). The key
 is decoded into wasm memory (about 2.2× its compressed size) so repeat proofs skip

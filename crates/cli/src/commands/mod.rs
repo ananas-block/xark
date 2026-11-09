@@ -101,63 +101,60 @@ pub enum Command {
     Completions(completions::CompletionsArgs),
 }
 
-/// Entry point invoked from `crate::main` once a CLI subcommand is detected.
-pub fn main() {
+/// Standalone CLI adapter. Parsing and command failures return to the binary.
+pub fn main() -> Result<i32> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .with_writer(std::io::stderr)
-        .init();
+        .try_init();
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            error.print()?;
+            return Ok(error.exit_code());
+        }
+    };
     let code = match run(cli) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{} {e:#}", crate::style::err("error:"));
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("{} {error:#}", crate::style::err("error:"));
             1
         }
     };
-    std::process::exit(code);
+    Ok(code)
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<i32> {
     match cli.command {
-        Command::Doctor(a) => doctor::run(a),
+        Command::Doctor(a) => return doctor::run(a),
         // Frontend commands delegate to the hand-rolled `cargo`-driving
         // implementations, which return a process exit code.
-        Command::Init(a) => exit_code("init", crate::cli::cmd_init(&a.to_argv())),
-        Command::Build(a) => exit_code("build", crate::cli::cmd_build_command(&a.to_argv())),
+        Command::Init(a) => return Ok(crate::cli::cmd_init(&a.to_argv())),
+        Command::Build(a) => return Ok(crate::cli::cmd_build_command(&a.to_argv())),
         // Bare `xark check` stays the fast, artifact-free `cargo check` validator.
         // `xark check --inputs …` opts into the witness-based soundness analyzer
         // (build + solve + `analyze_underconstrained`), which is `anyhow`-based.
         Command::Check(a) if a.inputs.is_none() => {
-            exit_code("check", crate::cli::cmd_check(&a.to_argv()))
+            return Ok(crate::cli::cmd_check(&a.to_argv()));
         }
         Command::Check(a) => check::run(a),
-        Command::Test(a) => exit_code("test", crate::cli::cmd_test(&a.to_argv())),
-        Command::Clean(a) => exit_code("clean", crate::cli::cmd_clean(&a.to_argv())),
+        Command::Test(a) => return Ok(crate::cli::cmd_test(&a.to_argv())),
+        Command::Clean(a) => return Ok(crate::cli::cmd_clean(&a.to_argv())),
         // Backend commands are `anyhow`-based.
         Command::Setup(a) => setup::run(a),
         Command::Prove(a) => prove::run(a),
-        Command::Verify(a) => verify::run(a),
+        Command::Verify(a) => return verify::run(a),
         Command::Export(a) => export::run(a),
         Command::Client(a) => client::run(a),
         Command::Ceremony(a) => ceremony::run(a),
         Command::Inspect(a) => inspect::run(a),
         Command::Profile(a) => profile::run(a),
         Command::Completions(a) => completions::run(a),
-    }
-}
-
-/// Bridge a frontend command's process exit code into the `anyhow` flow: exit
-/// straight away on failure (the frontend already printed a diagnostic).
-fn exit_code(_name: &str, code: i32) -> Result<()> {
-    if code == 0 {
-        Ok(())
-    } else {
-        std::process::exit(code);
-    }
+    }?;
+    Ok(0)
 }
 
 // Frontend argument structs (delegate to `crate::cli`).
@@ -585,14 +582,15 @@ pub fn satisfaction_check(
 /// constraint check or soundness analysis: the proof self-verifies, and
 /// soundness is checked by the circuit's tests and `xark check --inputs`.
 ///
-/// If solving fails, it re-expands the flat program once for the precise
+/// Returns each variable's value by id (`None` where the solve set none). If
+/// solving fails, it re-expands the flat program once for the precise
 /// which-constraint / source-line diagnostic ([`explain_unsatisfied`]).
 pub fn stream_witness(
     bytes: &[u8],
     sources: Option<&SourceMap>,
     id_inputs: &BTreeMap<VarId, String>,
-) -> Result<BTreeMap<VarId, Fp>> {
-    match xark_ir::function_decode::stream_solve(bytes, id_inputs) {
+) -> Result<Vec<Option<Fp>>> {
+    match xark_ir::function_decode::stream_solve_dense(bytes, id_inputs) {
         Ok(assign) => Ok(assign),
         Err(e) => {
             explain_unsatisfied(bytes, sources, id_inputs)?;
@@ -650,11 +648,141 @@ pub fn num_public_inputs(prog: &R1csProgram) -> usize {
         .count()
 }
 
+/// A `.ptau` file's bytes, once its 12-byte header (`ptau`, version 1, a section
+/// count) says it is one: a file that isn't is refused before it's read whole. The
+/// parser bounds the rest (a power of at most 28, sections within the file).
+pub fn read_ptau(path: &std::path::Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut head = [0u8; 12];
+    file.read_exact(&mut head)
+        .with_context(|| format!("{} is too short to be a .ptau file", path.display()))?;
+    if &head[..4] != b"ptau" {
+        anyhow::bail!(
+            "{} isn't a .ptau file (it doesn't start with `ptau`)",
+            path.display()
+        );
+    }
+    let version = u32::from_le_bytes([head[4], head[5], head[6], head[7]]);
+    if version != 1 {
+        anyhow::bail!(
+            "{}: unsupported .ptau version {version} (expected 1)",
+            path.display()
+        );
+    }
+    let len = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+    let mut bytes = Vec::with_capacity(len);
+    bytes.extend_from_slice(&head);
+    file.read_to_end(&mut bytes)
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(bytes)
+}
+
 /// SHA-256 of arbitrary bytes, hex-encoded (no `0x`). Used to fingerprint a
 /// proof so it can be referenced/tracked and content-addressed on disk.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     hex::encode(Sha256::digest(bytes))
+}
+
+/// How a key was made, read from the `metadata.json` beside it: who would have to
+/// have cheated for a forged proof to verify. `xark setup` and `xark export` say
+/// it, and an exported verifier carries `tag` as its `SETUP`.
+pub struct SetupTrust {
+    /// `seeded`, `single-party`, `ceremony` (two or more contributors) or
+    /// `unknown`.
+    pub tag: &'static str,
+    pub summary: String,
+    /// Only a seeded key, or one without metadata, is worth a warning: a
+    /// single-party setup from OS randomness is a 1-of-1 trusted setup, sound
+    /// unless whoever ran it kept the randomness (xark never writes it down).
+    pub warn: bool,
+}
+
+pub fn setup_trust(key_dir: &std::path::Path) -> SetupTrust {
+    let meta = std::fs::read_to_string(key_dir.join("metadata.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    let Some(meta) = meta else {
+        return SetupTrust {
+            tag: "unknown",
+            summary: "no metadata.json beside the key, so how it was made isn't known".into(),
+            warn: true,
+        };
+    };
+    let mode = meta
+        .get("setup_mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    if let Some(seed) = meta.get("deterministic_rng_seed").and_then(|s| s.as_u64()) {
+        SetupTrust {
+            tag: "seeded",
+            summary: format!(
+                "a seeded setup (--deterministic-rng {seed}): anyone who knows the seed can \
+                 forge proofs, so it's for tests only"
+            ),
+            warn: true,
+        }
+    } else if let Some(n) = mode
+        .strip_prefix("phase2-from-ptau+mpc[")
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|n| n.parse::<usize>().ok())
+    {
+        // A ceremony of one is a single-party setup like any other (its
+        // contributor's randomness is OS randomness too); what it adds is a
+        // transcript anyone can check the key against, and room for more
+        // contributors.
+        if n == 0 {
+            // No contribution: δ is still the one `init` derived from the seed it
+            // records in `circuit_meta.json`, so anyone with the ceremony directory
+            // can forge proofs. `finalize` refuses it now; a key finalized before
+            // that is a seeded key.
+            SetupTrust {
+                tag: "seeded",
+                summary: "a ceremony finalized with no contributions: its trapdoor follows \
+                          from the seed in the ceremony's circuit_meta.json, so anyone with \
+                          that file can forge proofs"
+                    .into(),
+                warn: true,
+            }
+        } else if n >= 2 {
+            SetupTrust {
+                tag: "ceremony",
+                summary: format!(
+                    "a {n}-party ceremony: sound unless every contributor kept their \
+                     randomness. `xark ceremony verify` checks the key against its transcript"
+                ),
+                warn: false,
+            }
+        } else {
+            SetupTrust {
+                tag: "single-party",
+                summary: "a ceremony with one contributor: sound unless they kept their \
+                          randomness. `xark ceremony verify` checks the key against its \
+                          transcript, and more contributors spread the trust"
+                    .into(),
+                warn: false,
+            }
+        }
+    } else if mode == "phase2-from-ptau" {
+        SetupTrust {
+            tag: "single-party",
+            summary: "one party's phase 2 on a Powers-of-Tau transcript: sound unless whoever \
+                      ran `xark setup` kept the phase-2 seed. `xark ceremony` spreads that trust"
+                .into(),
+            warn: false,
+        }
+    } else {
+        SetupTrust {
+            tag: "single-party",
+            summary: "a single-party setup from OS randomness: sound unless whoever ran \
+                      `xark setup` kept that randomness (xark doesn't). `xark ceremony` \
+                      spreads that trust"
+                .into(),
+            warn: false,
+        }
+    }
 }
 
 /// The R1CS digest of a `circuit.xbc` (what `xark build` prints): the same for every
@@ -719,11 +847,6 @@ pub fn ensure_key_matches_circuit(key: &std::path::Path, xbc: &std::path::Path) 
         );
     }
     Ok(())
-}
-
-/// The SHA-256 (hex) of a string (e.g. a phase-2 seed, recorded in key metadata).
-pub fn circuit_hash(r1cs_json: &str) -> String {
-    sha256_hex(r1cs_json.as_bytes())
 }
 
 #[cfg(test)]

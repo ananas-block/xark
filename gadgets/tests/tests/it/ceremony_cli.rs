@@ -6,12 +6,10 @@
 //! in `crates/backend/src/ceremony.rs`. The transcript's toxic waste is known
 //! here, so this checks the pipeline is correct, not that a ceremony is secret.
 
-mod common;
-
 use std::path::Path;
 use std::process::Command;
 
-use common::{build_valid_ptau, tempdir, xark_bin, xark_build};
+use crate::common::{build_valid_ptau, tempdir, xark_bin, xark_build};
 
 fn xark(args: &[&str], dir: &Path) -> (bool, String) {
     let o = Command::new(xark_bin())
@@ -43,6 +41,16 @@ fn ceremony_keys_prove_and_verify() {
         assert!(ok, "xark {}: {log}", args.join(" "));
         log
     };
+    // A seeded key, or a smooth domain, is a key made without a `.ptau`: setup
+    // refuses either with one.
+    let keys = tmp.path().join("keys");
+    for extra in [&["--deterministic-rng", "1"][..], &["--domain", "smooth"]] {
+        let mut args = vec!["setup", ".", "--ptau-file", ptau_s, "--out"];
+        args.push(keys.to_str().unwrap());
+        args.extend_from_slice(extra);
+        let (ok, log) = xark(&args, &out);
+        assert!(!ok && log.contains("a key made without a .ptau"), "{log}");
+    }
     step(&["ceremony", "init", "--ptau-file", ptau_s, "--out", cer_s]);
     // A second init over it is refused, not a reset.
     let (ok, log) = xark(
@@ -167,8 +175,7 @@ fn ceremony_keys_prove_and_verify() {
         "a wrong public input must fail: {log}"
     );
 
-    // A finalized ceremony is production-safe: `xark export` takes its key
-    // without `--allow-insecure`.
+    // A finalized ceremony's verifier says so.
     let verifier = tmp.path().join("verifier");
     step(&[
         "export",
@@ -181,7 +188,33 @@ fn ceremony_keys_prove_and_verify() {
         "--out",
         verifier.to_str().unwrap(),
     ]);
-    assert!(verifier.join("Cargo.toml").is_file());
+    let lib = std::fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains(r#"pub const SETUP: &str = "ceremony";"#),
+        "{lib}"
+    );
+    // A ceremony of one trusts one party, as a key from `xark setup` does.
+    let meta = cer.join("metadata.json");
+    let two = std::fs::read_to_string(&meta).unwrap();
+    std::fs::write(
+        &meta,
+        two.replace("mpc[2 contributors]", "mpc[1 contributors]"),
+    )
+    .unwrap();
+    let log = step(&[
+        "export",
+        "--verifying-key",
+        vk.to_str().unwrap(),
+        "--out",
+        verifier.to_str().unwrap(),
+    ]);
+    assert!(log.contains("a ceremony with one contributor"), "{log}");
+    let lib = std::fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains(r#"pub const SETUP: &str = "single-party";"#),
+        "{lib}"
+    );
+    std::fs::write(&meta, two).unwrap();
 
     // `--force` replaces the finalized ceremony with a fresh one: no
     // contributions, and no metadata.json left to call the new keys
@@ -215,6 +248,65 @@ fn ceremony_keys_prove_and_verify() {
         ptau_s,
     ]);
     assert!(log.contains("Verified 0 contribution"), "{log}");
+    // But it doesn't finalize: with no contribution, δ follows from the seed in
+    // circuit_meta.json (#66).
+    let (ok, log) = xark(
+        &[
+            "ceremony",
+            "finalize",
+            "--ceremony-dir",
+            cer_s,
+            "--ptau-file",
+            ptau_s,
+        ],
+        &out,
+    );
+    assert!(
+        !ok && log.contains("the ceremony has no contributions"),
+        "{log}"
+    );
+    assert!(!cer.join("metadata.json").exists(), "finalized anyway");
+}
+
+/// `xark setup --ptau-file`: a file that isn't a `.ptau` is refused from its header,
+/// before it's read whole (#70), and the recorded `phase2_seed_hash` is the SHA-256
+/// of the seed's 32 bytes, whatever its text looks like (#71).
+#[test]
+fn setup_from_a_ptau_checks_the_file_and_hashes_the_seed() {
+    use sha2::{Digest, Sha256};
+    let tmp = tempdir();
+    let (out, target) = (tmp.path().join("cube"), tmp.path().join("target"));
+    let (ok, log) = xark_build("cube", &out, &target);
+    assert!(ok, "xark build: {log}");
+    let junk = tmp.path().join("junk.ptau");
+    std::fs::write(&junk, b"not a transcript at all").unwrap();
+    let (ok, log) = xark(&["setup", ".", "--ptau-file", junk.to_str().unwrap()], &out);
+    assert!(!ok && log.contains("isn't a .ptau file"), "{log}");
+
+    let ptau = tmp.path().join("test.ptau");
+    std::fs::write(&ptau, build_valid_ptau(12)).unwrap();
+    let want = hex::encode(Sha256::digest([0xab; 32]));
+    for seed in [format!("0x{}", "ab".repeat(32)), "AB".repeat(32)] {
+        let keys = tmp.path().join(format!("keys-{}", &seed[..2]));
+        let (ok, log) = xark(
+            &[
+                "setup",
+                ".",
+                "--ptau-file",
+                ptau.to_str().unwrap(),
+                "--phase2-seed",
+                &seed,
+                "--out",
+                keys.to_str().unwrap(),
+            ],
+            &out,
+        );
+        assert!(ok, "setup: {log}");
+        let meta: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(keys.join("metadata.json")).unwrap())
+                .unwrap();
+        assert_eq!(meta["phase2_seed_hash"], want.as_str(), "seed {seed}");
+    }
 }
 
 /// A `--ceremony-dir` that isn't one (a typo) says so, with how to start one; a

@@ -65,9 +65,10 @@ pub struct ProveArgs {
     pub cache: bool,
 
     /// Keep a single domain-sized vector in memory during
-    /// the quotient step by parking the others in a temp file next to the proof
-    /// (rows are streamed once more). For proving the largest circuits on small
-    /// machines.
+    /// the quotient step by parking the others in a temp file beside the proving
+    /// key (rows are streamed once more). The file holds witness-derived data: on
+    /// unix it's readable by you only and unlinked as soon as it's open, so it never
+    /// outlives the process. For proving the largest circuits on small machines.
     #[arg(long, default_value_t = false)]
     pub low_memory: bool,
 }
@@ -257,7 +258,8 @@ fn prove_streaming(
     // when they ran one after the other.
     let (built, solved) = std::thread::scope(|s| {
         let solved = s.spawn(|| {
-            let vars = xark_ir::function_decode::decode_input_vars(&bytes);
+            let vars = xark_ir::function_decode::decode_input_vars(&bytes)
+                .map_err(|e| anyhow::anyhow!(e))?;
             let id_inputs = resolve_input_ids(&vars, inputs)?;
             drop(vars);
             let assign = stream_witness(&bytes, sources, &id_inputs)?;
@@ -274,10 +276,13 @@ fn prove_streaming(
     let (assign_fp, id_inputs) = solved?;
     let t_solve = t.elapsed();
     let z = src.layout().assignment(|id| {
-        assign_fp.get(&id).map(|v| {
-            v.as_bn254_fr()
-                .unwrap_or_else(|| fr_from_decimal(&v.to_decimal()))
-        })
+        assign_fp
+            .get(id as usize)
+            .and_then(Option::as_ref)
+            .map(|v| {
+                v.as_bn254_fr()
+                    .unwrap_or_else(|| fr_from_decimal(&v.to_decimal()))
+            })
     });
     drop(assign_fp);
     let public = z[1..src.layout().num_instance()].to_vec();
@@ -533,17 +538,17 @@ fn autobuild_and_setup(
     // clear "run `xark build` first" error.
     if args.proving_key.is_none() && is_built && !pk_path.exists() {
         eprintln!(
-            "{} no proving key found — generating a dev key (use `xark setup --ptau-file` \
-             for production)…",
+            "{} no proving key found — making one from this machine's randomness (`xark \
+             ceremony` makes one no single party has to be trusted for)…",
             crate::style::tag()
         );
-        // Force dev-mode: the convenience loop must not silently run a production
-        // phase-2 ceremony just because a stray `.ptau` is discoverable. Producing
-        // a real key stays an explicit `xark setup`.
+        // From this machine's randomness: the convenience loop must not silently run
+        // a phase-2 setup just because a stray `.ptau` is discoverable. A key from a
+        // transcript stays an explicit `xark setup`.
         setup::run(setup::SetupArgs {
             path: args.path.clone(),
             out: None,
-            insecure_dev_mode: true,
+            without_ptau: true,
             deterministic_rng: None,
             ptau_file: None,
             phase2_seed: None,

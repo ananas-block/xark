@@ -2,8 +2,7 @@
 //! refuse, a corrupt artifact. Each must stop with an error that names the
 //! problem, never fall back to something else.
 
-mod common;
-use common::{run, tempdir, xark_bin, xark_build, xark_prove, xark_setup};
+use crate::common::{run, tempdir, xark_bin, xark_build, xark_prove, xark_setup};
 use std::process::Command;
 
 /// `xark <args>` in `dir`, returning `(success, stdout + stderr)`.
@@ -63,7 +62,7 @@ fn missing_paths_are_reported() {
 #[test]
 fn build_names_the_package() {
     let tmp = tempdir();
-    let dir = common::circuit_crate("arithmetic_square");
+    let dir = crate::common::circuit_crate("arithmetic_square");
     let o = Command::new(xark_bin())
         .args(["build", "--out"])
         .arg(tmp.path().join("out"))
@@ -184,7 +183,7 @@ fn stale_proving_key_is_named() {
 #[test]
 fn commands_find_the_crate_from_a_subdirectory() {
     let tmp = tempdir();
-    let src = common::circuit_crate("arithmetic_square").join("src");
+    let src = crate::common::circuit_crate("arithmetic_square").join("src");
     let out = tmp.path().join("out");
     let o = Command::new(xark_bin())
         .args(["build", "--out"])
@@ -234,14 +233,14 @@ fn keys_are_for_bn254_builds() {
     let (ok, out) = run_in(&dir, &["build", ".", "--field", "7"]);
     assert!(ok && out.contains("xark profile . --field 7"), "{out}");
     assert!(!out.contains("xark setup"), "{out}");
-    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    let (ok, out) = run_in(&dir, &["setup"]);
     assert!(
         ok && out.contains("built for another field than bn254"),
         "{out}"
     );
     let (ok, out) = run_in(&dir, &["build", ".", "--field", "7", "--out", "other"]);
     assert!(ok, "{out}");
-    let (ok, out) = run_in(&dir, &["setup", "other", "--insecure-dev-mode"]);
+    let (ok, out) = run_in(&dir, &["setup", "other"]);
     assert!(
         !ok && out.contains("was built over another field (7)"),
         "{out}"
@@ -266,7 +265,7 @@ fn failed_setup_keeps_the_previous_keys() {
 
     // A transcript too small for any circuit: setup fails partway.
     let ptau = tmp.path().join("tiny.ptau");
-    std::fs::write(&ptau, common::build_valid_ptau(1)).unwrap();
+    std::fs::write(&ptau, crate::common::build_valid_ptau(1)).unwrap();
     let (ok, _, err) = run(&[
         "setup",
         out.to_str().unwrap(),
@@ -293,7 +292,7 @@ fn failed_setup_keeps_the_previous_keys() {
 fn setup_out_warns_and_names_the_key() {
     let tmp = tempdir();
     let dir = copy_example(tmp.path(), "arithmetic_square");
-    let setup = ["setup", "--insecure-dev-mode", "--out", "keys"];
+    let setup = ["setup", "--out", "keys"];
     let (ok, out) = run_in(&dir, &setup);
     assert!(ok && !out.contains("isn't empty"), "{out}");
     assert!(out.contains("--proving-key keys/pk.bin"), "{out}");
@@ -363,7 +362,7 @@ fn verify_names_a_proof_older_than_the_key() {
     let (ok, out) = run_in(&dir, &["verify"]);
     assert!(ok && !out.contains("hint:"), "{out}");
     std::thread::sleep(std::time::Duration::from_millis(1100)); // coarse file times
-    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    let (ok, out) = run_in(&dir, &["setup"]);
     assert!(ok, "{out}");
     let (ok, out) = run_in(&dir, &["verify"]);
     assert!(!ok, "{out}");
@@ -453,13 +452,13 @@ fn failed_build_removes_the_old_circuit() {
     for f in ["circuit.xbc", "schema.json", "digest"] {
         assert!(!built.join(f).exists(), "{f} survived a failed build");
     }
-    let (ok, out) = run_in(&dir, &["setup", "--insecure-dev-mode"]);
+    let (ok, out) = run_in(&dir, &["setup"]);
     assert!(!ok && out.contains("xark build"), "{out}");
 }
 
 /// Copy `examples/<name>` into `dir`, its path dependencies made absolute.
 fn copy_example(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-    let src = common::circuit_crate(name);
+    let src = crate::common::circuit_crate(name);
     let dst = dir.join(name);
     std::fs::create_dir_all(dst.join("src")).unwrap();
     std::fs::copy(src.join("src/lib.rs"), dst.join("src/lib.rs")).unwrap();
@@ -488,28 +487,16 @@ fn export_and_verify_check_the_key() {
 
     // A new key: the old proof no longer verifies with it, so it isn't bundled (and
     // named by flag, it's refused).
-    let (ok, _, err) = run(&[
-        "setup",
-        o,
-        "--insecure-dev-mode",
-        "--deterministic-rng",
-        "2",
-    ]);
+    let (ok, _, err) = run(&["setup", o, "--deterministic-rng", "2"]);
     assert!(ok, "second setup failed: {err}");
-    let (ok, _, err) = run(&["export", o, "--allow-insecure"]);
+    let (ok, _, err) = run(&["export", o]);
     assert!(ok && err.contains("is for another key"), "{err}");
     assert!(
         !out.join("verifier/instruction_data.bin").exists(),
         "bundled anyway"
     );
     let proof = out.join("proof.bin");
-    let (ok, _, err) = run(&[
-        "export",
-        o,
-        "--allow-insecure",
-        "--proof",
-        proof.to_str().unwrap(),
-    ]);
+    let (ok, _, err) = run(&["export", o, "--proof", proof.to_str().unwrap()]);
     assert!(!ok && err.contains("doesn't verify"), "{err}");
 
     // As if the circuit had been rebuilt with a change since setup.
@@ -519,7 +506,7 @@ fn export_and_verify_check_the_key() {
     m["circuit_hash"] = "00".repeat(32).into();
     m["digest"] = "00".repeat(16).into();
     std::fs::write(&meta, m.to_string()).unwrap();
-    for cmd in [&["export", o, "--allow-insecure"][..], &["verify", o]] {
+    for cmd in [&["export", o][..], &["verify", o]] {
         let (ok, stdout, err) = run(cmd);
         assert!(
             !ok && err.contains("different build of the circuit"),
@@ -558,7 +545,7 @@ fn inputs_take_natural_encodings() {
 /// The next steps `setup` and `client` print can be followed as written: the
 /// inputs file is to fill in, and the prover's directory is the package's (here
 /// `my-cube`), not the circuit's (`cube`). A placeholder left in is named, and
-/// the dev key's note says `export` will refuse it.
+/// setup says how it made the key.
 #[test]
 fn next_steps_can_be_followed() {
     let tmp = tempdir();
@@ -576,7 +563,10 @@ fn next_steps_can_be_followed() {
         out.contains(&format!("--inputs {file}")) && out.contains("replace the placeholders"),
         "{out}"
     );
-    assert!(out.contains("`xark export` will refuse it"), "{out}");
+    assert!(
+        out.contains("Key: a single-party setup from OS randomness"),
+        "{out}"
+    );
     let (ok, out) = run_in(&dir, &["prove", ".", "--inputs", file]);
     assert!(
         !ok && out.contains("still the placeholder \"<field>\""),
@@ -601,11 +591,18 @@ fn export_defaults_beside_the_crate() {
     let dir = copy_example(tmp.path(), "arithmetic_square");
     let (ok, out) = run_in(&dir, &["build", "."]);
     assert!(ok, "build failed:\n{out}");
-    let (ok, out) = run_in(&dir, &["setup", ".", "--insecure-dev-mode"]);
+    let (ok, out) = run_in(&dir, &["setup", "."]);
     assert!(ok, "setup failed:\n{out}");
-    let (ok, out) = run_in(&dir, &["export", ".", "--allow-insecure"]);
+    let (ok, out) = run_in(&dir, &["export", "."]);
     assert!(ok, "export failed:\n{out}");
+    // A key from OS randomness is a single-party setup, and the crate says so.
+    assert!(out.contains("Key: a single-party setup"), "{out}");
     let verifier = dir.join("arithmetic_square-verifier");
+    let lib = std::fs::read_to_string(verifier.join("src/lib.rs")).unwrap();
+    assert!(
+        lib.contains(r#"pub const SETUP: &str = "single-party";"#),
+        "{lib}"
+    );
     let manifest = std::fs::read_to_string(verifier.join("Cargo.toml")).unwrap();
     assert!(
         manifest.contains("name = \"arithmetic-square-verifier\""),

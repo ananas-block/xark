@@ -6,12 +6,10 @@
 //! with `--r1cs-form minimized` so the cache path is always exercised (`auto` may
 //! pick `reduced`, which streams from `circuit.xbc` and never minimizes).
 
-mod common;
-
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use common::{tempdir, xark_bin, xark_build};
+use crate::common::{tempdir, xark_bin, xark_build};
 
 const INPUTS: &[(&str, &str)] = &[
     ("a.limbs[0]", "1"),
@@ -27,7 +25,6 @@ fn setup(out: &Path) -> (bool, String) {
     let mut c = Command::new(xark_bin());
     c.arg("setup")
         .arg(out)
-        .arg("--insecure-dev-mode")
         .arg("--deterministic-rng")
         .arg("1")
         .arg("--r1cs-form")

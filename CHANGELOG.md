@@ -18,7 +18,16 @@ gadgets now check more:
 - `xark-secp256r1`: the same check, +3 constraints.
 - `xark-bignum`: `mod_neg` gave a wrong result for some inputs at full 256-bit
   width; `mod_add` could overflow; `mod_neg(0)` is fixed.
+- `xark-bignum`: `mod_mul`, `mul_divmod` and `sub2` derive their bound `m − 1`
+  from `m` (#62), and a typed `Bignum` or `fp!` input range-checks its limbs
+  when it's read (#63). The `bignum`, `bignum_ops`, `bignum_wide`, `fp_mul`,
+  `sub2` and `is_lt_check` examples change; `bignum_wide`, `fp_mul`, `sub2` and
+  `is_lt_check` now range-check the limbs they take as `[Field; N]`. The curve
+  gadgets don't change.
 - `grumpkin_nova_fold` takes its inputs grouped by instance.
+- A `Time`/`Days` input is checked to its range of steps, not just its bit width
+  (`Days<2024, 2024>` is 366 days in 9 bits, and 366–511 were accepted): `zkyc`
+  changes. `scalar_range` changes only in row order.
 - The bit and hash gadgets take fewer rows, each proven sound in Lean over the
   exact rows it emits (`formal/`): XOR and OR with a constant fold to a linear form,
   `to_bits` computes bit 0 linearly, `xor3`/`maj3`/`chi`/`ch` are one row each,
@@ -27,10 +36,10 @@ gadgets now check more:
 - ECDSA on secp256k1 and P-256, and EdDSA on Ed25519, are rewritten around proven
   gadgets: non-native multiplication by pseudo-Mersenne certificates over 8×32-bit
   limbs, fused double-and-add over signed digits, and fake GLV (ePrint 2025/933) with
-  a fixed-base comb, each gadget proven sound over its rows. Fewer rows (the
-  secp256k1 ECDSA circuit is 227,713); the hinted `R.x` is checked canonical
-  (`< p`), and Ed25519 keeps the cofactored check of RFC 8032. Keys for the ECDSA
-  and EdDSA examples must be made again.
+  a fixed-base comb, each gadget proven sound over its rows. Fewer rows
+  (`examples/secp256k1_ecdsa` is 227,168 in `xark inspect`); the hinted `R.x` is
+  checked canonical (`< p`), and Ed25519 keeps the cofactored check of RFC 8032.
+  Keys for the ECDSA and EdDSA examples must be made again.
 - Grumpkin scalar multiplication (`scalar_mul`, `wide_scalar_mul`,
   `multi_scalar_mul`) and the Pedersen hash are rewritten as proven gadgets: one
   fused incomplete step per bit over signed digits, and windowed lookups from
@@ -202,10 +211,9 @@ gadgets now check more:
 `xark client` now generates a typed client; in 0.2 it scaffolded a snarkjs
 verification starter, and the `xark-client` npm package is removed.
 
-- **What it writes:** `<circuit>.ts` and the `<circuit>.schema.ts` it imports
-  without an extension (the circuit's `schema.json` as a module; a bundler, Turbopack
-  included, and tsc's "bundler" resolution read it with no project settings), where
-  `-o` says: a file, or a directory to write them in. A tuple struct's fields
+- **What it writes:** one file, `<circuit>.ts`, with the circuit's `schema.json`
+  inlined, so Node, a bundler and tsc all run it with no project settings, where
+  `-o` says: a file, or a directory to write it in. A tuple struct's fields
   (`"0"`) and raw identifiers (`r#type`, named `type`) give a client that compiles. Names
   keep underscores around them (`_reserved`); a field JavaScript can't hold
   (`__proto__`, or `constructor` on a struct with Rust methods) is an error naming it. The
@@ -280,6 +288,10 @@ verification starter, and the `xark-client` npm package is removed.
   stream. On one 14-core machine: ed25519 setup 6.9 → 3.9 s and prove 8.6 → 6.8 s;
   secp256k1_ecdsa setup 4.9 → 2.9 s; aes256_gcm setup peak 3.1 → 2.8 GB. Keys,
   proofs and the keyed rows are unchanged.
+- **A faster witness solve.** Bits skip the field multiply, a non-native inverse
+  is a 256-bit safegcd, and the hint program compiles in parallel. Proving on an
+  M3 Max: secp256k1_ecdsa 0.38 → 0.28 s, secp256r1_ecdsa 0.54 → 0.38 s, ed25519
+  0.48 → 0.41 s. Witnesses, keys and proofs are unchanged.
 - **A streaming Groth16 prover.** `xark prove` uses `xark-groth16`, which never
   holds the whole constraint system or proving key in memory, always from
   `circuit.xbc`. Keys and proofs are compatible with the arkworks path
@@ -311,6 +323,18 @@ verification starter, and the `xark-client` npm package is removed.
   crate with its own `[workspace]`, so the circuit crate neither builds nor
   packages it. `--out` still chooses; a build output outside a crate's `target/`
   keeps `verifier/` inside it.
+- `xark export` takes any key and says how it was made, so `--allow-insecure` is
+  gone. A key from OS randomness is a single-party trusted setup, sound unless
+  whoever ran setup kept the randomness; a `--deterministic-rng` key can be forged
+  by anyone with the seed, and export warns about it. The crate's `SETUP` constant
+  and README carry it: `seeded`, `single-party`, `ceremony` (two or more
+  contributors; a ceremony of one is `single-party`) or `unknown`, for a deploy
+  script to check.
+- `xark setup` has no `--insecure-dev-mode`: without a `.ptau`, it makes the key
+  from the machine's randomness, as it already did by default. `--deterministic-rng`
+  and `--domain smooth` work on their own, skip an auto-detected `.ptau`, and are
+  refused with `--ptau-file`. The key's `metadata.json` says `"setup_mode":
+  "single-party"`.
 - `xark build` reuses an unchanged build: when the `xark` binary, the options, the
   `XARK_*` variables, the compiled module and every source file are the same as for
   the outputs in `target/xark/<name>/` (and those are untouched), it says so and
@@ -436,6 +460,59 @@ verification starter, and the `xark-client` npm package is removed.
 
 ### Fixed
 
+- A `Time` or `Days` input past the end of its range (a value its bits hold but no
+  day of the type is) was accepted; it's refused as the input is read, packed or not.
+- `fp!`'s `assert_nonzero` checked only that the limbs weren't all zero, so `m`
+  itself, in range but not canonical, passed. It checks the value canonical first.
+  The crate docs now say which results are canonical: only `mod_mul`'s and `sub2`'s.
+- A `.ptau` whose τ is a root of unity of its size passed every admissibility check,
+  and keys from it let any witness prove; it's refused.
+- Ed25519 points decode as RFC 8032 says: `x = 0` with the sign bit set, `y ≥ p`,
+  and a `y` with no `x` are refused, so each point has one encoding.
+- A ceremony finalized with no contributions kept the δ `init` derives from the seed
+  it records in `circuit_meta.json`, so anyone with the directory could forge
+  proofs, yet it was marked production-safe and exported as `single-party` (#66).
+  `xark ceremony finalize` refuses it; a key finalized before is labelled `seeded`,
+  with a warning.
+- `blake2s_hash_one_block` and `blake3_hash_one_block` take the length as a const
+  generic (`::<LEN>`, at most 64) and require the bytes past it to be zero; a
+  `Field` length up to 2³² and any tail were accepted, so one message had many
+  digests (#72).
+- The `--low-memory` spill file holds witness-derived data: on unix it's created
+  readable by its owner only and unlinked at once, so it never outlives the
+  process (#69).
+- `metadata.phase2_seed_hash` is the SHA-256 of the seed's 32 bytes, not of the
+  argument's text (#71).
+- A hostile `circuit.xbc` fails to decode instead of aborting the process: counts are
+  checked against the bytes left, variables and expansions are capped, a template
+  call graph must be acyclic, and the panic hook is wrapped once rather than swapped
+  around each decode, so overlapping decodes can't leave it removed (#64, #65, #68).
+- Verifying keys, proofs and public inputs over 64 MiB are refused before they're
+  read, and a `.ptau` file's header is checked before it's read whole (#73, #70).
+- The `ec_incomplete` examples say why they need no on-curve check, and
+  `enforce_on_curve` says when it's optional (#67).
+- Two soundness holes in `xark-bignum`'s multiplication, each letting a prover make
+  a valid proof of a wrong `(a·b) mod m` in a circuit that takes `m` or the limbs
+  from the prover. The curve gadgets were not affected.
+  - The remainder's bound `m − 1` was a separate argument nothing tied to `m`, so a
+    larger one admitted `r + m` (#62). `mod_mul`, `mul_divmod`, `sub2` and
+    `Bignum::{mul, sub2}` now take only `m` and derive the bound (`minus_one`).
+  - A limb `≥ 2^BITS` turned the column identity into a congruence mod BN254's
+    field (#63). A typed `Bignum` or `fp!` input now range-checks its limbs when
+    it's read; `fp!(unchecked_input …)` skips that for code that checks its inputs
+    itself, as the curve macros do. Limbs a circuit takes as `[Field; N]` still
+    need `range_check_limbs`, as the crate docs say.
+- Two soundness holes in `witness_begin()`/`witness_end()` regions, each letting a
+  prover make a valid proof of a statement the circuit rejects. No shipped circuit
+  hit either (every digest is unchanged).
+  - A `Field` comparison (`==`, `!=`, `lt`, …) made in a region lost its rows but
+    was still trusted as a 0-or-1 `bool`, so a branch or select on it after the
+    region could take any value (#59). It now keeps its rows, as native integer
+    ops do.
+  - An arm of a witness branch that panicked inside a region left the region open,
+    and every constraint after the branch was dropped (#58). Each arm now starts in
+    the region state the branch was reached in, and a region that would straddle a
+    branch is refused.
 - Malformed input is an error, not a panic: a row-file window index out of range,
   a malformed or wrongly laid out row stream, a proving key whose lengths overflow,
   and an MSM work item or accelerator result of the wrong size or with points that
@@ -464,8 +541,7 @@ verification starter, and the `xark-client` npm package is removed.
   - client's `prover(…)` hint and the generated client's docs point at the build's
     directory, named after the package, not the circuit (`target/xark/my-cube/`, not
     `target/xark/cube/`).
-  - setup's dev-key note says `xark export` will refuse the key and how to make a
-    production one, and `--insecure-dev-mode`'s help no longer says it is required.
+  - setup says how it made the key and where to find a multi-party ceremony.
 - A `#[circuit]` array parameter's length may be a `const`: `Private<[Field; DEPTH]>`
   failed with "array lengths must be integer literals". The circuit is the one the
   literal gives (`examples/merkle` now uses `const DEPTH`, same digest). A generic
